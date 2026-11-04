@@ -53,7 +53,8 @@ export function renderMindmap(g, item) {
     const sx = parent.x + parent.width, sy = parent.y + parent.height / 2, ex = item.x, ey = item.y + item.height / 2, mx = (sx + ex) / 2;
     g.appendChild(svgEl('path', { d: `M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ey}, ${ex} ${ey}`, fill: 'none', stroke: 'var(--primary)', 'stroke-width': 2, 'pointer-events': 'none' }));
   }
-  appendLayoutText(g, item, root ? 'var(--on-primary)' : 'var(--fg)');
+  if (item.content) appendLayoutText(g, item, root ? 'var(--on-primary)' : 'var(--fg)');
+  else g.appendChild(text(item.x + item.width / 2, item.y + item.height / 2 + 5, root ? 'Idée centrale' : 'Nouvelle idée', { fill: root ? 'var(--on-primary)' : 'var(--fg)', 'font-size': 14, 'font-style': 'italic', 'text-anchor': 'middle', opacity: 0.85, 'aria-hidden': 'true' }));
   if (kids) {
     const cx = item.x + item.width - 14, cy = item.y + item.height / 2;
     const toggle = svgEl('g', { 'data-action': 'toggle-mind', class: 'mind-toggle' });

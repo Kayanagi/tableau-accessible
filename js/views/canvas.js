@@ -1216,8 +1216,7 @@ export function createAt(t, pt, useSelection = false) {
   const data = { type, x: Math.round(pt.x - w / 2), y: Math.round(pt.y - h / 2), width: w, height: h, content: '', ...O.defaults(type) };
   if (type === 'sticky_note') data.color = stickyColor;
   if (type === 'shape') data.shape = shape || 'rectangle';
-  if (type === 'card') data.title = '';
-  if (type === 'comment') {
+  if (type === 'card') data.title = '';  if (type === 'comment') {
     const target = useSelection ? state.getItem(state.getSelectedId()) : hitItem(pt);
     if (target && !['connector', 'comment'].includes(target.type)) data.targetId = target.id;
   }
@@ -1237,7 +1236,20 @@ export function createAt(t, pt, useSelection = false) {
 
 export function createAtCenter(t = tool) {
   const { w, h } = viewSize();
-  return createAt(t, { x: Math.round(panX + w / 2), y: Math.round(panY + h / 2) }, true);
+  const pt = { x: Math.round(panX + w / 2), y: Math.round(panY + h / 2) };
+  if (!t.startsWith('comment')) {
+    const [iw, ih] = TOOL_SIZES[t] || [150, 150];
+    const others = state.getItems().filter(i => !['connector', 'comment', 'frame'].includes(i.type) && i.width);
+    for (let n = 0; n < 50; n++) {
+      const l = pt.x - iw / 2, tp = pt.y - ih / 2;
+      const hit = others.find(o => l < o.x + o.width + 20 && l + iw + 20 > o.x && tp < o.y + (o.height || 0) + 20 && tp + ih + 20 > o.y);
+      if (!hit) break;
+      pt.x = hit.x + hit.width + 40 + iw / 2;
+    }
+  }
+  const item = createAt(t, pt, true);
+  reveal(item.id);
+  return item;
 }
 
 export function reveal(id) {

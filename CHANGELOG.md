@@ -23,6 +23,10 @@ Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 - F2 modifie le texte de l’élément ; Maj+lettre n’active plus d’outil.
 - Aide et README mis à jour.
 
+### Corrigé
+- Un objet créé au centre de la vue (panneau « Plus d'outils », clavier) se place à côté des objets existants au lieu de les recouvrir, et la vue le montre.
+- La racine vide d'une carte mentale affiche le texte indicatif « Idée centrale ».
+
 ## [1.3.1] - 2026-11-04
 
 ### Corrigé
