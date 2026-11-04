@@ -2,6 +2,11 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.3.1] - 2026-11-04
+
+### Corrigé
+- La barre de mise en forme restait collée au bord gauche du canevas au lieu de se placer au-dessus de la sélection.
+
 ## [1.3.0] - 2026-11-04
 
 ### Ajouté

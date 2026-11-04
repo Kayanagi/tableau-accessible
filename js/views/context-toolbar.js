@@ -243,8 +243,9 @@ function place() {
     Object.assign(bar.style, { left: '', top: '', bottom: `${creation ? innerHeight - creation.top + 6 : 4}px` });
     return;
   }
-  const svg = canvas.getSvgElement();
-  const minLeft = svg.offsetLeft + 4;
+  const creation = document.querySelector('#app-board .creation-toolbar')?.getBoundingClientRect();
+  const origin = container.getBoundingClientRect();
+  const minLeft = creation && creation.width ? creation.right - origin.left + 8 : 4;
   const maxLeft = Math.max(minLeft, container.clientWidth - bar.offsetWidth - 4);
   const left = Math.min(maxLeft, Math.max(minLeft, (r.left + r.right) / 2 - bar.offsetWidth / 2));
   let top = r.top - bar.offsetHeight - 30;
