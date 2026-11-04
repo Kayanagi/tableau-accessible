@@ -20,13 +20,20 @@
       </div>
       <nav aria-label="Outils du tableau" class="toolbar" role="toolbar" aria-orientation="horizontal">
         <div class="toolbar-group creation-toolbar" role="toolbar" aria-orientation="vertical" aria-label="Créer">
-          <button id="btn-sticky" aria-keyshortcuts="n" type="button" aria-label="Nouveau post-it (N)">Post-it</button>
-          <button id="btn-shape" aria-keyshortcuts="s r o" type="button" aria-label="Nouvelle forme">Forme</button>
-          <button id="btn-text" aria-keyshortcuts="t" type="button" aria-label="Nouveau texte">Texte</button>
-          <button id="btn-card" type="button" aria-label="Nouvelle carte">Carte</button>
-          <button id="btn-frame" aria-keyshortcuts="f" type="button" aria-label="Nouveau cadre">Cadre</button>
+          <button id="btn-select" aria-keyshortcuts="v" type="button" aria-pressed="true" aria-label="Sélection (V)">Sélection</button>
+          <button id="btn-hand" aria-keyshortcuts="h" type="button" aria-pressed="false" aria-label="Main (H) : déplacer la vue">Main</button>
+          <button id="btn-sticky" aria-keyshortcuts="n" type="button" aria-pressed="false" aria-label="Post-it (N)">Post-it</button>
+          <button id="btn-shape" aria-keyshortcuts="s r o" type="button" aria-pressed="false" aria-label="Forme (S, R, O)">Forme</button>
+          <button id="btn-text" aria-keyshortcuts="t" type="button" aria-pressed="false" aria-label="Texte (T)">Texte</button>
+          <button id="btn-card" type="button" aria-pressed="false" aria-label="Carte">Carte</button>
+          <button id="btn-frame" aria-keyshortcuts="f" type="button" aria-pressed="false" aria-label="Cadre (F)">Cadre</button>
           <button id="btn-link" aria-keyshortcuts="l" type="button" aria-label="Nouveau lien entre &eacute;l&eacute;ments">Lien</button>
         </div>
+        <fieldset id="sticky-palette" class="tool-palette" aria-describedby="sticky-palette-hint" hidden>
+          <legend>Couleur du post-it</legend>
+          <div class="tool-colors"></div>
+          <p id="sticky-palette-hint" class="sr-only">Cliquez sur le canevas pour poser le post-it, ou Entrée pour le créer au centre de la vue. Échap pour annuler.</p>
+        </fieldset>
         <div class="toolbar-group" role="group" aria-label="Organisation">
           <button id="btn-duplicate" type="button" aria-keyshortcuts="Control+d">Dupliquer</button>
           <button id="btn-lock" type="button" aria-keyshortcuts="Control+Shift+l">Verrouiller / déverrouiller</button>
@@ -180,31 +187,36 @@
     <h2 class="dialog-title" id="dialog-help-title">Aide et raccourcis clavier</h2>
 
     <h3>Raccourcis clavier</h3>
-    <p>Les raccourcis de création et d’organisation fonctionnent dans la vue Canevas, hors des champs et dialogues. Les flèches naviguent dans les barres d’outils.</p>
+    <p>Les raccourcis fonctionnent dans la vue Canevas, hors des champs et dialogues. Les flèches naviguent dans les barres d’outils.</p>
     <dl class="shortcuts-list">
-      <dt>T / S / R / O / L / F</dt><dd>Texte / forme / rectangle / cercle / lien / cadre</dd>
-      <dt>Ctrl+D</dt><dd>Dupliquer</dd>
-      <dt>Ctrl+Maj+L</dt><dd>Verrouiller ou déverrouiller</dd>
-      <dt>Page précédente / Page suivante</dt><dd>Premier plan / arrière-plan</dd>
-      <dt>Ctrl+Alt+Maj+flèches</dt><dd>Sélectionner l’objet le plus proche dans cette direction</dd>
-      <dt>Ctrl+Maj+flèche bas / haut</dt><dd>Entrer dans un cadre / sortir vers son parent</dd>
-
-      <dt><kbd>N</kbd></dt><dd>Nouveau post-it</dd>
-      <dt><kbd>?</kbd></dt><dd>Ouvrir cette aide</dd>
-      <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>Annuler</dd>
-      <dt><kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>Z</kbd></dt><dd>R&eacute;tablir</dd>
-      <dt><kbd>+</kbd></dt><dd>Zoom avant</dd>
-      <dt><kbd>-</kbd></dt><dd>Zoom arri&egrave;re</dd>
-      <dt><kbd>0</kbd></dt><dd>R&eacute;initialiser le zoom</dd>
-      <dt><kbd>Maj</kbd>+<kbd>1</kbd></dt><dd>Tout afficher (ajuster la vue au contenu)</dd>
-      <dt>Glisser le fond / molette</dt><dd>D&eacute;placer la vue</dd>
+      <dt><kbd>V</kbd> / <kbd>H</kbd></dt><dd>Outil Sélection / outil Main (glisser déplace la vue)</dd>
+      <dt><kbd>N</kbd> / <kbd>T</kbd> / <kbd>S</kbd> / <kbd>R</kbd> / <kbd>O</kbd> / <kbd>F</kbd></dt><dd>Outil post-it (avec choix de couleur) / texte / forme / rectangle / cercle / cadre : cliquer sur le canevas pose l’élément</dd>
+      <dt><kbd>Entrée</kbd> avec un outil actif, ou sur un bouton d’outil</dt><dd>Créer l’élément au centre de la vue et saisir son texte</dd>
+      <dt><kbd>Échap</kbd></dt><dd>Annuler l’outil, valider le texte, ou désélectionner</dd>
+      <dt><kbd>L</kbd></dt><dd>Nouveau lien (dialogue)</dd>
+      <dt><kbd>Entrée</kbd> ou double-clic</dt><dd>Modifier le texte sur place (<kbd>Échap</kbd> ou clic à l’extérieur pour valider)</dd>
+      <dt><kbd>Alt</kbd>+<kbd>F10</kbd></dt><dd>Aller à la barre de mise en forme de la sélection (Propriétés… pour le dialogue complet)</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>A</kbd></dt><dd>Tout sélectionner</dd>
+      <dt><kbd>Maj</kbd>+clic, <kbd>Ctrl</kbd>+clic, glisser sur le fond</dt><dd>Ajouter ou retirer de la sélection, sélection rectangulaire</dd>
+      <dt><kbd>Espace</kbd> maintenu + glisser, molette</dt><dd>Déplacer la vue</dd>
       <dt><kbd>Ctrl</kbd>+molette</dt><dd>Zoomer sur le pointeur</dd>
-      <dt><kbd>Tab</kbd> / <kbd>Maj</kbd>+<kbd>Tab</kbd></dt><dd>Naviguer entre les &eacute;l&eacute;ments du canevas</dd>
-      <dt><kbd aria-label="Fl&egrave;ches directionnelles">&larr;&uarr;&rarr;&darr;</kbd></dt><dd>D&eacute;placer l'&eacute;l&eacute;ment s&eacute;lectionn&eacute; (10 px)</dd>
-      <dt><kbd>Maj</kbd>+<kbd aria-label="Fl&egrave;ches">&larr;&uarr;&rarr;&darr;</kbd></dt><dd>D&eacute;placer en grand pas (50 px)</dd>
-      <dt><kbd>Entr&eacute;e</kbd></dt><dd>&Eacute;diter l'&eacute;l&eacute;ment s&eacute;lectionn&eacute;</dd>
-      <dt><kbd>Suppr</kbd></dt><dd>Supprimer l'&eacute;l&eacute;ment s&eacute;lectionn&eacute;</dd>
-      <dt><kbd>&Eacute;chap</kbd></dt><dd>D&eacute;s&eacute;lectionner</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></dt><dd>Copier / couper / coller (les liens entre éléments copiés sont conservés)</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> / <kbd>V</kbd></dt><dd>Copier / coller le style</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Retour arrière</kbd></dt><dd>Effacer le contenu</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>D</kbd></dt><dd>Dupliquer</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>L</kbd></dt><dd>Verrouiller ou déverrouiller</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Maj</kbd>+<kbd>plus</kbd> / <kbd>moins</kbd></dt><dd>Agrandir / réduire la sélection (poignées d’angle à la souris, <kbd>Maj</kbd> pour garder les proportions)</dd>
+      <dt>Page précédente / Page suivante</dt><dd>Premier plan / arrière-plan</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>Maj</kbd>+flèches</dt><dd>Sélectionner l’objet le plus proche dans cette direction</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Maj</kbd>+flèche bas / haut</dt><dd>Entrer dans un cadre / sortir vers son parent</dd>
+      <dt>Point bleu d’un objet sélectionné</dt><dd>Tirer vers un autre objet pour créer une flèche (au clavier : <kbd>L</kbd>)</dd>
+      <dt><kbd>?</kbd></dt><dd>Ouvrir cette aide</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>Z</kbd></dt><dd>Annuler / rétablir</dd>
+      <dt><kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd></dt><dd>Zoom avant / arrière / 100 %</dd>
+      <dt><kbd>Maj</kbd>+<kbd>1</kbd></dt><dd>Tout afficher (ajuster la vue au contenu)</dd>
+      <dt><kbd>Tab</kbd> / <kbd>Maj</kbd>+<kbd>Tab</kbd></dt><dd>Naviguer entre les éléments du canevas</dd>
+      <dt>Flèches / <kbd>Maj</kbd>+flèches</dt><dd>Déplacer la sélection de 10 px / 50 px</dd>
+      <dt><kbd>Suppr</kbd></dt><dd>Supprimer la sélection</dd>
     </dl>
 
     <h3>Trois vues synchronis&eacute;es</h3>
@@ -223,7 +235,6 @@
     <h3>Limites</h3>
     <ul>
       <li>Pas de collaboration en temps r&eacute;el : l'&eacute;tat est local. Le format JSON est con&ccedil;u pour &ecirc;tre s&eacute;rialisable en vue d'un ajout futur de temps r&eacute;el.</li>
-      <li>Pas de redimensionnement &agrave; la souris (utiliser les champs taille dans le formulaire d'&eacute;dition).</li>
     </ul>
 
     <div class="dialog-actions">
@@ -282,6 +293,7 @@
     </form>
   </dialog>
 
+  <p id="inline-editor-hint" class="sr-only">Échap, Ctrl+Entrée ou un clic à l’extérieur pour valider.</p>
   <div id="announcer" aria-live="polite" aria-atomic="true" class="sr-only"></div>
 
   <script type="module" src="js/app.js"></script>

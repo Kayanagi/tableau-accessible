@@ -7,6 +7,12 @@ import * as io from './io.js';
 import * as router from './router.js';
 import * as boards from './store/boards.js';
 import * as dashboard from './views/dashboard.js';
+import * as editor from './views/inline-editor.js';
+import * as contextToolbar from './views/context-toolbar.js';
+import * as clipboard from './clipboard.js';
+
+const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
+const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', f: 'frame' };
 
 let currentView = 'canvas';
 let currentTheme = 'auto';
@@ -89,6 +95,8 @@ function showBoard(boardId) {
     boardInitialized = true;
   }
 
+  editor.commit(false);
+  canvas.setTool('select');
   state.loadBoard(board.données || { name: board.nom, items: [] });
 
   unsubAutoSave = state.subscribe(() => {
@@ -108,6 +116,8 @@ function showBoard(boardId) {
 
 function initBoardView() {
   canvas.init(document.getElementById('view-canvas'));
+  editor.init();
+  contextToolbar.init(document.getElementById('view-canvas'), { onProperties: openEditDialog });
   outline.init(document.getElementById('view-outline'));
   table.init(document.getElementById('view-table'));
   setupTabs();
@@ -156,12 +166,13 @@ function setupToolbar() {
     label.append(radio, swatch, document.createTextNode(name));
     colors.append(label);
   });
-  const selected = () => state.getSelectedId();
-  document.getElementById('btn-duplicate').onclick = () => { const copy = state.duplicateItem(selected()); if (copy) canvas.focusItem(copy.id); };
-  document.getElementById('btn-lock').onclick = () => state.toggleLocked(selected());
-  document.getElementById('btn-front').onclick = () => state.reorderItem(selected(), true);
-  document.getElementById('btn-backward').onclick = () => state.reorderItem(selected(), false);
-  document.querySelectorAll('#app-board [role="toolbar"]').forEach(bar => {
+  setupToolPalette();
+  const selected = () => state.getSelectedIds();
+  document.getElementById('btn-duplicate').onclick = () => duplicate(selected());
+  document.getElementById('btn-lock').onclick = () => state.toggleLockedMany(selected());
+  document.getElementById('btn-front').onclick = () => state.reorderItems(selected(), true);
+  document.getElementById('btn-backward').onclick = () => state.reorderItems(selected(), false);
+  document.querySelectorAll('#app-board [role="toolbar"]:not(.context-toolbar)').forEach(bar => {
     const buttons = () => [...bar.querySelectorAll('button')].filter(b => !b.disabled && b.closest('[role="toolbar"]') === bar);
     const reset = () => { bar.querySelectorAll('button').forEach(b => { if (b.closest('[role="toolbar"]') === bar) b.tabIndex = -1; }); const all = buttons(); all.forEach((b, i) => b.tabIndex = i === 0 ? 0 : -1); };
     reset();
@@ -176,11 +187,21 @@ function setupToolbar() {
     });
     state.subscribe(() => { if (!buttons().some(b => b.tabIndex === 0)) reset(); });
   });
-  document.getElementById('btn-sticky').addEventListener('click', () => openCreateDialog('sticky_note'));
-  document.getElementById('btn-shape').addEventListener('click', () => openCreateDialog('shape'));
-  document.getElementById('btn-text').addEventListener('click', () => openCreateDialog('text'));
-  document.getElementById('btn-card').addEventListener('click', () => openCreateDialog('card'));
-  document.getElementById('btn-frame').addEventListener('click', () => openCreateDialog('frame'));
+  for (const [btnId, tool] of Object.entries(TOOL_BUTTONS)) {
+    document.getElementById(btnId).addEventListener('click', (e) => {
+      if (e.detail === 0 && canvas.isCreationTool(tool)) { createAtCenter(tool); return; }
+      activateTool(canvas.getTool() === tool && tool !== 'select' ? 'select' : tool, false);
+    });
+  }
+  canvas.onToolChange(tool => {
+    for (const [btnId, t] of Object.entries(TOOL_BUTTONS)) {
+      document.getElementById(btnId).setAttribute('aria-pressed', String(t === tool || (btnId === 'btn-shape' && tool.startsWith('shape'))));
+    }
+    const palette = document.getElementById('sticky-palette');
+    palette.hidden = tool !== 'sticky_note';
+    const creation = document.querySelector('#app-board .creation-toolbar').getBoundingClientRect();
+    palette.style.bottom = matchMedia('(max-width: 640px)').matches ? `${innerHeight - creation.top + 6}px` : '';
+  });
   document.getElementById('btn-link').addEventListener('click', () => openLinkDialog());
   document.getElementById('btn-undo').addEventListener('click', () => state.undo());
   document.getElementById('btn-redo').addEventListener('click', () => state.redo());
@@ -202,6 +223,54 @@ function setupToolbar() {
     document.getElementById('btn-undo').disabled = !state.canUndo();
     document.getElementById('btn-redo').disabled = !state.canRedo();
   });
+}
+
+function setupToolPalette() {
+  const palette = document.getElementById('sticky-palette');
+  const grid = palette.querySelector('.tool-colors');
+  state.PALETTE.forEach(([id, name, hex], index) => {
+    const label = document.createElement('label');
+    label.className = 'tool-color';
+    label.title = name;
+    const radio = document.createElement('input');
+    Object.assign(radio, { type: 'radio', name: 'tool-color', value: id, checked: index === 0 });
+    radio.setAttribute('aria-label', `${name}, ${index + 1} sur 16`);
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.backgroundColor = hex;
+    swatch.setAttribute('aria-hidden', 'true');
+    label.append(radio, swatch);
+    grid.append(label);
+  });
+  palette.addEventListener('change', e => canvas.setStickyColor(e.target.value));
+  palette.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); createAtCenter('sticky_note'); }
+    if (e.key === 'Escape') { e.preventDefault(); canvas.cancelTool(); document.getElementById('btn-sticky').focus(); }
+  });
+}
+
+function showCanvasTab() {
+  if (currentView !== 'canvas') document.getElementById('tab-canvas').click();
+}
+
+function activateTool(tool, fromKey) {
+  showCanvasTab();
+  canvas.setTool(tool);
+  const name = canvas.TOOL_NAMES[tool];
+  if (!canvas.isCreationTool(tool)) { announcer.announce(`Outil ${name} actif`); return; }
+  announcer.announce(`Outil ${name} actif : cliquez sur le canevas pour poser l’élément, ou Entrée pour le créer au centre de la vue. Échap pour annuler.`);
+  if (tool === 'sticky_note' && fromKey) document.querySelector('#sticky-palette input:checked')?.focus();
+}
+
+function createAtCenter(tool) {
+  showCanvasTab();
+  canvas.createAtCenter(tool);
+}
+
+function duplicate(ids) {
+  const copies = state.duplicateItems(ids);
+  if (copies[0]) canvas.focusItem(copies[0].id);
+  if (copies.length > 1) state.setSelection(copies.map(c => c.id));
 }
 
 function toggleTheme() {
@@ -244,7 +313,11 @@ function setupDialogs() {
     if (editingId) { state.removeItem(editingId); editingId = null; dialogLink.close(); }
   });
 
-  canvas.getSvgElement().addEventListener('item-edit', (e) => openEditDialog(e.detail.id));
+  canvas.getSvgElement().addEventListener('item-edit', (e) => {
+    const item = state.getItem(e.detail.id);
+    if (item?.type === 'connector') openEditDialog(item.id);
+    else if (item) editor.open(item.id, e.detail.isNew);
+  });
   document.addEventListener('table-edit', (e) => openEditDialog(e.detail.id));
   document.addEventListener('outline-focus', (e) => { if (currentView === 'canvas') canvas.focusItem(e.detail.id); });
 }
@@ -269,6 +342,7 @@ function setupDashboardDialogs() {
 
 function setupShortcuts() {
   document.addEventListener('keydown', (e) => {
+    if (e.defaultPrevented) return;
     if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select, [contenteditable]')) return;
     const boardVisible = !document.getElementById('app-board').hidden;
     if (!boardVisible) return;
@@ -276,6 +350,7 @@ function setupShortcuts() {
       const key = e.key.toLowerCase();
       const id = document.activeElement.closest?.('.canvas-item')?.getAttribute('data-id') || state.getSelectedId();
       const item = state.getItem(id);
+      const ids = state.getSelectedIds().length ? state.getSelectedIds() : (id ? [id] : []);
       if (e.ctrlKey && e.shiftKey && e.altKey && e.key.startsWith('Arrow')) {
         e.preventDefault();
         if (item) {
@@ -293,13 +368,33 @@ function setupShortcuts() {
         if (target) canvas.focusItem(target);
         return;
       }
-      if (e.ctrlKey && !e.altKey && key === 'd' && !e.shiftKey) { e.preventDefault(); const copy = state.duplicateItem(id); if (copy) canvas.focusItem(copy.id); return; }
-      if (e.ctrlKey && e.shiftKey && !e.altKey && key === 'l') { e.preventDefault(); state.toggleLocked(id); return; }
+      if (e.ctrlKey && !e.altKey && key === 'd' && !e.shiftKey) { e.preventDefault(); duplicate(ids); return; }
+      if (e.ctrlKey && e.shiftKey && !e.altKey && key === 'l') { e.preventDefault(); state.toggleLockedMany(ids); return; }
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl && e.altKey && e.shiftKey && (['Equal', 'NumpadAdd', 'Minus', 'NumpadSubtract'].includes(e.code) || ['+', '=', '-', '_'].includes(e.key))) {
+        e.preventDefault();
+        state.resizeItems(ids, ['Equal', 'NumpadAdd'].includes(e.code) || ['+', '='].includes(e.key) ? 1.1 : 1 / 1.1);
+        return;
+      }
+      if (ctrl && !e.shiftKey && !e.altKey && key === 'a') { e.preventDefault(); state.selectAll(); return; }
+      if (ctrl && e.altKey && !e.shiftKey && key === 'c') { e.preventDefault(); clipboard.copyStyle(); return; }
+      if (ctrl && e.altKey && !e.shiftKey && key === 'v') { e.preventDefault(); clipboard.pasteStyle(ids); return; }
+      if (ctrl && !e.altKey && !e.shiftKey && key === 'c') { e.preventDefault(); clipboard.copy(ids); return; }
+      if (ctrl && !e.altKey && !e.shiftKey && key === 'x') { e.preventDefault(); clipboard.cut(ids); return; }
+      if (ctrl && !e.altKey && !e.shiftKey && key === 'v') { e.preventDefault(); clipboard.paste(); return; }
+      if (ctrl && !e.altKey && e.key === 'Backspace') { e.preventDefault(); clipboard.clearContent(ids); return; }
+      if (e.altKey && !ctrl && e.key === 'F10') { e.preventDefault(); contextToolbar.focus(); return; }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) {
-        if (['PageUp', 'PageDown'].includes(e.key)) { e.preventDefault(); state.reorderItem(id, e.key === 'PageUp'); return; }
-        const types = { n: 'sticky_note', t: 'text', s: 'shape', r: 'shape', o: 'shape', f: 'frame' };
-        if (types[key]) { e.preventDefault(); openCreateDialog(types[key]); if (key === 'o') document.querySelector('[name="item-shape"][value="circle"]').checked = true; return; }
+        if (['PageUp', 'PageDown'].includes(e.key)) { e.preventDefault(); state.reorderItems(ids, e.key === 'PageUp'); return; }
+        if (TOOL_KEYS[key]) { e.preventDefault(); activateTool(TOOL_KEYS[key], true); return; }
         if (key === 'l') { e.preventDefault(); openLinkDialog(); return; }
+        if (e.key === 'Escape') {
+          if (canvas.cancelTool()) { e.preventDefault(); return; }
+          if (state.getSelectedIds().length) { e.preventDefault(); state.setSelection([], true); return; }
+        }
+        const onControl = e.target.closest('button, a, [role="menuitem"]');
+        if (e.key === 'Enter' && !onControl && canvas.isCreationTool()) { e.preventDefault(); createAtCenter(canvas.getTool()); return; }
+        if (['Delete', 'Backspace'].includes(e.key) && !onControl && state.getSelectedIds().length) { e.preventDefault(); state.removeItems(state.getSelectedIds()); return; }
       }
     }
 
@@ -312,24 +407,6 @@ function setupShortcuts() {
     else if (e.code === 'Digit1' && e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomToFit(); }
 
   });
-}
-
-function openCreateDialog(type) {
-  editingId = null;
-  const dialog = document.getElementById('dialog-item');
-  const form = dialog.querySelector('form');
-  form.reset();
-  const titles = { sticky_note: 'Nouveau post-it', shape: 'Nouvelle forme', text: 'Nouveau texte', card: 'Nouvelle carte', frame: 'Nouveau cadre' };
-  dialog.querySelector('.dialog-title').textContent = titles[type] || 'Nouvel élément';
-  dialog.querySelector('[name="item-type"]').value = type;
-  dialog.querySelector('.dialog-submit').textContent = 'Créer';
-  dialog.querySelector('.dialog-delete').hidden = true;
-  toggleFieldsets(type);
-  const center = canvas.getViewCenter();
-  form.querySelector('[name="item-x"]').value = center.x;
-  form.querySelector('[name="item-y"]').value = center.y;
-  updateParentSelect();
-  dialog.showModal();
 }
 
 function openEditDialog(id) {
@@ -394,17 +471,11 @@ function submitItemForm() {
   if (type === 'sticky_note') data.color = fd.get('item-color') || 'light_yellow';
   if (type === 'shape') data.shape = fd.get('item-shape') || 'rectangle';
   if (type === 'card') data.title = fd.get('item-title') || '';
-  if (type === 'text') { data.width = 200; data.height = 30; }
+  if (type === 'text') { delete data.width; delete data.height; }
+  if (type === 'sticky_note') data.size = state.sizeFromWidth(data.width);
   const parent = fd.get('item-parent');
   data.parent = parent && type !== 'frame' ? parent : null;
-  if (editingId) {
-    state.updateItem(editingId, data);
-    announcer.announce(`${state.TYPES[type]} modifié`);
-  } else {
-    const item = state.addItem(data);
-    announcer.announce(`${state.TYPES[type]} ajouté`);
-    if (currentView === 'canvas') requestAnimationFrame(() => canvas.focusItem(item.id));
-  }
+  if (editingId && state.updateItem(editingId, data)) announcer.announce(`${state.TYPES[type]} modifié`);
   editingId = null;
   dialog.close();
 }

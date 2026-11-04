@@ -19,6 +19,16 @@ Les raccourcis de création et d’organisation s’appliquent au Canevas, hors 
 - Barres de création et de zoom flottantes, adaptées aux petits écrans.
 - Thème DWES violet ; application disponible sur https://baro.dwes.fr.
 
+### Manipulation directe (1.3.0)
+
+- **Outils** Sélection (V) et Main (H) ; outils de création post-it (N, avec panneau de 16 couleurs), texte (T), forme (S, R, O), carte et cadre (F) : un clic sur le canevas pose l’élément sous le pointeur, le sélectionne et ouvre l’édition du texte. Échap annule l’outil.
+- **Voie 100 % clavier** : Entrée sur un bouton d’outil, ou Entrée après la touche de l’outil, crée l’élément au centre de la vue.
+- **Édition sur place** au double-clic ou à Entrée, dans une zone de texte superposée à l’objet (suit le zoom et le déplacement de la vue) ; Échap, Ctrl+Entrée ou un clic à l’extérieur valide, en une seule entrée d’historique. Taille de police « Auto » pour les post-its.
+- **Poignées** d’angle pour redimensionner (Maj garde les proportions) et **points bleus** pour tirer une flèche vers un autre objet. Équivalents clavier : Ctrl+Alt+Maj+plus/moins, et L pour le dialogue de lien.
+- **Sélection multiple** : rectangle de sélection sur le fond, Maj+clic ou Ctrl+clic, Ctrl+A ; cases à cocher dans le Plan (avec `aria-selected`) et le Tableau. Déplacer, supprimer, dupliquer, verrouiller, changer la couleur s’appliquent à toute la sélection en une entrée d’historique.
+- **Presse-papiers** : Ctrl+C / X / V (interne, plus le presse-papiers système en JSON si disponible), collage décalé de 20 px avec les liens internes conservés ; Ctrl+Alt+C / V pour le style ; Ctrl+Retour arrière pour effacer le contenu.
+- **Barre contextuelle** flottante au-dessus de la sélection (en bas de l’écran sur mobile), atteignable par Alt+F10 : couleur, taille du texte (Auto, +, −), gras, alignement, taille du post-it (P/M/G), type de forme, type de ligne, verrouiller, dupliquer, supprimer, Propriétés… (dialogue complet) et menu Plus (copier, coller, style, premier plan, arrière-plan, créer un cadre autour).
+
 ## Lancement
 
 ```
@@ -40,10 +50,21 @@ Puis ouvrir `http://localhost:8080`.
 
 | Raccourci | Action |
 |-----------|--------|
-| N | Nouveau post-it |
-| T / S / R / O / L / F | Texte / forme / rectangle / cercle / lien / cadre |
-| Ctrl+D | Dupliquer l’élément |
+| V / H | Outil Sélection / outil Main |
+| N / T / S / R / O / F | Outil post-it / texte / forme / rectangle / cercle / cadre (clic pour poser) |
+| Entrée (outil actif ou bouton d’outil) | Créer au centre de la vue |
+| L | Nouveau lien (dialogue) |
+| Entrée / double-clic | Modifier le texte sur place |
+| Échap | Valider le texte, annuler l’outil ou désélectionner |
+| Alt+F10 | Aller à la barre contextuelle |
+| Ctrl+A | Tout sélectionner |
+| Maj+clic / Ctrl+clic | Ajouter ou retirer de la sélection |
+| Ctrl+C / Ctrl+X / Ctrl+V | Copier / couper / coller |
+| Ctrl+Alt+C / Ctrl+Alt+V | Copier / coller le style |
+| Ctrl+Retour arrière | Effacer le contenu |
+| Ctrl+D | Dupliquer la sélection |
 | Ctrl+Maj+L | Verrouiller / déverrouiller |
+| Ctrl+Alt+Maj+plus / moins | Agrandir / réduire |
 | Page précédente / Page suivante | Premier plan / arrière-plan |
 | Ctrl+Alt+Maj+flèches | Objet le plus proche dans la direction |
 | Ctrl+Maj+flèche bas / haut | Entrer dans un cadre / sortir vers son parent |
@@ -53,13 +74,13 @@ Puis ouvrir `http://localhost:8080`.
 | +/- | Zoom avant/arrière |
 | 0 | Réinitialiser le zoom |
 | Maj+1 | Tout afficher (ajuster la vue au contenu) |
-| Glisser le fond / molette | Déplacer la vue |
+| Glisser le fond (outil Main ou Espace maintenu) / molette | Déplacer la vue |
+| Glisser le fond (outil Sélection) | Rectangle de sélection |
 | Ctrl+molette | Zoomer sur le pointeur |
 | Tab / Maj+Tab | Naviguer entre les éléments |
-| Flèches | Déplacer l'élément (10 px) |
+| Flèches | Déplacer la sélection (10 px) |
 | Maj+Flèches | Déplacer en grand pas (50 px) |
-| Entrée | Éditer l'élément |
-| Suppr | Supprimer l'élément |
+| Suppr | Supprimer la sélection |
 
 ## Modèle de données
 
@@ -90,7 +111,7 @@ Puis ouvrir `http://localhost:8080`.
 {
   "name": "Mon tableau",
   "items": [
-    { "id": "item-1", "type": "sticky_note", "x": 100, "y": 100, "width": 150, "height": 150, "content": "Idée", "color": "light_yellow" },
+    { "id": "item-1", "type": "sticky_note", "x": 100, "y": 100, "width": 150, "height": 150, "content": "Idée", "color": "light_yellow", "size": "m", "fontSize": "auto", "bold": false, "align": "center" },
     { "id": "item-2", "type": "shape", "x": 300, "y": 200, "width": 120, "height": 80, "shape": "rectangle", "content": "Étape" },
     { "id": "item-3", "type": "text", "x": 500, "y": 100, "width": 200, "height": 30, "content": "Note" },
     { "id": "item-4", "type": "card", "x": 100, "y": 400, "width": 200, "height": 120, "title": "Titre", "content": "Description" },
@@ -101,6 +122,8 @@ Puis ouvrir `http://localhost:8080`.
 ```
 
 Types : `sticky_note`, `shape`, `text`, `card`, `frame`, `connector`.
+
+Mise en forme (hors liens) : `fontSize` (`"auto"` ou nombre de pixels), `bold`, `align` (`left`, `center`, `right`) ; post-its : `size` (`s`, `m`, `l`). Les anciens tableaux reçoivent des valeurs par défaut au chargement (post-it : Auto, centré ; forme : 14, centré ; texte : 16 ; carte : 13), sans perte de données.
 
 ## Accessibilité
 
@@ -116,7 +139,7 @@ Types : `sticky_note`, `shape`, `text`, `card`, `frame`, `connector`.
 ## Limites
 
 - Pas de collaboration en temps réel (l'état JSON est conçu pour être sérialisable).
-- Pas de redimensionnement à la souris.
+- Pas de groupes (Ctrl+G) ni de mise en forme riche du texte (italique, souligné).
 - Pas de courbes de Bézier pour les connecteurs.
 - Stockage local uniquement (localStorage).
 
@@ -128,5 +151,5 @@ Les tests E2E utilisent Playwright (Chromium headless).
 cd tests
 npm install playwright
 npx playwright install chromium
-node e2e.mjs
+node e2e.mjs   # sert le dossier parent du script sur le port 8765
 ```

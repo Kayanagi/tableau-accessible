@@ -11,10 +11,10 @@ export function init(el) {
 
 export function render() {
   if (!container) return;
+  const focusedId = container.contains(document.activeElement) ? document.activeElement.dataset.selectId : null;
   container.innerHTML = '';
 
   const items = state.getItems();
-  const selectedId = state.getSelectedId();
 
   if (items.length === 0) {
     const p = document.createElement('p');
@@ -33,6 +33,10 @@ export function render() {
 
   const thead = document.createElement('thead');
   const headerRow = document.createElement('tr');
+  const selTh = document.createElement('th');
+  selTh.setAttribute('scope', 'col');
+  selTh.textContent = 'Sélection';
+  headerRow.appendChild(selTh);
 
   const columns = [
     { key: 'type', label: 'Type' },
@@ -96,8 +100,18 @@ export function render() {
   const tbody = document.createElement('tbody');
   for (const item of sorted) {
     const tr = document.createElement('tr');
-    if (item.id === selectedId) tr.classList.add('table-selected');
+    if (state.isSelected(item.id)) tr.classList.add('table-selected');
     tr.setAttribute('data-id', item.id);
+    const selTd = document.createElement('td');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'select-box';
+    cb.checked = state.isSelected(item.id);
+    cb.dataset.selectId = item.id;
+    cb.setAttribute('aria-label', `Sélectionner : ${state.getItemLabel(item)}`);
+    cb.addEventListener('change', () => state.toggleSelected(item.id));
+    selTd.appendChild(cb);
+    tr.appendChild(selTd);
 
     tr.appendChild(createTd((state.TYPES[item.type] || item.type) + (item.locked ? ' — 🔒 Verrouillé' : '')));
     tr.appendChild(createTd(getContentDisplay(item)));
@@ -130,6 +144,7 @@ export function render() {
 
   table.appendChild(tbody);
   container.appendChild(table);
+  if (focusedId) container.querySelector(`[data-select-id="${focusedId}"]`)?.focus();
 }
 
 function createTd(text) {

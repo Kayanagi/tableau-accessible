@@ -13,7 +13,7 @@ function log(label, ok, detail) {
 }
 
 const server = spawn('python3', ['-m', 'http.server', String(PORT)], {
-  cwd: '/var/www/tableau-accessible', stdio: 'pipe'
+  cwd: new URL('..', import.meta.url).pathname, stdio: 'pipe'
 });
 await new Promise(r => setTimeout(r, 800));
 
@@ -79,11 +79,12 @@ try {
 
   // --- Board features ---
   // Add a sticky note
-  await page.click('#btn-sticky');
-  await page.waitForSelector('#dialog-item[open]');
-  await page.fill('[name="item-content"]', 'Test post-it');
-  await page.click('.dialog-submit');
-  await page.waitForFunction(() => !document.querySelector('#dialog-item[open]'));
+  await page.focus('#btn-sticky');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.inline-editor');
+  await page.keyboard.type('Test post-it');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.inline-editor') && /ajout/.test(document.getElementById('announcer').textContent));
   const announce1 = await page.textContent('#announcer');
   log('Board : post-it créé', announce1 && announce1.includes('ajout'), announce1);
 
@@ -148,7 +149,7 @@ try {
 
   // Back to home
   await page.click('a[href="#/"]');
-  await page.waitForSelector('#dashboard-title');
+  await page.waitForFunction(() => location.hash === '#/' && !/favoris/i.test(document.querySelector('#dashboard-title')?.textContent || ''));
 
   // --- Rename ---
   const renameBtns = await page.$$('button:text("Renommer")');
@@ -255,11 +256,11 @@ try {
   }, items);
   const focus = async id => page.evaluate(async id => (await import('/js/views/canvas.js')).focusItem(id), id);
   const snapshot = () => page.evaluate(async () => (await import('/js/state.js')).getSnapshot());
-  for (const [key, type] of [['n', 'sticky_note'], ['t', 'text'], ['r', 'shape'], ['l', 'connector']]) {
+  for (const [key, button] of [['n', 'btn-sticky'], ['t', 'btn-text'], ['r', 'btn-shape'], ['l', null]]) {
     await page.focus('#board-title');
     await page.keyboard.press(key);
-    const dialog = type === 'connector' ? '#dialog-link' : '#dialog-item';
-    log(`Raccourci ${key.toUpperCase()} : dialogue`, await page.locator(dialog).evaluate(el => el.open));
+    if (button) log(`Raccourci ${key.toUpperCase()} : outil actif`, await page.getAttribute(`#${button}`, 'aria-pressed') === 'true' && await page.locator('.canvas-svg').getAttribute('data-tool') !== 'select');
+    else log(`Raccourci ${key.toUpperCase()} : dialogue`, await page.locator('#dialog-link').evaluate(el => el.open));
     if (key === 'n') {
       const palette = await page.locator('[name="item-color"]').evaluateAll(els => els.map(el => ({ label: el.getAttribute('aria-label'), color: el.nextElementSibling.style.backgroundColor })));
       const expected = ['#fff79e','#ffe86d','#ffb575','#ff9e9e','#ffd2f2','#fd9ae7','#b2d0fe','#b8acfb','#9ce6ff','#86b4f9','#81e7de','#6ae08d','#d1f09f','#b3e65f','#f3f5f7','#151515'];
@@ -302,15 +303,207 @@ try {
   log('Lien orthogonal : dialogue et tracé SVG', (await snapshot()).items.at(-1).lineType === 'orthogonal' && / H .* V .* H /.test(await page.locator('.type-connector path').first().getAttribute('d')));
   await page.click('#tab-outline');
   await page.keyboard.press('n');
-  log('Raccourcis désactivés dans le Plan', !await page.locator('#dialog-item').evaluate(el => el.open));
+  log('Raccourcis désactivés dans le Plan', !await page.locator('#dialog-item').evaluate(el => el.open) && await page.getAttribute('#btn-sticky', 'aria-pressed') === 'false');
   await page.click('#tab-canvas');
-  await page.click('#btn-sticky');
-  await page.fill('[name="item-content"]', 'ntrl');
-  log('Raccourcis désactivés dans un champ', await page.inputValue('[name="item-content"]') === 'ntrl' && !await page.locator('#dialog-link').evaluate(el => el.open));
+  await page.focus('#btn-sticky');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.inline-editor');
+  await page.keyboard.type('ntrl');
+  log('Raccourcis désactivés dans un champ', await page.inputValue('.inline-editor') === 'ntrl' && !await page.locator('#dialog-link').evaluate(el => el.open) && await page.getAttribute('#btn-text', 'aria-pressed') === 'false');
   await page.keyboard.press('Escape');
   await page.focus('#btn-sticky');
   await page.keyboard.press('ArrowDown');
   log('Barre de création : navigation par flèches', await page.evaluate(() => document.activeElement.id) === 'btn-shape');
+
+  // === Manipulation directe (1.3.0) ===
+  const canvasCall = (fn, arg) => page.evaluate(async ({ fn, arg }) => (await import('/js/views/canvas.js'))[fn](arg), { fn, arg });
+  const box = id => page.locator(`#canvas-items [data-id="${id}"] > :first-child`).boundingBox();
+  const mid = b => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
+  const selection = () => page.evaluate(async () => (await import('/js/state.js')).getSelectedIds());
+  const announced = re => page.waitForFunction(src => new RegExp(src).test(document.getElementById('announcer').textContent), re.source);
+  const drag = async (from, to, mods = []) => {
+    for (const m of mods) await page.keyboard.down(m);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 3 });
+    await page.mouse.move(to.x, to.y, { steps: 3 });
+    await page.mouse.up();
+    for (const m of mods) await page.keyboard.up(m);
+  };
+  const clickWith = async (p, mods) => {
+    for (const m of mods) await page.keyboard.down(m);
+    await page.mouse.click(p.x, p.y);
+    for (const m of mods) await page.keyboard.up(m);
+  };
+  const fresh = async items => { await load(items); await canvasCall('zoomReset'); };
+
+  await fresh([]);
+  await page.focus('#board-title');
+  await page.keyboard.press('n');
+  const paletteOk = await page.locator('#sticky-palette input[name="tool-color"]').count() === 16 && await page.evaluate(() => document.activeElement.name === 'tool-color');
+  await page.keyboard.press('ArrowRight');
+  const svgBox = await page.locator('.canvas-svg').boundingBox();
+  const clickAt = { x: svgBox.x + 500, y: svgBox.y + 300 };
+  await page.mouse.click(clickAt.x, clickAt.y);
+  await page.waitForSelector('.inline-editor');
+  let snap = await snapshot();
+  const placed = await box(snap.items[0]?.id);
+  const c = mid(placed);
+  log('Outil N + clic : post-it posé sous le pointeur, couleur choisie, outil Sélection rétabli', paletteOk && snap.items.length === 1 && snap.items[0].color === 'miro_yellow' && Math.abs(c.x - clickAt.x) <= 2 && Math.abs(c.y - clickAt.y) <= 2 && await page.getAttribute('#btn-select', 'aria-pressed') === 'true', `centre ${c.x},${c.y} pour ${clickAt.x},${clickAt.y}`);
+  const editorBox = await page.locator('.inline-editor').boundingBox();
+  log('Édition sur place : zone de texte nommée, focalisée et superposée à l’objet', await page.evaluate(() => document.activeElement.classList.contains('inline-editor') && !!document.activeElement.getAttribute('aria-label')) && Math.abs(editorBox.x - placed.x) <= 3 && Math.abs(editorBox.width - placed.width) <= 3);
+  await page.keyboard.type('Bonjour');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.inline-editor'));
+  snap = await snapshot();
+  const created = snap.items[0];
+  await page.keyboard.press('Control+z');
+  log('Création + saisie : texte enregistré, focus rendu, une seule entrée d’historique', created.content === 'Bonjour' && (await snapshot()).items.length === 0);
+
+  await fresh([note('item-1', 100, 100, { content: 'Avant' })]);
+  await page.mouse.dblclick(...Object.values(mid(await box('item-1'))));
+  await page.waitForSelector('.inline-editor');
+  const before = await page.inputValue('.inline-editor');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.type('Après');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.inline-editor'));
+  const afterEdit = (await snapshot()).items[0].content;
+  const focusBack = await page.evaluate(() => document.activeElement.getAttribute('data-id'));
+  await page.keyboard.press('Control+z');
+  log('Double-clic, édition sur place puis Échap, annulable en une fois', before === 'Avant' && afterEdit === 'Après' && focusBack === 'item-1' && (await snapshot()).items[0].content === 'Avant');
+
+  await fresh([note('item-1', 100, 100, { width: 150, height: 150, content: 'Court' }), note('item-2', 300, 100, { width: 150, height: 150, content: 'Un texte bien plus long qui doit rétrécir pour tenir dans le post-it sans déborder' })]);
+  const sizes = await page.$$eval('#canvas-items .item-text', els => els.map(el => Number(el.getAttribute('font-size'))));
+  log('Taille de police Auto : le texte long est plus petit que le court', (await snapshot()).items[0].fontSize === 'auto' && sizes[0] > sizes[1], sizes.join(' / '));
+
+  await fresh([note('item-1', 100, 100), note('item-2', 400, 100), note('item-3', 700, 100)]);
+  await page.mouse.click(...Object.values(mid(await box('item-1'))));
+  const se = await page.locator('.handle-se').boundingBox();
+  await drag(mid(se), { x: mid(se).x + 50, y: mid(se).y + 30 });
+  const resized = (await snapshot()).items[0];
+  const nw = await page.locator('.handle-nw').boundingBox();
+  await drag(mid(nw), { x: mid(nw).x - 40, y: mid(nw).y }, ['Shift']);
+  const ratio = (await snapshot()).items[0];
+  log('Poignées : redimensionnement à la souris, Maj garde les proportions', resized.width === 150 && resized.height === 130 && resized.x === 100 && ratio.width === 190 && Math.abs(ratio.width / ratio.height - 150 / 130) < 0.02 && ratio.x + ratio.width === 250, `${resized.width}x${resized.height} puis ${ratio.width}x${ratio.height}`);
+  await page.keyboard.press('Control+Alt+Shift+Equal');
+  const grown = (await snapshot()).items[0];
+  log('Ctrl+Alt+Maj+plus agrandit l’objet', grown.width === Math.round(ratio.width * 1.1), `${grown.width}`);
+
+  await fresh([note('item-1', 100, 100), note('item-2', 400, 100), note('item-3', 700, 100)]);
+  await page.mouse.click(...Object.values(mid(await box('item-1'))));
+  const decorative = await page.getAttribute('#canvas-overlay', 'aria-hidden') === 'true';
+  await drag(mid(await page.locator('.link-dot').nth(3).boundingBox()), mid(await box('item-2')));
+  snap = await snapshot();
+  const link = snap.items.find(i => i.type === 'connector');
+  await page.mouse.click(...Object.values(mid(await box('item-1'))));
+  const dot = mid(await page.locator('.link-dot').nth(1).boundingBox());
+  await drag(dot, { x: dot.x, y: dot.y + 200 });
+  log('Point bleu : tirer vers un objet crée une flèche, relâcher dans le vide ne crée rien', decorative && link?.startId === 'item-1' && link.endId === 'item-2' && link.lineType === 'arrow' && (await snapshot()).items.length === 4);
+
+  const b1 = await box('item-1'), b2 = await box('item-2');
+  await page.keyboard.press('Escape');
+  await drag({ x: b1.x - 20, y: b1.y - 20 }, { x: b2.x + b2.width + 20, y: b2.y + b2.height + 20 });
+  await announced(/2 éléments sélectionnés/);
+  log('Rectangle de sélection sur le fond (outil Sélection) et annonce', JSON.stringify((await selection()).sort()) === '["item-1","item-2"]');
+
+  await clickWith(mid(await box('item-3')), ['Shift']);
+  const three = (await selection()).length;
+  await clickWith(mid(await box('item-1')), ['Control']);
+  log('Maj+clic et Ctrl+clic ajoutent et retirent', three === 3 && JSON.stringify((await selection()).sort()) === '["item-2","item-3"]');
+
+  const starts = (await snapshot()).items.map(i => i.x);
+  await drag(mid(await box('item-2')), { x: mid(await box('item-2')).x + 30, y: mid(await box('item-2')).y });
+  const moved = (await snapshot()).items.map(i => i.x);
+  await page.keyboard.press('Control+z');
+  log('Glisser déplace toute la sélection, une entrée d’historique', moved[1] === starts[1] + 30 && moved[2] === starts[2] + 30 && moved[0] === starts[0] && (await snapshot()).items[2].x === starts[2]);
+
+  await focus('item-1');
+  await page.keyboard.press('Control+a');
+  await announced(/4 éléments sélectionnés/);
+  await page.keyboard.press('Delete');
+  const emptied = (await snapshot()).items.length;
+  await page.keyboard.press('Control+z');
+  log('Ctrl+A, Suppr puis Ctrl+Z', emptied === 0 && (await snapshot()).items.length === 4);
+
+  await focus('item-1');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('Control+c');
+  await page.keyboard.press('Control+v');
+  snap = await snapshot();
+  const pasted = snap.items.slice(4);
+  const pastedLink = pasted.find(i => i.type === 'connector');
+  const ids = pasted.map(i => i.id);
+  log('Copier/coller : décalage de 20 px, nouveaux ids, lien conservé', pasted.length === 4 && pasted[0].x === 120 && pasted[0].y === 120 && ids.includes(pastedLink?.startId) && ids.includes(pastedLink?.endId) && !snap.items.slice(0, 4).some(i => ids.includes(i.id)) && (await selection()).length === 3);
+  await page.keyboard.press('Control+x');
+  log('Couper retire la sélection', (await snapshot()).items.length === 4);
+
+  await fresh([note('item-1', 100, 100, { color: 'red', bold: true }), note('item-2', 400, 100), note('item-3', 700, 100, { content: 'À effacer' })]);
+  await focus('item-1');
+  await page.keyboard.press('Control+Alt+c');
+  await focus('item-2');
+  await page.keyboard.press('Control+Alt+v');
+  await focus('item-3');
+  await page.keyboard.press('Control+Backspace');
+  snap = await snapshot();
+  log('Copier/coller le style et effacer le contenu', snap.items[1].color === 'red' && snap.items[1].bold === true && snap.items[2].content === '');
+
+  await fresh([note('item-1', 100, 100), note('item-2', 400, 100), note('item-3', 700, 100)]);
+  await page.mouse.click(...Object.values(mid(await box('item-1'))));
+  await clickWith(mid(await box('item-2')), ['Shift']);
+  const bar = page.locator('.context-toolbar');
+  const barBox = await bar.boundingBox();
+  const selTop = Math.min((await box('item-1')).y, (await box('item-2')).y);
+  const roving = await bar.locator('button[tabindex="0"]').count();
+  log('Barre contextuelle : toolbar nommée, au-dessus de la sélection, un seul arrêt Tab', await bar.getAttribute('role') === 'toolbar' && await bar.getAttribute('aria-label') === 'Mise en forme de la sélection' && barBox.y + barBox.height <= selTop && roving === 1);
+  await bar.locator('[data-key="color"]').click();
+  await page.locator('.context-menu [role="menuitemradio"]').nth(7).click();
+  await bar.locator('[data-key="bold"]').click();
+  snap = await snapshot();
+  const styled = snap.items.slice(0, 2).every(i => i.color === 'violet' && i.bold);
+  await page.keyboard.press('Control+z');
+  snap = await snapshot();
+  log('Barre contextuelle : couleur et gras appliqués aux deux éléments, gras annulé en une fois', styled && snap.items[1].color === 'violet' && !snap.items[0].bold && !snap.items[1].bold);
+
+  await focus('item-1');
+  await page.keyboard.press('Alt+F10');
+  const inBar = await page.evaluate(() => !!document.activeElement.closest('.context-toolbar'));
+  await page.keyboard.press('Home');
+  await page.keyboard.press('ArrowRight');
+  const second = await page.evaluate(() => document.activeElement.dataset.key);
+  await page.keyboard.press('Escape');
+  log('Alt+F10 vers la barre, flèches, Échap revient à l’objet', inBar && second === 'font-auto' && await page.evaluate(() => document.activeElement.getAttribute('data-id')) === 'item-1');
+
+  await page.keyboard.press('h');
+  const vb = await page.getAttribute('.canvas-svg', 'viewBox');
+  const handStart = mid(await box('item-1'));
+  await drag(handStart, { x: handStart.x + 80, y: handStart.y + 40 });
+  log('Outil Main : glisser un objet déplace la vue, pas l’objet', await page.getAttribute('#btn-hand', 'aria-pressed') === 'true' && (await snapshot()).items[0].x === 100 && await page.getAttribute('.canvas-svg', 'viewBox') !== vb);
+  await page.keyboard.press('v');
+
+  await fresh([]);
+  await page.focus('#btn-text');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.inline-editor');
+  await page.keyboard.type('Au clavier');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.inline-editor'));
+  snap = await snapshot();
+  const center = await page.evaluate(async () => (await import('/js/views/canvas.js')).getViewCenter());
+  const t = snap.items[0];
+  log('Voie clavier : Entrée sur le bouton crée au centre de la vue et édite', t?.type === 'text' && t.content === 'Au clavier' && Math.abs(t.x + t.width / 2 - center.x) <= 10 && Math.abs(t.y + t.height / 2 - center.y) <= 10 && await page.evaluate(id => document.activeElement.getAttribute('data-id') === id, t.id));
+
+  await fresh([note('item-1', 100, 100), note('item-2', 400, 100)]);
+  await focus('item-1');
+  await page.keyboard.press('Control+a');
+  await page.click('#tab-outline');
+  const outlineSel = await page.$$eval('#view-outline [role="treeitem"][aria-selected="true"]', els => els.length);
+  await page.locator('#view-outline .select-box').first().uncheck();
+  const afterUncheck = await selection();
+  await page.click('#tab-table');
+  const tableChecked = await page.$$eval('#view-table .select-box:checked', els => els.length);
+  log('Plan et Tableau : sélection multiple synchronisée (aria-selected, cases à cocher)', outlineSel === 2 && JSON.stringify(afterUncheck) === '["item-2"]' && tableChecked === 1);
+  await page.click('#tab-canvas');
 
   log('Pas d\'erreurs console (1280px)', errors.length === 0, errors.join('; '));
   await ctx.close();
@@ -352,6 +545,17 @@ try {
     const backBtn = await p320.$('.btn-back');
     const backBox = await backBtn?.boundingBox();
     log('320px : bouton retour accessible', backBox && backBox.width >= 24 && backBox.height >= 24, `${backBox?.width}x${backBox?.height}`);
+
+    const firstId = await p320.evaluate(async () => (await import('/js/state.js')).getItems().find(i => i.type !== 'connector').id);
+    await p320.evaluate(async id => (await import('/js/views/canvas.js')).focusItem(id), firstId);
+    await p320.waitForSelector('.context-toolbar.is-docked:not([hidden])');
+    const ctx = await p320.locator('.context-toolbar').boundingBox();
+    const creation = await p320.locator('.creation-toolbar').boundingBox();
+    await p320.keyboard.press('n');
+    const pal = await p320.locator('#sticky-palette').boundingBox();
+    const w320 = await p320.$eval('body', el => el.scrollWidth);
+    log('320px : barre contextuelle en bas, palette visible, sans débordement', w320 <= 320 && ctx.x >= 0 && ctx.x + ctx.width <= 320 && ctx.y + ctx.height <= creation.y && pal.x >= 0 && pal.x + pal.width <= 320, `scrollWidth=${w320}`);
+    await p320.keyboard.press('Escape');
   }
 
   log('320px : pas d\'erreurs console', err320.length === 0, err320.join('; '));

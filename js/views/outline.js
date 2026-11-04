@@ -9,6 +9,8 @@ export function init(el) {
 
 export function render() {
   if (!container) return;
+  const focused = container.contains(document.activeElement) ? document.activeElement : null;
+  const restore = focused?.dataset.selectId ? `[data-select-id="${focused.dataset.selectId}"]` : focused?.dataset.id ? `.outline-item-btn[data-id="${focused.dataset.id}"]` : null;
   container.innerHTML = '';
 
   const board = state.getBoard();
@@ -33,6 +35,7 @@ export function render() {
   const list = document.createElement('ul');
   list.setAttribute('role', 'tree');
   list.setAttribute('aria-label', 'Structure du tableau');
+  list.setAttribute('aria-multiselectable', 'true');
   list.classList.add('outline-tree');
 
   for (const frame of frames) {
@@ -83,13 +86,14 @@ export function render() {
   }
 
   container.appendChild(list);
+  if (restore) container.querySelector(restore)?.focus();
 }
 
 function createFrameNode(frame, selectedId) {
   const li = document.createElement('li');
   li.setAttribute('role', 'treeitem');
   li.setAttribute('aria-expanded', 'true');
-  if (frame.id === selectedId) li.classList.add('outline-selected');
+  markSelected(li, frame);
 
   const btn = document.createElement('button');
   btn.classList.add('outline-item-btn');
@@ -99,7 +103,7 @@ function createFrameNode(frame, selectedId) {
     state.setSelectedId(frame.id);
     dispatchFocus(frame.id);
   });
-  li.appendChild(btn);
+  li.append(selectBox(frame), btn);
 
   const children = state.getChildrenOf(frame.id);
   if (children.length > 0) {
@@ -123,7 +127,7 @@ function createFrameNode(frame, selectedId) {
 function createItemNode(item, selectedId, connectors) {
   const li = document.createElement('li');
   li.setAttribute('role', 'treeitem');
-  if (item.id === selectedId) li.classList.add('outline-selected');
+  markSelected(li, item);
 
   const btn = document.createElement('button');
   btn.classList.add('outline-item-btn');
@@ -136,7 +140,7 @@ function createItemNode(item, selectedId, connectors) {
     state.setSelectedId(item.id);
     dispatchFocus(item.id);
   });
-  li.appendChild(btn);
+  li.append(selectBox(item), btn);
 
   const links = connectors.filter(c => c.startId === item.id || c.endId === item.id);
   if (links.length > 0) {
@@ -160,7 +164,7 @@ function createItemNode(item, selectedId, connectors) {
 function createConnectorNode(c, selectedId) {
   const li = document.createElement('li');
   li.setAttribute('role', 'treeitem');
-  if (c.id === selectedId) li.classList.add('outline-selected');
+  markSelected(li, c);
 
   const btn = document.createElement('button');
   btn.classList.add('outline-item-btn');
@@ -172,8 +176,25 @@ function createConnectorNode(c, selectedId) {
     state.setSelectedId(c.id);
     dispatchFocus(c.id);
   });
-  li.appendChild(btn);
+  li.append(selectBox(c), btn);
   return li;
+}
+
+function markSelected(li, item) {
+  const on = state.isSelected(item.id);
+  li.setAttribute('aria-selected', String(on));
+  if (on) li.classList.add('outline-selected');
+}
+
+function selectBox(item) {
+  const cb = document.createElement('input');
+  cb.type = 'checkbox';
+  cb.className = 'select-box';
+  cb.checked = state.isSelected(item.id);
+  cb.dataset.selectId = item.id;
+  cb.setAttribute('aria-label', `Sélectionner : ${state.getItemLabel(item)}`);
+  cb.addEventListener('change', () => state.toggleSelected(item.id));
+  return cb;
 }
 
 function getTypeIcon(item) {
