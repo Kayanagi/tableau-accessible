@@ -59,8 +59,17 @@
           <button id="btn-zoom-fit" type="button" aria-keyshortcuts="Shift+1" title="Tout afficher (Maj+1)">Tout afficher</button>
         </div>
         <div class="toolbar-group" role="group" aria-label="Fichiers">
-          <button id="btn-export-json" type="button">Exporter JSON</button>
-          <button id="btn-export-md" type="button">Exporter Markdown</button>
+          <div class="export-control">
+            <button id="btn-export" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="export-menu">Exporter</button>
+            <div id="export-menu" role="menu" aria-label="Exporter le tableau" hidden>
+              <button id="btn-export-json" role="menuitem" tabindex="-1" data-format="json">JSON</button>
+              <button id="btn-export-md" role="menuitem" tabindex="-1" data-format="md">Markdown</button>
+              <button id="btn-export-svg" role="menuitem" tabindex="-1" data-format="svg">SVG</button>
+              <button id="btn-export-png" role="menuitem" tabindex="-1" data-format="png">PNG</button>
+              <button id="btn-export-csv" role="menuitem" tabindex="-1" data-format="csv">CSV</button>
+            </div>
+          </div>
+          <button id="btn-save-template" type="button">Enregistrer comme modèle</button>
           <button id="btn-import" type="button">Importer</button>
           <input id="file-import" type="file" accept=".json" class="sr-only" aria-label="Choisir un fichier JSON &agrave; importer" tabindex="-1">
         </div>

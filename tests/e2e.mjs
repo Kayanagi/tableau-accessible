@@ -62,7 +62,7 @@ try {
   log('Dashboard : lien d\'évitement', !!skipLink);
 
   const h1Text = await page.textContent('#dashboard-title');
-  log('Dashboard : h1 présent', h1Text && h1Text.includes('Tableau blanc accessible'), h1Text);
+  log('Dashboard : h1 présent', h1Text && h1Text.includes('Bon retour'), h1Text);
 
   // --- Create board from template ---
   const tplBtns = await page.$$('.template-btn');
@@ -72,7 +72,7 @@ try {
   await tplBtns[1].click();
   await page.waitForFunction(() => location.hash.startsWith('#/tableau/'));
   const boardH1 = await page.textContent('#board-title');
-  log('Création depuis modèle : titre', boardH1 === 'Organigramme', boardH1);
+  log('Création depuis modèle : titre', boardH1.endsWith('Organigramme'), boardH1);
 
   const svgItems = await page.$$('.canvas-item');
   log('Création depuis modèle : éléments SVG', svgItems.length >= 6, `${svgItems.length} éléments`);
@@ -103,7 +103,7 @@ try {
   await page.click('.btn-back');
   await page.waitForSelector('#dashboard-title');
   const backH1 = await page.textContent('#dashboard-title');
-  log('Retour dashboard : h1', backH1 && backH1.includes('Tableau blanc accessible'), backH1);
+  log('Retour dashboard : h1', backH1 && backH1.includes('Bon retour'), backH1);
 
   // --- Search ---
   const rows1 = await page.$$('.boards-table tbody tr');
@@ -196,9 +196,9 @@ try {
   await page.waitForSelector('#dialog-create-board[open]');
   await page.fill('[name="board-name"]', 'Mon tableau test');
   await page.click('#dialog-create-board .btn-primary');
-  await page.waitForFunction(() => document.getElementById('board-title')?.textContent === 'Mon tableau test', null, { timeout: 5000 }).catch(() => {});
+  await page.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Mon tableau test'), null, { timeout: 5000 }).catch(() => {});
   const createdTitle = await page.textContent('#board-title');
-  log('Création via dialog : titre', createdTitle === 'Mon tableau test', createdTitle);
+  log('Création via dialog : titre', createdTitle.endsWith('Mon tableau test'), createdTitle);
 
   // Go back
   await page.click('.btn-back');
@@ -248,7 +248,7 @@ try {
     return boards.create('Tests Miro', { name: 'Tests Miro', items: [] }).id;
   }));
   await page.waitForSelector('#app-board:not([hidden])');
-  await page.waitForFunction(() => document.getElementById('board-title')?.textContent === 'Tests Miro');
+  await page.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Tests Miro'));
   await page.waitForTimeout(100);
   const load = async items => page.evaluate(async items => {
     const state = await import('/js/state.js');
@@ -711,6 +711,94 @@ try {
   const newGroup = pastedMap.filter(i => i.type === 'sticky_note').map(i => i.groupId);
   log('Copier-coller : arbre et groupe recréés avec de nouveaux identifiants', pastedMap.length === 4 && pastedMap.some(i => i.parentNode === newRoot?.id) && newGroup[0] && newGroup[0] === newGroup[1] && newGroup[0] !== 'g1');
 
+  // Dashboard et modèles (1.5.0), contexte isolé.
+  const dashContext = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+  const d = await dashContext.newPage();
+  await d.goto(BASE + '/#/');
+  await d.waitForSelector('#btn-create-space');
+  await d.click('#btn-create-space');
+  await d.locator('dialog[open] input').fill('Atelier');
+  await d.locator('dialog[open] form button').first().click();
+  await d.waitForFunction(() => document.querySelector('.space-row a')?.textContent === 'Atelier');
+  log('Espace : création', await d.locator('.space-row a').count() === 1);
+  await d.getByRole('button', { name: 'Renommer l’espace Atelier', exact: true }).click();
+  await d.locator('dialog[open] input').fill('Équipe');
+  await d.locator('dialog[open] form button').first().click();
+  await d.waitForFunction(() => document.querySelector('.space-row a')?.textContent === 'Équipe');
+  log('Espace : renommage accentué', await d.locator('.space-row a').textContent() === 'Équipe');
+  await d.click('[data-template="retrospective"]');
+  await d.waitForFunction(() => location.hash.startsWith('#/tableau/'));
+  const dashBoardId = await d.evaluate(() => location.hash.split('/').pop());
+  await d.click('#board-title');
+  await d.fill('#board-title-input', 'Titre validé');
+  await d.keyboard.press('Enter');
+  await d.waitForFunction(() => document.querySelector('#board-title').textContent.includes('Titre validé'));
+  log('Titre : Entrée renomme et sauvegarde', await d.evaluate(async id => (await import('/js/store/boards.js')).get(id).nom, dashBoardId) === 'Titre validé');
+  await d.focus('#board-title'); await d.keyboard.press('Enter');
+  await d.fill('#board-title-input', 'À annuler'); await d.keyboard.press('Escape');
+  log('Titre : Échap annule', (await d.textContent('#board-title')).includes('Titre validé'));
+  await d.click('.btn-back');
+  await d.waitForSelector('.boards-table');
+  await d.locator('.boards-table select').selectOption('🚀');
+  log('Tableau : emoji affiché et sauvegardé', (await d.textContent('.board-link')).startsWith('🚀') && await d.evaluate(async id => (await import('/js/store/boards.js')).get(id).emoji, dashBoardId) === '🚀');
+  await d.getByRole('button', { name: 'Déplacer', exact: true }).click();
+  await d.locator('dialog[open] select').selectOption({ label: 'Équipe' });
+  await d.getByRole('button', { name: 'Déplacer le tableau', exact: true }).click();
+  log('Tableau : déplacement dans un espace', !!await d.evaluate(async id => (await import('/js/store/boards.js')).get(id).espaceId, dashBoardId));
+  await d.locator('.space-row a').click();
+  await d.waitForFunction(() => location.hash.startsWith('#/espace/') && document.querySelector('#dashboard-title')?.textContent === 'Équipe');
+  log('Route espace : tableau filtré', await d.locator('.board-link').count() === 1);
+  await d.getByRole('button', { name: 'Supprimer l’espace Équipe', exact: true }).click();
+  log('Espace : suppression confirmée par dialogue', await d.locator('dialog[open]').count() === 1);
+  await d.getByRole('button', { name: 'Confirmer la suppression', exact: true }).click();
+  await d.waitForFunction(() => location.hash === '#/' && !document.querySelector('.space-row'));
+  log('Espace : suppression conserve le tableau', await d.locator('.board-link').count() === 1);
+  await d.click('#btn-template-library');
+  await d.selectOption('#template-category', 'Agile');
+  log('Bibliothèque : filtre par catégorie', await d.locator('.library-results article').count() === 6);
+  await d.selectOption('#template-category', '');
+  await d.fill('#template-search', 'Persona');
+  log('Bibliothèque : recherche', await d.locator('.library-results article').count() === 1 && await d.locator('.library-results h3').textContent() === 'Persona');
+  log('Bibliothèque : aperçu SVG généré', await d.locator('.library-results svg rect').count() === 3);
+  await d.getByRole('button', { name: 'Utiliser ce modèle', exact: true }).click();
+  await d.waitForFunction(() => location.hash.startsWith('#/tableau/') && document.querySelector('#board-title')?.textContent.includes('Persona'));
+  log('Modèle : nombre exact d’objets créés', await d.evaluate(async () => (await import('/js/state.js')).getItems().length) === 3);
+  await d.click('#btn-save-template');
+  await d.locator('dialog[open] input').fill('Mon persona');
+  await d.locator('dialog[open] form button').first().click();
+  await d.click('.btn-back'); await d.waitForSelector('#btn-template-library');
+  await d.click('#btn-template-library'); await d.selectOption('#template-category', 'Mes modèles');
+  log('Modèle personnel : enregistré', await d.locator('.library-results h3').textContent() === 'Mon persona');
+  await d.getByRole('button', { name: 'Utiliser ce modèle', exact: true }).click();
+  await d.waitForFunction(() => location.hash.startsWith('#/tableau/'));
+  log('Modèle personnel : réutilisé sans perte', await d.evaluate(async () => (await import('/js/state.js')).getItems().length) === 3);
+  const downloadText = async format => {
+    await d.click('#btn-export');
+    const downloading = d.waitForEvent('download');
+    await d.click(`#btn-export-${format}`);
+    const stream = await (await downloading).createReadStream();
+    const chunks = [];
+    for await (const chunk of stream) chunks.push(chunk);
+    return Buffer.concat(chunks).toString('utf8');
+  };
+  const csvData = await downloadText('csv');
+  log('Export CSV : colonnes et contenu', csvData.includes('"étiquettes"') && csvData.includes('Contexte et habitudes') && csvData.includes('"card"'));
+  const svgData = await downloadText('svg');
+  log('Export SVG : objets et couleurs résolues', svgData.includes('canvas-items') && svgData.includes('Contexte') && !svgData.includes('var(--'));
+  await d.focus('#btn-export'); await d.keyboard.press('ArrowDown');
+  const firstExport = await d.evaluate(() => document.activeElement.id);
+  await d.keyboard.press('ArrowDown');
+  const secondExport = await d.evaluate(() => document.activeElement.id);
+  await d.keyboard.press('Escape');
+  log('Menu Exporter : flèches et Échap', firstExport === 'btn-export-json' && secondExport === 'btn-export-md' && await d.getAttribute('#btn-export', 'aria-expanded') === 'false' && await d.evaluate(() => document.activeElement.id) === 'btn-export');
+  await d.click('.btn-back'); await d.waitForSelector('#btn-template-library');
+  await d.click('#btn-template-library'); await d.selectOption('#template-category', 'Mes modèles');
+  await d.getByRole('button', { name: 'Supprimer le modèle', exact: true }).click();
+  await d.getByRole('button', { name: 'Confirmer la suppression', exact: true }).click();
+  await d.waitForFunction(() => document.querySelectorAll('.library-results article').length === 0);
+  log('Modèle personnel : suppression confirmée', await d.evaluate(async () => (await import('/js/store/templates.js')).getCustomTemplates().length) === 0);
+  await dashContext.close();
+
   log('Pas d\'erreurs console (1280px)', errors.length === 0, errors.join('; '));
   await ctx.close();
 
@@ -731,6 +819,8 @@ try {
   const bodyW = await p320.$eval('body', el => el.scrollWidth);
   log('320px : pas de débordement', bodyW <= 320, `scrollWidth=${bodyW}`);
 
+  log('320px : barre latérale repliée sans débordement', await p320.getAttribute('#btn-navigation', 'aria-expanded') === 'false' && await p320.isHidden('#dashboard-navigation') && bodyW <= 320);
+  await p320.click('#btn-navigation');
   const navLinks = await p320.$$('.nav-link');
   log('320px : nav visible', navLinks.length === 3);
 

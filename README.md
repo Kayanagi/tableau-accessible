@@ -6,9 +6,9 @@ Application statique de tableau blanc, accessible (WCAG 2.2 AA), multi-tableaux.
 
 - **Dashboard** : page d'accueil avec navigation (Accueil, Favoris, Parcourir), modèles de création, liste/grille des tableaux, recherche, tri, actions (ouvrir, renommer, dupliquer, favori, supprimer avec confirmation).
 - **Multi-tableaux** : chaque tableau a son propre espace dans le localStorage. Migration automatique depuis l'ancien format mono-tableau.
-- **Modèles** : Vierge, Organigramme/flux, Rétrospective 4 L, Feuille de route, Liste de tâches.
+- **Modèles** : bibliothèque de 20 modèles intégrés, catégories, recherche, description et aperçu SVG généré localement ; modèles personnels enregistrés sur cet appareil et supprimables.
 - **Trois vues synchronisées** par tableau : Canevas (SVG interactif), Plan (arborescence), Tableau (table triable).
-- **Import/export** : JSON (depuis le dashboard ou le tableau), Markdown (depuis le tableau).
+- **Import/export** : JSON (depuis le dashboard ou le tableau), menu Exporter dans le tableau : JSON, Markdown, CSV des éléments, SVG et PNG du canevas entier (échelle 2). Les couleurs calculées du thème sont intégrées au SVG.
 - **Accessibilité** : landmarks, lien d'évitement, annonces aria-live, focus visible, cibles ≥ 24 px, contraste AA, thème clair/sombre/contraste élevé, `prefers-reduced-motion`, responsive ≥ 320 px.
 
 Les raccourcis de création et d’organisation s’appliquent au Canevas, hors champs et dialogues. Les flèches permettent de parcourir les boutons des barres d’outils avec un seul arrêt de tabulation par barre.
@@ -18,6 +18,18 @@ Les raccourcis de création et d’organisation s’appliquent au Canevas, hors 
 - Verrouillage : déplacement, édition et suppression bloqués ; duplication, verrouillage et ordre annulables.
 - Barres de création et de zoom flottantes, adaptées aux petits écrans.
 - Thème DWES violet ; application disponible sur https://baro.dwes.fr.
+
+### Dashboard et modèles (1.5.0)
+
+La barre latérale regroupe Accueil (« Bon retour », modèles et tableaux récents), Favoris, Parcourir et Espaces. Le bouton « Menu de navigation » la replie ; elle est fermée initialement sur mobile. Les espaces sont des dossiers locaux : création, renommage, suppression confirmée sans supprimer les tableaux, déplacement depuis une ligne ou une carte.
+
+Chaque tableau peut recevoir un emoji parmi six choix. Son titre dans l’en-tête est éditable au clic ou avec Entrée : Entrée valide, Échap annule. « Enregistrer comme modèle » conserve une copie dans « Mes modèles » de la bibliothèque ouverte par « Tous les modèles ».
+
+Modèles intégrés : Vierge, Organigramme / flux, Rétrospective 4 L, Feuille de route, Liste de tâches, Brainstorming, Rétro Start/Stop/Continue, Daily stand-up, Kanban de projet, Diagramme de flux, Carte mentale, Matrice d’Eisenhower, SWOT, Persona, Parcours utilisateur, Lean canvas, User story map, Matrice effort/impact, Ordre du jour de réunion, Revue de sprint.
+
+Catégories : Réunions et ateliers, Idéation et brainstorming, Recherche et design, Agile, Stratégie et planification, Diagrammes et cartographie, Mes modèles. Les cinq identifiants historiques restent compatibles. Les données supplémentaires sont dans `js/store/template-library.js`.
+
+Le stockage `tableau-accessible-boards` passe en version 3 : collection `espaces` (id, nom), champs facultatifs `espaceId` (null) et `emoji` (📋) par tableau. Les tableaux et réglages antérieurs sont conservés. Les modèles personnels utilisent `tableau-accessible-templates`.
 
 ### Manipulation directe (1.3.0)
 
@@ -59,6 +71,7 @@ Puis ouvrir `http://localhost:8080`.
 | `#/` | Accueil (dashboard) |
 | `#/favoris` | Tableaux favoris |
 | `#/parcourir` | Tous les tableaux |
+| `#/espace/<id>` | Tableaux d’un espace local |
 | `#/tableau/<id>` | Tableau individuel |
 
 ## Raccourcis clavier (vue tableau)
@@ -112,7 +125,7 @@ Puis ouvrir `http://localhost:8080`.
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "tableaux": [
     {
       "id": "board-1234-abc",

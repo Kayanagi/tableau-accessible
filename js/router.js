@@ -5,6 +5,8 @@ function parseRoute(path) {
   if (!path || !path.startsWith('/')) {
     return { view: 'accueil', boardId: null };
   }
+  const spaceMatch = path.match(/^\/espace\/(.+)$/);
+  if (spaceMatch) return { view: 'espace', spaceId: spaceMatch[1], boardId: null };
   const boardMatch = path.match(/^\/tableau\/(.+)$/);
   if (boardMatch) return { view: 'tableau', boardId: boardMatch[1] };
   if (path === '/favoris') return { view: 'favoris', boardId: null };

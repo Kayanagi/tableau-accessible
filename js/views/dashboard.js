@@ -1,8 +1,11 @@
+import { ask, dialog } from '../ui/dialog.js';
+import { openLibrary } from './template-library.js';
 import * as boards from '../store/boards.js';
 import { TEMPLATES, getTemplate } from '../store/templates.js';
 import * as router from '../router.js';
 import { announce } from '../a11y/announcer.js';
 
+let navExpanded = !matchMedia('(max-width: 640px)').matches;
 let container = null;
 let searchQuery = '';
 let sortCol = 'dernièreOuverture';
@@ -28,11 +31,11 @@ export function render(route) {
   h1.id = 'dashboard-title';
   h1.setAttribute('tabindex', '-1');
   const titles = {
-    accueil: 'Tableau blanc accessible',
+    accueil: 'Bon retour',
     favoris: 'Tableaux favoris',
     parcourir: 'Tous les tableaux'
   };
-  h1.textContent = titles[route.view] || 'Tableau blanc accessible';
+  h1.textContent = route.view === 'espace' ? boards.getSpaces().find(s => s.id === route.spaceId)?.nom || 'Espace introuvable' : titles[route.view] || 'Tableau blanc accessible';
   header.appendChild(h1);
 
   const actions = document.createElement('div');
@@ -75,6 +78,14 @@ export function render(route) {
   const nav = document.createElement('nav');
   nav.setAttribute('aria-label', 'Navigation principale');
   nav.classList.add('dashboard-nav');
+  nav.id = 'dashboard-navigation';
+  nav.hidden = !navExpanded;
+  container.classList.toggle('nav-collapsed', !navExpanded);
+  const toggle = document.createElement('button');
+  toggle.id = 'btn-navigation'; toggle.textContent = 'Menu de navigation';
+  toggle.setAttribute('aria-controls', nav.id); toggle.setAttribute('aria-expanded', String(navExpanded));
+  toggle.onclick = () => { navExpanded = !navExpanded; nav.hidden = !navExpanded; toggle.setAttribute('aria-expanded', String(navExpanded)); container.classList.toggle('nav-collapsed', !navExpanded); };
+  actions.prepend(toggle);
   const navUl = document.createElement('ul');
   navUl.classList.add('nav-list');
   const navItems = [
@@ -93,6 +104,20 @@ export function render(route) {
     navUl.appendChild(li);
   }
   nav.appendChild(navUl);
+  const spacesTitle = document.createElement('h2'); spacesTitle.textContent = 'Espaces'; nav.append(spacesTitle);
+  for (const space of boards.getSpaces()) {
+    const row = document.createElement('div'); row.className = 'space-row';
+    const link = document.createElement('a'); link.href = `#/espace/${space.id}`; link.textContent = space.nom;
+    if (route.spaceId === space.id) link.setAttribute('aria-current', 'page');
+    const rename = document.createElement('button'); rename.textContent = 'Renommer'; rename.setAttribute('aria-label', `Renommer l’espace ${space.nom}`);
+    rename.onclick = () => ask('Renommer l’espace', space.nom, nom => { boards.renameSpace(space.id, nom); render(router.getRoute()); announce('Espace renommé'); });
+    const del = document.createElement('button'); del.textContent = 'Supprimer'; del.setAttribute('aria-label', `Supprimer l’espace ${space.nom}`);
+    del.onclick = () => ask(`Supprimer l’espace « ${space.nom} » ? Les tableaux seront conservés.`, '', () => { boards.removeSpace(space.id); if (route.spaceId === space.id) router.navigate('/'); else render(router.getRoute()); announce('Espace supprimé, tableaux conservés'); }, true);
+    row.append(link, rename, del); nav.append(row);
+  }
+  const add = document.createElement('button'); add.id = 'btn-create-space'; add.textContent = 'Créer un espace';
+  add.onclick = () => ask('Créer un espace', '', nom => { boards.createSpace(nom); render(router.getRoute()); announce('Espace créé'); });
+  nav.append(add);
   container.appendChild(nav);
 
   const main = document.createElement('main');
@@ -111,7 +136,7 @@ export function render(route) {
     const tplList = document.createElement('ul');
     tplList.classList.add('templates-list');
     tplList.setAttribute('role', 'list');
-    for (const tpl of TEMPLATES) {
+    for (const tpl of TEMPLATES.slice(0, 5)) {
       const li = document.createElement('li');
       const btn = document.createElement('button');
       btn.classList.add('template-btn');
@@ -129,6 +154,7 @@ export function render(route) {
       tplList.appendChild(li);
     }
     tplSection.appendChild(tplList);
+    const all = document.createElement('button'); all.id = 'btn-template-library'; all.textContent = 'Tous les modèles'; all.onclick = () => openLibrary(createFromTemplate); tplSection.append(all);
     main.appendChild(tplSection);
   }
 
@@ -192,6 +218,7 @@ function updateBoardsList(section, route) {
   section.querySelectorAll('.boards-table, .boards-grid, .boards-empty, .search-status').forEach(el => el.remove());
 
   let allBoards = route.view === 'favoris' ? boards.getFavoris() : boards.getAll();
+  if (route.view === 'espace') allBoards = allBoards.filter(b => b.espaceId === route.spaceId);
   let filtered = allBoards;
   if (searchQuery.trim()) {
     const q = searchQuery.trim().toLowerCase();
@@ -296,7 +323,7 @@ function renderTable(section, boardsList, route) {
     nameTd.setAttribute('data-label', 'Nom');
     const nameLink = document.createElement('a');
     nameLink.href = `#/tableau/${board.id}`;
-    nameLink.textContent = board.nom;
+    nameLink.textContent = `${board.emoji || '📋'} ${board.nom}`;
     nameLink.classList.add('board-link');
     nameTd.appendChild(nameLink);
     row.appendChild(nameTd);
@@ -374,6 +401,7 @@ function renderTable(section, boardsList, route) {
     delBtn.addEventListener('click', () => openDeleteDialog(board));
     actTd.appendChild(delBtn);
 
+    addBoardActions(actTd, board);
     row.appendChild(actTd);
     tbody.appendChild(row);
   }
@@ -393,7 +421,7 @@ function renderGrid(section, boardsList) {
     link.classList.add('board-card-link');
     const title = document.createElement('strong');
     title.classList.add('board-card-title');
-    title.textContent = board.nom;
+    title.textContent = `${board.emoji || '📋'} ${board.nom}`;
     link.appendChild(title);
     const meta = document.createElement('span');
     meta.classList.add('board-card-meta');
@@ -430,6 +458,7 @@ function renderGrid(section, boardsList) {
       openDeleteDialog(board);
     });
     actionsBar.appendChild(delBtn);
+    addBoardActions(actionsBar, board);
     li.appendChild(actionsBar);
     grid.appendChild(li);
   }
@@ -441,6 +470,7 @@ function createFromTemplate(templateId) {
   if (!tpl) return;
   const données = tpl.données();
   const board = boards.create(données.name || tpl.nom, données);
+  if (router.getRoute().spaceId) boards.moveToSpace(board.id, router.getRoute().spaceId);
   announce(`Tableau créé : ${board.nom}`);
   router.navigate(`/tableau/${board.id}`);
 }
@@ -461,6 +491,7 @@ export function handleCreateSubmit() {
   const données = tpl ? tpl.données() : { name: nom, items: [] };
   const board = boards.create(nom, données);
   dialog.close();
+  if (router.getRoute().spaceId) boards.moveToSpace(board.id, router.getRoute().spaceId);
   announce(`Tableau créé : ${board.nom}`);
   router.navigate(`/tableau/${board.id}`);
 }
@@ -547,4 +578,22 @@ function formatDate(isoStr) {
     const d = new Date(isoStr);
     return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   } catch { return isoStr; }
+}
+
+function addBoardActions(el, board) {
+  const emoji = document.createElement('select');
+  emoji.setAttribute('aria-label', `Emoji de ${board.nom}`);
+  for (const icon of boards.EMOJIS) emoji.add(new Option(icon, icon));
+  emoji.value = board.emoji || '📋';
+  emoji.onchange = () => { boards.setEmoji(board.id, emoji.value); const link = el.closest('tr, li').querySelector('.board-link, .board-card-title'); link.textContent = `${emoji.value} ${board.nom}`; announce('Emoji du tableau modifié'); };
+  const move = document.createElement('button'); move.textContent = 'Déplacer';
+  move.onclick = () => dialog(`Déplacer « ${board.nom} »`, d => {
+    const select = document.createElement('select'); select.setAttribute('aria-label', 'Espace de destination'); select.add(new Option('Sans espace', ''));
+    boards.getSpaces().forEach(s => select.add(new Option(s.nom, s.id)));
+    select.value = board.espaceId || '';
+    const ok = document.createElement('button'); ok.textContent = 'Déplacer le tableau';
+    ok.onclick = () => { d.close(); boards.moveToSpace(board.id, select.value); render(router.getRoute()); announce('Tableau déplacé'); };
+    d.append(select, ok);
+  });
+  el.append(emoji, move);
 }

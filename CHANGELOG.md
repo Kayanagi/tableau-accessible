@@ -2,6 +2,21 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.5.0] - 2026-11-04
+
+### Ajouté
+- Dashboard « Bon retour », navigation latérale repliable et menu mobile.
+- Espaces locaux : création, renommage, suppression confirmée conservant les tableaux, déplacement et route `#/espace/<id>`.
+- Emoji par tableau et renommage depuis l’en-tête avec Entrée / Échap et annonce.
+- Bibliothèque de 20 modèles avec catégories, recherche, descriptions et aperçus SVG locaux ; conservation des cinq identifiants historiques.
+- Enregistrement et suppression de modèles personnels sur l’appareil.
+- Menu Exporter accessible au clavier : JSON, Markdown, CSV, SVG aux couleurs calculées et PNG à l’échelle 2.
+- 20 tests couvrant le dashboard, les espaces, les modèles, les exports et le menu mobile à 320 px.
+
+### Modifié
+- Stockage version 3 avec migration additive des espaces et emoji ; tableaux et réglages conservés.
+- Documentation des fonctionnalités, routes, modèles et clés de stockage.
+
 ## [1.4.0] - 2026-11-04
 
 ### Ajouté

@@ -1,3 +1,5 @@
+import { LIBRARY, CATEGORIES } from './template-library.js';
+export { CATEGORIES };
 export const TEMPLATES = [
   {
     id: 'vierge',
@@ -73,6 +75,30 @@ export const TEMPLATES = [
   }
 ];
 
+const legacyCategories = [4, 5, 3, 4, 3];
+const legacyDescriptions = {
+  'Vierge': 'Un tableau vide pour partir de zéro.',
+  'Organigramme / flux': 'Étapes, décision oui/non et liens fléchés pour décrire un processus.',
+  'Rétrospective 4 L': 'Aimé, Appris, Manqué, Souhaité : quatre cadres pour faire le bilan.',
+  'Feuille de route': 'Quatre trimestres et des jalons pour planifier un projet.',
+  'Liste de tâches': 'Trois colonnes À faire, En cours, Fait.'
+};
+TEMPLATES.forEach((t, i) => { t.categorie = CATEGORIES[legacyCategories[i]]; t.description = legacyDescriptions[t.nom] || `Modèle ${t.nom}.`; });
+TEMPLATES.push(...LIBRARY);
+const KEY = 'tableau-accessible-templates';
+export function getCustomTemplates() {
+  try { return JSON.parse(localStorage.getItem(KEY) || '[]').map(t => ({ ...t, categorie: 'Mes modèles', données: () => JSON.parse(JSON.stringify(t.snapshot)) })); }
+  catch { return []; }
+}
+export function saveTemplate(nom, snapshot) {
+  const list = getCustomTemplates().map(({ données, ...t }) => t);
+  const t = { id: 'custom-' + Date.now() + Math.random().toString(36).slice(2, 6), nom, description: 'Modèle enregistré sur cet appareil.', snapshot: JSON.parse(JSON.stringify(snapshot)) };
+  localStorage.setItem(KEY, JSON.stringify([...list, t]));
+  return t;
+}
+export function removeTemplate(id) {
+  localStorage.setItem(KEY, JSON.stringify(getCustomTemplates().filter(t => t.id !== id).map(({ données, ...t }) => t)));
+}
 export function getTemplate(id) {
-  return TEMPLATES.find(t => t.id === id) || null;
+  return [...TEMPLATES, ...getCustomTemplates()].find(t => t.id === id) || null;
 }

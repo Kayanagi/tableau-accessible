@@ -1,3 +1,4 @@
+import * as boardActions from './views/board-actions.js';
 import * as state from './state.js';
 import * as announcer from './a11y/announcer.js';
 import * as canvas from './views/canvas.js';
@@ -42,7 +43,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 function onRouteChange(route, oldRoute) {
-  if (oldRoute && route.view === oldRoute.view && route.boardId === oldRoute.boardId) return;
+  if (oldRoute && route.view === oldRoute.view && route.boardId === oldRoute.boardId && route.spaceId === oldRoute.spaceId) return;
   if (route.view === 'tableau' && route.boardId) {
     showBoard(route.boardId);
   } else {
@@ -111,7 +112,7 @@ function showBoard(boardId) {
     if (currentBoardId) boards.saveData(currentBoardId, state.getSnapshot());
   });
 
-  document.getElementById('board-title').textContent = board.nom;
+  document.getElementById('board-title').textContent = `${board.emoji || '📋'} ${board.nom}`;
   requestAnimationFrame(() => canvas.zoomToFit());
   document.title = `${board.nom} — Tableau blanc accessible`;
 
@@ -131,6 +132,7 @@ function initBoardView() {
   commentsPanel.init(appBoard, document.getElementById('btn-comments'), gotoItem);
   outline.init(document.getElementById('view-outline'));
   table.init(document.getElementById('view-table'));
+  boardActions.init(() => currentBoardId);
   setupTabs();
   setupToolbar();
   setupDialogs();
@@ -185,7 +187,7 @@ function setupToolbar() {
   document.getElementById('btn-front').onclick = () => state.reorderItems(selected(), true);
   document.getElementById('btn-backward').onclick = () => state.reorderItems(selected(), false);
   document.querySelectorAll('#app-board [role="toolbar"]:not(.context-toolbar)').forEach(bar => {
-    const buttons = () => [...bar.querySelectorAll('button')].filter(b => !b.disabled && b.closest('[role="toolbar"]') === bar);
+    const buttons = () => [...bar.querySelectorAll('button')].filter(b => !b.disabled && !b.closest('[hidden], [role=menu]') && b.closest('[role="toolbar"]') === bar);
     const reset = () => { bar.querySelectorAll('button').forEach(b => { if (b.closest('[role="toolbar"]') === bar) b.tabIndex = -1; }); const all = buttons(); all.forEach((b, i) => b.tabIndex = i === 0 ? 0 : -1); };
     reset();
     bar.addEventListener('focusin', e => { if (e.target.matches('button') && e.target.closest('[role="toolbar"]') === bar) buttons().forEach(b => b.tabIndex = b === e.target ? 0 : -1); });
@@ -226,8 +228,6 @@ function setupToolbar() {
   document.getElementById('btn-zoom-out').addEventListener('click', () => canvas.zoomOut());
   document.getElementById('btn-zoom-reset').addEventListener('click', () => canvas.zoomReset());
   document.getElementById('btn-zoom-fit').addEventListener('click', () => canvas.zoomToFit());
-  document.getElementById('btn-export-json').addEventListener('click', () => io.exportJSON());
-  document.getElementById('btn-export-md').addEventListener('click', () => io.exportMarkdown());
   document.getElementById('btn-import').addEventListener('click', () => document.getElementById('file-import').click());
   document.getElementById('file-import').addEventListener('change', async (e) => {
     const file = e.target.files[0];
@@ -422,6 +422,11 @@ function setupDialogs() {
 }
 
 function setupDashboardDialogs() {
+  for (const id of ['dialog-rename-board', 'dialog-delete-board']) {
+    document.getElementById(id).addEventListener('close', () => {
+      if (document.activeElement === document.body) document.getElementById('dashboard-title')?.focus();
+    });
+  }
   const createD = document.getElementById('dialog-create-board');
   if (createD) {
     createD.querySelector('.dialog-cancel').addEventListener('click', () => createD.close());

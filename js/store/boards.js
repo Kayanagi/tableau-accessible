@@ -1,8 +1,8 @@
 const STORAGE_KEY = 'tableau-accessible-boards';
 const OLD_STORAGE_KEY = 'tableau-accessible-board';
-const CURRENT_VERSION = 2;
+const CURRENT_VERSION = 3;
 
-let data = { version: CURRENT_VERSION, tableaux: [] };
+let data = { version: CURRENT_VERSION, tableaux: [], espaces: [] };
 const listeners = new Set();
 
 function generateId() {
@@ -28,6 +28,10 @@ export function init() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       data = JSON.parse(raw);
+      data.espaces ||= [];
+      data.version = CURRENT_VERSION;
+      for (const b of data.tableaux) { b.emoji ||= '📋'; b.espaceId ||= null; }
+      save();
       return;
     }
     const oldRaw = localStorage.getItem(OLD_STORAGE_KEY);
@@ -67,6 +71,8 @@ export function create(nom, données) {
   const board = {
     id: generateId(),
     nom,
+    emoji: '📋',
+    espaceId: null,
     créé: now,
     dernièreOuverture: now,
     favori: false,
@@ -110,6 +116,8 @@ export function duplicate(id) {
   const copy = {
     id: generateId(),
     nom: original.nom + ' (copie)',
+    emoji: original.emoji || '📋',
+    espaceId: original.espaceId || null,
     créé: now,
     dernièreOuverture: now,
     favori: false,
@@ -140,4 +148,32 @@ export function touchOpened(id) {
   if (!board) return;
   board.dernièreOuverture = new Date().toISOString();
   save();
+}
+
+export const EMOJIS = ['📋', '💡', '🎯', '🚀', '🌱', '⭐'];
+export function setEmoji(id, emoji) {
+  const board = get(id);
+  if (!board || !EMOJIS.includes(emoji)) return;
+  board.emoji = emoji;
+  save(); notify();
+}
+export function getSpaces() { return data.espaces; }
+export function createSpace(nom) {
+  const space = { id: generateId().replace('board-', 'space-'), nom };
+  data.espaces.push(space); save(); notify(); return space;
+}
+export function renameSpace(id, nom) {
+  const space = data.espaces.find(s => s.id === id);
+  if (space) { space.nom = nom; save(); notify(); }
+}
+export function removeSpace(id) {
+  data.espaces = data.espaces.filter(s => s.id !== id);
+  for (const b of data.tableaux) if (b.espaceId === id) b.espaceId = null;
+  save(); notify();
+}
+export function moveToSpace(id, espaceId) {
+  const b = get(id);
+  if (b && (!espaceId || data.espaces.some(s => s.id === espaceId))) {
+    b.espaceId = espaceId || null; save(); notify();
+  }
 }

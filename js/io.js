@@ -134,3 +134,72 @@ function download(content, filename, mimeType) {
   a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
 }
+
+export function csvContent() {
+  const board = state.getBoard();
+  const quote = value => '"' + String(value ?? '').replace(/"/g, '""') + '"';
+  const rows = [['type', 'texte', 'couleur', 'x', 'y', 'étiquettes']];
+  for (const i of board.items) rows.push([i.type, [i.title, i.content, i.label, i.back, i.rows?.map(r => r.join(' | ')).join('\n'), i.columns?.map(c => `${c.name}: ${c.cards.map(v => v.text).join(', ')}`).join('\n')].filter(Boolean).join('\n'), i.color || '', i.x || 0, i.y || 0, (i.tags || []).map(id => board.tags?.find(t => t.id === id)?.name || id).join(', ')]);
+  return rows.map(r => r.map(quote).join(',')).join('\r\n');
+}
+export function exportCSV() {
+  download('\uFEFF' + csvContent(), `${state.getBoard().name}.csv`, 'text/csv;charset=utf-8');
+  announce('Éléments exportés en CSV');
+}
+export function svgContent() {
+  const source = document.querySelector('.canvas-svg');
+  const panel = source.closest('[role=tabpanel]');
+  const wasHidden = panel.hidden;
+  panel.hidden = false;
+  try {
+    const copy = source.cloneNode(true);
+    const originals = [source, ...source.querySelectorAll('*')];
+    const clones = [copy, ...copy.querySelectorAll('*')];
+    const props = ['fill', 'stroke', 'stroke-width', 'stroke-dasharray', 'stroke-linecap', 'stroke-linejoin', 'fill-opacity', 'stroke-opacity', 'opacity', 'font-family', 'font-size', 'font-weight', 'font-style', 'text-anchor', 'dominant-baseline', 'white-space', 'visibility', 'display'];
+    originals.forEach((el, i) => {
+      const style = getComputedStyle(el);
+      for (const prop of props) clones[i].style.setProperty(prop, style.getPropertyValue(prop));
+      for (const attr of el.attributes) if (attr.value.includes('var(--')) clones[i].setAttribute(attr.name, style.getPropertyValue(attr.name) || attr.value.replace(/var\((--[\w-]+)\)/g, (_, name) => style.getPropertyValue(name).trim()));
+      clones[i].removeAttribute('tabindex');
+      clones[i].classList.remove('selected');
+    });
+    const group = source.querySelector('#canvas-items');
+    const bounds = group.getBBox();
+    const x = bounds.x - 24, y = bounds.y - 24;
+    const width = Math.max(320, bounds.width + 48), height = Math.max(180, bounds.height + 48);
+    copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    copy.setAttribute('viewBox', `${x} ${y} ${width} ${height}`);
+    copy.setAttribute('width', width); copy.setAttribute('height', height);
+    copy.style.width = `${width}px`; copy.style.height = `${height}px`;
+    copy.style.background = getComputedStyle(source).backgroundColor;
+    copy.querySelectorAll(':scope > :not(defs):not(#canvas-items)').forEach(el => el.remove());
+    copy.querySelectorAll('.resize-handle, .connector-handle, .selection-outline').forEach(el => el.remove());
+    return { text: new XMLSerializer().serializeToString(copy), width, height };
+  } finally { panel.hidden = wasHidden; }
+}
+export function exportSVG() {
+  download(svgContent().text, `${state.getBoard().name}.svg`, 'image/svg+xml');
+  announce('Canevas exporté en SVG');
+}
+export async function exportPNG() {
+  const { text, width, height } = svgContent();
+  const url = URL.createObjectURL(new Blob([text], { type: 'image/svg+xml' }));
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.ceil(width * 2); canvas.height = Math.ceil(height * 2);
+    const context = canvas.getContext('2d');
+    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#f7f7fb';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    if (!blob) throw new Error('Image indisponible');
+    const a = document.createElement('a'); const pngURL = URL.createObjectURL(blob);
+    a.href = pngURL; a.download = `${state.getBoard().name}.png`; a.click();
+    setTimeout(() => URL.revokeObjectURL(pngURL), 1000);
+    announce('Canevas exporté en PNG, échelle 2');
+  } catch { announce('Impossible d’exporter le PNG'); }
+  finally { URL.revokeObjectURL(url); }
+}
