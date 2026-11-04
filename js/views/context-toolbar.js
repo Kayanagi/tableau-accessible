@@ -2,8 +2,10 @@ import * as state from '../state.js';
 import * as canvas from './canvas.js';
 import * as clipboard from '../clipboard.js';
 import { announce } from '../a11y/announcer.js';
+import * as O from '../objects.js';
+import * as obj from './canvas-objects.js';
 
-const TEXT_TYPES = ['sticky_note', 'shape', 'text', 'card'];
+const TEXT_TYPES = ['sticky_note', 'shape', 'text', 'card', 'flipcard', 'mindmap'];
 const ALIGN_ICONS = {
   left: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12M2 7h8M2 11h12M2 15h8"/></svg>',
   center: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 3h12M4 7h8M2 11h12M4 15h8"/></svg>',
@@ -14,12 +16,16 @@ let container = null;
 let menu = null;
 let menuKey = null;
 let onProperties = () => {};
+let onNewTag = () => {};
+let onOpenComment = () => {};
 let activeKey = null;
 let controls = [];
 
 export function init(el, options) {
   container = el;
   onProperties = options.onProperties;
+  onNewTag = options.onNewTag || onNewTag;
+  onOpenComment = options.onOpenComment || onOpenComment;
   bar = document.createElement('div');
   bar.className = 'context-toolbar';
   bar.setAttribute('role', 'toolbar');
@@ -86,8 +92,64 @@ function build(items) {
     { key: 'duplicate', label: 'Dupliquer', text: '⧉', run: () => { const copies = state.duplicateItems(ids); if (copies[0]) canvas.focusItem(copies[0].id); } },
     { key: 'delete', label: 'Supprimer', text: '🗑', run: () => state.removeItems(ids) }
   );
-  if (items.length === 1) list.push({ key: 'properties', label: 'Propriétés…', text: 'Propriétés…', run: () => onProperties(items[0].id) });
+  list.push(...typeControls(items));
+  if (items.length === 1 && items[0].type !== 'comment') list.push({ key: 'properties', label: 'Propriétés…', text: 'Propriétés…', run: () => onProperties(items[0].id) });
   list.push({ key: 'more', label: 'Plus d’actions', text: '⋯', menu: 'more' });
+  return list;
+}
+
+function typeControls(items) {
+  const list = [];
+  const one = items.length === 1 ? items[0] : null;
+  const drawings = items.filter(i => i.type === 'drawing');
+  if (drawings.length) {
+    list.push(
+      { key: 'pen-color', label: `Couleur du trait : ${O.nameOf(O.PEN_COLORS, drawings[0].stroke)}`, html: `<span class="swatch" style="background:${O.hexOf(O.PEN_COLORS, drawings[0].stroke)}" aria-hidden="true"></span>`, menu: 'pen-color' },
+      { key: 'pen-width', label: `Épaisseur : ${(O.PEN_WIDTHS.find(w => w[0] === drawings[0].strokeWidth) || O.PEN_WIDTHS[1])[1]}`, text: 'Épaisseur', menu: 'pen-width' }
+    );
+    if (one) list.push({ key: 'drawing-label', label: 'Étiquette du dessin…', text: 'Étiquette…', run: () => canvas.edit(one.id) });
+  }
+  if (one?.type === 'flipcard') list.push({ key: 'flip', label: 'Retourner la carte (Espace)', text: '⟲ Retourner', pressed: !!one.flipped, run: () => obj.flip(one.id) });
+  if (one?.type === 'code') {
+    list.push(
+      { key: 'lang', label: `Langage : ${O.LANGUAGES[one.language]}`, text: O.LANGUAGES[one.language], menu: 'lang' },
+      { key: 'copy-code', label: 'Copier le code', text: 'Copier le code', run: () => obj.copyCode(one.id) }
+    );
+  }
+  if (one?.type === 'mindmap') {
+    list.push(
+      { key: 'mind-child', label: 'Ajouter un nœud enfant (Tab)', text: '+ Enfant', run: () => canvas.addMindNode(one.id, true) },
+      { key: 'mind-sibling', label: 'Ajouter un nœud frère (Entrée)', text: '+ Frère', run: () => canvas.addMindNode(one.id, !one.parentNode) }
+    );
+    if (state.mindChildren(one.id).length) list.push({ key: 'mind-fold', label: one.collapsed ? 'Déplier la branche' : 'Replier la branche', text: one.collapsed ? 'Déplier' : 'Replier', run: () => state.setMindCollapsed(one.id, !one.collapsed) });
+  }
+  if (one?.type === 'kanban') {
+    const col = () => obj.activeColumn(one, canvas.getActiveSub(one.id));
+    list.push(
+      { key: 'kb-card', label: 'Ajouter une carte (Insertion)', text: '+ Carte', run: () => obj.addCard(one.id, col()) },
+      { key: 'kb-col', label: 'Ajouter une colonne', text: '+ Colonne', run: () => obj.addColumn(one.id) },
+      { key: 'kb-rename', label: 'Renommer la colonne active', text: 'Renommer', run: () => { canvas.focusSub(one.id, `col:${one.columns[col()].id}`); obj.editSub(one.id, `col:${one.columns[col()].id}`); } },
+      { key: 'kb-del', label: 'Supprimer la colonne active', text: '− Colonne', run: () => obj.removeColumn(one.id, col()) }
+    );
+  }
+  if (one?.type === 'datatable') {
+    const cell = () => (canvas.getActiveSub(one.id) || 'cell:0:0').split(':').slice(1).map(Number);
+    list.push(
+      { key: 'dt-row', label: 'Ajouter une ligne', text: '+ Ligne', run: () => obj.tableAdd(one.id, 'row', cell()[0]) },
+      { key: 'dt-col', label: 'Ajouter une colonne', text: '+ Colonne', run: () => obj.tableAdd(one.id, 'col', cell()[1]) },
+      { key: 'dt-del-row', label: 'Supprimer la ligne active', text: '− Ligne', run: () => obj.tableRemove(one.id, 'row', cell()[0]) },
+      { key: 'dt-del-col', label: 'Supprimer la colonne active', text: '− Colonne', run: () => obj.tableRemove(one.id, 'col', cell()[1]) }
+    );
+  }
+  if (one?.type === 'comment') {
+    list.push(
+      { key: 'thread', label: 'Ouvrir le fil', text: 'Ouvrir le fil', run: () => onOpenComment(one.id) },
+      { key: 'resolve', label: 'Résolu', text: '✓ Résolu', pressed: !!one.resolved, run: () => state.setResolved(one.id, !one.resolved) }
+    );
+  }
+  if (items.some(i => O.TAG_TYPES.includes(i.type))) list.push({ key: 'tags', label: 'Étiquettes', text: '🏷', menu: 'tags' });
+  if (items.some(i => i.type !== 'connector' && i.type !== 'comment')) list.push({ key: 'react', label: 'Réagir', text: '☺', menu: 'react' });
+  if (one && one.type !== 'connector' && one.type !== 'comment') list.push({ key: 'comment', label: 'Commenter (C)', text: '💬', run: () => canvas.createAtCenter('comment') });
   return list;
 }
 
@@ -115,6 +177,30 @@ function menuEntries(kind) {
     const shapes = items.filter(i => i.type === 'shape');
     return Object.entries(state.SHAPES).map(([id, name]) => ({ label: name, text: name, checked: shapes.every(i => i.shape === id), run: () => state.updateItems(idsOf(shapes), { shape: id }, `Forme : ${name}`) }));
   }
+  if (kind === 'pen-color' || kind === 'pen-width') {
+    const ds = items.filter(i => i.type === 'drawing');
+    if (kind === 'pen-color') return O.PEN_COLORS.map(([id, name, hex]) => ({ label: name, html: `<span class="swatch" style="background:${hex}" aria-hidden="true"></span> ${name}`, checked: ds.every(i => i.stroke === id), run: () => state.updateItems(idsOf(ds), { stroke: id }, `Couleur du trait : ${name}`) }));
+    return O.PEN_WIDTHS.map(([w, name]) => ({ label: name, text: name, checked: ds.every(i => i.strokeWidth === w), run: () => state.updateItems(idsOf(ds), { strokeWidth: w }, `Épaisseur : ${name}`) }));
+  }
+  if (kind === 'lang') {
+    const code = items[0];
+    return Object.entries(O.LANGUAGES).map(([id, name]) => ({ label: name, text: name, checked: code.language === id, run: () => state.updateItems([code.id], { language: id }, `Langage : ${name}`) }));
+  }
+  if (kind === 'tags') {
+    const taggable = items.filter(i => O.TAG_TYPES.includes(i.type));
+    return [
+      ...state.getTags().map(tag => ({ role: 'menuitemcheckbox', label: tag.name, html: `<span class="tag-dot" style="background:${O.hexOf(O.TAG_COLORS, tag.color)}" aria-hidden="true"></span> ${escapeHtml(tag.name)}`, checked: taggable.every(i => i.tags?.includes(tag.id)), run: () => state.toggleTag(idsOf(taggable), tag.id) })),
+      { label: 'Nouvelle étiquette…', run: () => onNewTag(idsOf(taggable)) }
+    ];
+  }
+  if (kind === 'react') {
+    const me = state.getAuthor() || 'Moi';
+    const targets = items.filter(i => i.type !== 'connector' && i.type !== 'comment');
+    return O.REACTIONS.map(([emoji, name]) => {
+      const n = targets[0].reactions?.[emoji]?.length || 0;
+      return { role: 'menuitemcheckbox', label: `${emoji} ${name}${n ? ` (${n})` : ''}`, checked: targets.every(i => i.reactions?.[emoji]?.includes(me)), run: () => state.toggleReaction(idsOf(targets), emoji) };
+    });
+  }
   if (kind === 'line') {
     const links = items.filter(i => i.type === 'connector');
     return Object.entries(state.LINE_TYPES).map(([id, name]) => ({ label: name, text: name, checked: links.every(i => (i.lineType || 'arrow') === id), run: () => state.updateItems(idsOf(links), { lineType: id }, `Ligne : ${name}`) }));
@@ -129,7 +215,9 @@ function menuEntries(kind) {
     { label: 'Effacer le contenu (Ctrl+Retour arrière)', run: () => clipboard.clearContent(ids) },
     { label: 'Premier plan (Page précédente)', run: () => state.reorderItems(ids, true) },
     { label: 'Arrière-plan (Page suivante)', run: () => state.reorderItems(ids, false) },
-    { label: 'Créer un cadre autour', run: () => state.frameAround(ids) }
+    { label: 'Créer un cadre autour', run: () => state.frameAround(ids) },
+    { label: 'Grouper (Ctrl+G)', run: () => state.groupItems(ids) },
+    { label: 'Dégrouper (Ctrl+Maj+G)', run: () => state.ungroupItems(ids) }
   ];
 }
 
@@ -175,7 +263,7 @@ function toggleMenu(c, button) {
     const item = document.createElement('button');
     item.type = 'button';
     item.tabIndex = -1;
-    item.setAttribute('role', entry.checked === undefined ? 'menuitem' : 'menuitemradio');
+    item.setAttribute('role', entry.role || (entry.checked === undefined ? 'menuitem' : 'menuitemradio'));
     if (entry.checked !== undefined) item.setAttribute('aria-checked', String(entry.checked));
     if (entry.html) { item.innerHTML = entry.html; item.setAttribute('aria-label', entry.label); item.title = entry.label; } else item.textContent = entry.text || entry.label;
     item.addEventListener('click', () => { closeMenu(true); entry.run(); });
@@ -252,4 +340,10 @@ function place() {
   if (top < 4) top = r.bottom + 30;
   top = Math.min(Math.max(4, top), container.clientHeight - bar.offsetHeight - 4);
   Object.assign(bar.style, { left: `${left}px`, top: `${top}px`, bottom: '' });
+}
+
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
 }

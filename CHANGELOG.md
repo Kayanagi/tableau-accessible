@@ -2,6 +2,27 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.4.0] - 2026-11-04
+
+### Ajouté
+- Bouton « Plus… » et panneau Plus d’outils : outils classés par catégories, recherche, navigation aux flèches, création au centre de la vue avec Entrée.
+- Stylo (P) et gomme (E) : tracé à main levée lissé en polyline compacte, couleur et épaisseur ; le tracé est un objet sélectionnable, déplaçable, avec étiquette facultative.
+- Groupes : Ctrl+G, Ctrl+Maj+G, clic sur le groupe entier, double-clic pour y entrer, nœud parent dans le Plan.
+- Commentaires (C) : pastille sur un objet ou le canevas, fil de messages avec auteur mémorisé et date, résolu / non résolu, panneau latéral (Maj+C) avec navigation vers l’élément.
+- Étiquettes colorées sur post-its et cartes, gérées depuis la barre contextuelle et filtrables dans la vue Tableau.
+- Réactions emoji (6 au choix) avec compteur, lues dans le nom accessible.
+- Carte mentale : Tab pour un enfant, Entrée pour un frère, disposition automatique et liens courbes, plier / déplier, flèches dans l’arbre, arbre imbriqué dans le Plan.
+- Kanban : colonnes renommables, ajout et suppression, cartes déplacées à la souris ou au clavier (Ctrl+flèches) avec annonce de la colonne et de la position.
+- Tableau de données : grille éditable au clavier, lignes et colonnes ajoutables, rendu en table HTML dans la vue Tableau.
+- Bloc de code : langage, coloration simple, copie du code.
+- Carte recto-verso : retournement par bouton ou Espace, annonce de la face visible, animation désactivée si mouvement réduit.
+- Export Markdown des nouveaux types (arbre, colonnes, tableau, code, commentaires).
+- 20 tests de bout en bout pour ces fonctions ; port des tests configurable (`PORT`).
+
+### Modifié
+- F2 modifie le texte de l’élément ; Maj+lettre n’active plus d’outil.
+- Aide et README mis à jour.
+
 ## [1.3.1] - 2026-11-04
 
 ### Corrigé

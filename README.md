@@ -29,6 +29,21 @@ Les raccourcis de création et d’organisation s’appliquent au Canevas, hors 
 - **Presse-papiers** : Ctrl+C / X / V (interne, plus le presse-papiers système en JSON si disponible), collage décalé de 20 px avec les liens internes conservés ; Ctrl+Alt+C / V pour le style ; Ctrl+Retour arrière pour effacer le contenu.
 - **Barre contextuelle** flottante au-dessus de la sélection (en bas de l’écran sur mobile), atteignable par Alt+F10 : couleur, taille du texte (Auto, +, −), gras, alignement, taille du post-it (P/M/G), type de forme, type de ligne, verrouiller, dupliquer, supprimer, Propriétés… (dialogue complet) et menu Plus (copier, coller, style, premier plan, arrière-plan, créer un cadre autour).
 
+### Nouveaux objets (1.4.0)
+
+- **Plus d’outils** : bouton « Plus… » de la barre de création, panneau classé par catégories (Dessin, Essentiels, Formats) avec recherche, navigable aux flèches ; Entrée crée l’outil au centre de la vue, Échap referme.
+- **Stylo (P) et gomme (E)** : tracé à main levée lissé, stocké en polyline compacte ; couleur et épaisseur dans la palette du stylo et la barre contextuelle. Un tracé est un objet (« Dessin à main levée » + étiquette facultative) : Tab le sélectionne, les flèches le déplacent, Entrée modifie l’étiquette, Suppr le supprime.
+- **Groupes** : Ctrl+G / Ctrl+Maj+G ; un clic sélectionne le groupe, double-clic ou Ctrl+Maj+flèche bas entre dedans ; nœud parent dans le Plan.
+- **Commentaires (C)** : pastille sur un objet ou le canevas, fil de messages (auteur saisi une fois et mémorisé sur l’appareil, date), résolu / non résolu ; panneau latéral (Maj+C) avec « Aller à l’élément ».
+- **Étiquettes** sur post-its et cartes : liste propre au tableau, couleur, ajout et retrait depuis la barre contextuelle, filtre dans la vue Tableau.
+- **Réactions** : 6 emoji, compteur visible et lu dans le nom accessible.
+- **Carte mentale** : racine et nœuds, Tab enfant, Entrée frère, disposition horizontale automatique avec liens courbes, plier / déplier, flèches dans l’arbre, arbre imbriqué dans le Plan.
+- **Kanban** : colonnes À faire / En cours / Fait renommables, ajout et suppression ; cartes déplacées à la souris ou au clavier (Ctrl+flèches) avec annonce de la colonne et de la position.
+- **Tableau de données** : grille éditable (rôles `grid`, `gridcell`), flèches entre cellules, Entrée pour éditer, lignes et colonnes ajoutées ou supprimées ; rendu en vraie table HTML dans la vue Tableau.
+- **Bloc de code** : texte à chasse fixe, langage au choix, coloration simple sans dépendance, bouton « Copier le code ».
+- **Carte recto-verso** : bouton « Retourner » (`aria-pressed`) ou Espace, annonce de la face visible, animation coupée si `prefers-reduced-motion`.
+- Tous ces types sont présents dans le Plan, le Tableau, l’export Markdown, le copier-coller (arbres et groupes recréés) et l’historique. Les anciens tableaux restent valides.
+
 ## Lancement
 
 ```
@@ -81,6 +96,15 @@ Puis ouvrir `http://localhost:8080`.
 | Flèches | Déplacer la sélection (10 px) |
 | Maj+Flèches | Déplacer en grand pas (50 px) |
 | Suppr | Supprimer la sélection |
+| P / E | Stylo / gomme (au pointeur) |
+| C | Commentaire sur la sélection (Entrée) ou au clic |
+| Maj+C | Afficher / masquer le panneau des commentaires |
+| Ctrl+G / Ctrl+Maj+G | Grouper / dégrouper |
+| F2 | Modifier le texte de l’élément |
+| Espace (carte recto-verso) | Retourner la carte |
+| Carte mentale : flèches, Tab, Entrée | Parcourir (gauche replie, droite déplie) ; après une saisie ou un clic, Tab ajoute un enfant, Entrée un frère ; Échap rend Tab à la navigation |
+| Kanban : Entrée, flèches, Ctrl+flèches, Insertion | Entrer, parcourir, déplacer la carte (gauche/droite : colonne, haut/bas : ordre), ajouter une carte |
+| Tableau de données : Entrée, flèches, Suppr | Entrer, parcourir les cellules, éditer, effacer |
 
 ## Modèle de données
 
@@ -121,7 +145,9 @@ Puis ouvrir `http://localhost:8080`.
 }
 ```
 
-Types : `sticky_note`, `shape`, `text`, `card`, `frame`, `connector`.
+Types : `sticky_note`, `shape`, `text`, `card`, `frame`, `connector`, `drawing` (`points` relatifs, `vw`/`vh`, `stroke`, `strokeWidth`), `comment` (`targetId`, `messages`, `resolved`), `mindmap` (`parentNode`, `collapsed`), `kanban` (`columns[].cards[]`), `datatable` (`rows`, première ligne = en-têtes), `code` (`language`), `flipcard` (`back`, `flipped`).
+
+Propriétés communes facultatives : `groupId`, `tags` (identifiants de `board.tags`, `{ id, name, color }`), `reactions` (`{ "👍": ["Auteur"] }`).
 
 Mise en forme (hors liens) : `fontSize` (`"auto"` ou nombre de pixels), `bold`, `align` (`left`, `center`, `right`) ; post-its : `size` (`s`, `m`, `l`). Les anciens tableaux reçoivent des valeurs par défaut au chargement (post-it : Auto, centré ; forme : 14, centré ; texte : 16 ; carte : 13), sans perte de données.
 
@@ -139,7 +165,8 @@ Mise en forme (hors liens) : `fontSize` (`"auto"` ou nombre de pixels), `bold`, 
 ## Limites
 
 - Pas de collaboration en temps réel (l'état JSON est conçu pour être sérialisable).
-- Pas de groupes (Ctrl+G) ni de mise en forme riche du texte (italique, souligné).
+- Pas de mise en forme riche du texte (italique, souligné).
+- Le dessin à main levée se fait au pointeur uniquement (les tracés existants restent manipulables au clavier).
 - Pas de courbes de Bézier pour les connecteurs.
 - Stockage local uniquement (localStorage).
 
@@ -151,5 +178,5 @@ Les tests E2E utilisent Playwright (Chromium headless).
 cd tests
 npm install playwright
 npx playwright install chromium
-node e2e.mjs   # sert le dossier parent du script sur le port 8765
+node e2e.mjs   # sert le dossier parent du script sur le port 8765 (PORT=… pour en changer)
 ```

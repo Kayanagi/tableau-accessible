@@ -10,7 +10,7 @@ export function init(el) {
 export function render() {
   if (!container) return;
   const focused = container.contains(document.activeElement) ? document.activeElement : null;
-  const restore = focused?.dataset.selectId ? `[data-select-id="${focused.dataset.selectId}"]` : focused?.dataset.id ? `.outline-item-btn[data-id="${focused.dataset.id}"]` : null;
+  const restore = focused?.dataset.selectId ? `[data-select-id="${focused.dataset.selectId}"]` : focused?.dataset.id ? `.outline-item-btn[data-id="${focused.dataset.id}"]` : focused?.dataset.group ? `[data-group="${focused.dataset.group}"]` : null;
   container.innerHTML = '';
 
   const board = state.getBoard();
@@ -55,16 +55,27 @@ export function render() {
 
       const subList = document.createElement('ul');
       subList.setAttribute('role', 'group');
-      for (const item of orphans) {
-        subList.appendChild(createItemNode(item, selectedId, connectors));
-      }
+      appendItems(subList, orphans, selectedId, connectors);
       sep.appendChild(subList);
       list.appendChild(sep);
     } else {
-      for (const item of orphans) {
-        list.appendChild(createItemNode(item, selectedId, connectors));
-      }
+      appendItems(list, orphans, selectedId, connectors);
     }
+  }
+
+  const comments = state.getComments();
+  if (comments.length > 0) {
+    const li = document.createElement('li');
+    li.setAttribute('role', 'treeitem');
+    li.classList.add('outline-separator');
+    const span = document.createElement('span');
+    span.textContent = `Commentaires (${comments.length})`;
+    span.classList.add('outline-group-label');
+    const subList = document.createElement('ul');
+    subList.setAttribute('role', 'group');
+    for (const c of comments) subList.appendChild(createItemNode(c, selectedId, connectors));
+    li.append(span, subList);
+    list.appendChild(li);
   }
 
   if (connectors.length > 0) {
@@ -109,10 +120,7 @@ function createFrameNode(frame, selectedId) {
   if (children.length > 0) {
     const subList = document.createElement('ul');
     subList.setAttribute('role', 'group');
-    const connectors = state.getConnectors();
-    for (const child of children) {
-      subList.appendChild(createItemNode(child, selectedId, connectors));
-    }
+    appendItems(subList, children, selectedId, state.getConnectors());
     li.appendChild(subList);
   } else {
     const empty = document.createElement('span');
@@ -157,8 +165,62 @@ function createItemNode(item, selectedId, connectors) {
     }
     li.appendChild(linkInfo);
   }
+  if (item.type === 'mindmap') appendMindChildren(li, item, selectedId, connectors);
+  if (item.type === 'kanban') {
+    const cols = document.createElement('ul');
+    cols.setAttribute('role', 'group');
+    for (const col of item.columns) {
+      const c = document.createElement('li');
+      c.setAttribute('role', 'treeitem');
+      c.classList.add('outline-detail');
+      c.textContent = `${col.name} (${col.cards.length}) : ${col.cards.map(k => k.text || '(vide)').join(', ') || 'aucune carte'}`;
+      cols.appendChild(c);
+    }
+    li.setAttribute('aria-expanded', 'true');
+    li.appendChild(cols);
+  }
 
   return li;
+}
+
+function appendItems(ul, items, selectedId, connectors) {
+  const done = new Set();
+  for (const item of items) {
+    if (!item.groupId) { ul.appendChild(createItemNode(item, selectedId, connectors)); continue; }
+    if (done.has(item.groupId)) continue;
+    done.add(item.groupId);
+    ul.appendChild(createGroupNode(items.filter(i => i.groupId === item.groupId), selectedId, connectors));
+  }
+}
+
+function createGroupNode(members, selectedId, connectors) {
+  const li = document.createElement('li');
+  li.setAttribute('role', 'treeitem');
+  li.setAttribute('aria-expanded', 'true');
+  const all = members.every(m => state.isSelected(m.id));
+  li.setAttribute('aria-selected', String(all));
+  if (all) li.classList.add('outline-selected');
+  const btn = document.createElement('button');
+  btn.classList.add('outline-item-btn');
+  btn.dataset.group = members[0].groupId;
+  btn.innerHTML = `<span class="outline-icon" aria-hidden="true">⧉</span> <strong>Groupe de ${members.length} éléments</strong>`;
+  btn.addEventListener('click', () => state.setSelection(members.map(m => m.id), true));
+  const sub = document.createElement('ul');
+  sub.setAttribute('role', 'group');
+  for (const m of members) sub.appendChild(createItemNode(m, selectedId, connectors));
+  li.append(btn, sub);
+  return li;
+}
+
+function appendMindChildren(li, item, selectedId, connectors) {
+  const kids = state.mindChildren(item.id);
+  if (!kids.length) return;
+  li.setAttribute('aria-expanded', String(!item.collapsed));
+  const sub = document.createElement('ul');
+  sub.setAttribute('role', 'group');
+  sub.hidden = !!item.collapsed;
+  for (const k of kids) sub.appendChild(createItemNode(k, selectedId, connectors));
+  li.appendChild(sub);
 }
 
 function createConnectorNode(c, selectedId) {
@@ -205,6 +267,13 @@ function getTypeIcon(item) {
     case 'card': return '▣';
     case 'frame': return '□';
     case 'connector': return '→';
+    case 'drawing': return '✎';
+    case 'comment': return '💬';
+    case 'mindmap': return '❋';
+    case 'kanban': return '▥';
+    case 'datatable': return '▦';
+    case 'code': return '‹›';
+    case 'flipcard': return '⟲';
     default: return '•';
   }
 }

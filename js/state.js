@@ -1,5 +1,6 @@
 import * as history from './store/history.js';
 import { announce } from './a11y/announcer.js';
+import * as O from './objects.js';
 
 export const PALETTE = [
   ['light_yellow', 'Jaune clair', '#fff79e'], ['miro_yellow', 'Jaune', '#ffe86d'],
@@ -28,7 +29,14 @@ const TYPES = {
   text: 'Texte',
   card: 'Carte',
   frame: 'Cadre',
-  connector: 'Lien'
+  connector: 'Lien',
+  drawing: 'Dessin à main levée',
+  comment: 'Commentaire',
+  mindmap: 'Carte mentale',
+  kanban: 'Kanban',
+  datatable: 'Tableau de données',
+  code: 'Bloc de code',
+  flipcard: 'Carte recto-verso'
 };
 
 let board = { name: 'Nouveau tableau', items: [] };
@@ -39,7 +47,8 @@ const listeners = new Set();
 export const STICKY_SIZES = { s: 100, m: 150, l: 220 };
 export const SIZE_NAMES = { s: 'petit', m: 'moyen', l: 'grand' };
 export const ALIGN_NAMES = { left: 'à gauche', center: 'au centre', right: 'à droite' };
-const DEFAULT_FONT = { text: 16, card: 13 };
+const DEFAULT_FONT = { text: 16, card: 13, code: 13, mindmap: 14, flipcard: 'auto' };
+const AUTHOR_KEY = 'tableau-accessible-auteur';
 
 function generateId() {
   return 'item-' + (nextId++);
@@ -50,6 +59,7 @@ function snapshot() {
 }
 
 function notify() {
+  syncDerived();
   selected = selected.filter(id => board.items.some(i => i.id === id));
   for (const fn of listeners) {
     try { fn(board, getSelectedId()); } catch (e) { console.error(e); }
@@ -69,9 +79,30 @@ export function normalizeItem(item) {
   else {
     if (item.fontSize === undefined) item.fontSize = item.type === 'sticky_note' ? 'auto' : (DEFAULT_FONT[item.type] || 14);
     if (item.bold === undefined) item.bold = false;
-    if (!item.align) item.align = ['sticky_note', 'shape'].includes(item.type) ? 'center' : 'left';
+    if (!item.align) item.align = ['sticky_note', 'shape', 'flipcard', 'mindmap'].includes(item.type) ? 'center' : 'left';
   }
+  if (item.type === 'drawing') {
+    item.points = Array.isArray(item.points) ? item.points : [];
+    item.stroke = item.stroke || 'ink';
+    item.strokeWidth = item.strokeWidth || 4;
+    item.vw = item.vw || item.width || 1;
+    item.vh = item.vh || item.height || 1;
+  }
+  const base = O.defaults(item.type);
+  for (const [k, v] of Object.entries(base)) if (item[k] === undefined) item[k] = JSON.parse(JSON.stringify(v));
+  if (item.type === 'mindmap' && item.parentNode) { item.width = O.MM.w; item.height = O.MM.h; }
   return item;
+}
+
+export function syncDerived() {
+  for (const item of board.items) {
+    if (item.type === 'kanban') Object.assign(item, O.kanbanSize(item));
+    else if (item.type === 'datatable') Object.assign(item, O.tableSize(item));
+    else if (item.type === 'comment' && item.targetId) {
+      const t = getItem(item.targetId);
+      if (t) { item.x = Math.round(t.x + (t.width || 100) - 14); item.y = Math.round(t.y - 14); }
+    }
+  }
 }
 
 export { COLORS, SHAPES, TYPES };
@@ -145,8 +176,8 @@ function itemLabel(item) {
   if (item.type === 'connector') {
     const startItem = getItem(item.startId);
     const endItem = getItem(item.endId);
-    const startLabel = startItem ? getItemLabel(startItem) : '?';
-    const endLabel = endItem ? getItemLabel(endItem) : '?';
+    const startLabel = startItem ? itemLabel(startItem) : '?';
+    const endLabel = endItem ? itemLabel(endItem) : '?';
     const labelPart = item.label ? ` (${item.label})` : '';
     return `${LINE_TYPES[item.lineType] || LINE_TYPES.arrow} de ${startLabel} vers ${endLabel}${labelPart}`;
   }
@@ -157,11 +188,48 @@ function itemLabel(item) {
     const children = board.items.filter(i => i.parent === item.id);
     return `${typeName} : ${item.content || '(sans nom)'}, ${children.length} élément(s)`;
   }
+  if (item.type === 'drawing') return item.content ? `${typeName} : ${item.content}` : typeName;
+  if (item.type === 'comment') {
+    const n = item.messages.length;
+    const first = item.messages[0];
+    const target = getItem(item.targetId);
+    return `${typeName}${first ? ` de ${first.author} : « ${first.text} »` : ' (sans message)'}, ${plural(n, '1 message', 'messages')}, ${item.resolved ? 'résolu' : 'non résolu'}${target ? `, sur ${itemLabel(target)}` : ''}`;
+  }
+  if (item.type === 'mindmap') {
+    const kids = mindChildren(item.id).length;
+    if (!item.parentNode) return `${typeName} : ${item.content || '(vide)'}, ${plural(mindDescendants(item.id).length + 1, '1 nœud', 'nœuds')}`;
+    return `Nœud : ${item.content || '(vide)'}, niveau ${mindLevel(item) + 1}, ${plural(kids, '1 enfant', 'enfants')}${kids && item.collapsed ? ', replié' : ''}`;
+  }
+  if (item.type === 'kanban') {
+    const cards = item.columns.reduce((n, c) => n + c.cards.length, 0);
+    return `${typeName} : ${item.content || '(sans titre)'}, ${plural(item.columns.length, '1 colonne', 'colonnes')}, ${plural(cards, '1 carte', 'cartes')}`;
+  }
+  if (item.type === 'datatable') {
+    return `${typeName} : ${item.content || '(sans titre)'}, ${plural(item.rows.length - 1, '1 ligne', 'lignes')}, ${plural(item.rows[0]?.length || 0, '1 colonne', 'colonnes')}`;
+  }
+  if (item.type === 'code') {
+    const lines = (item.content || '').split('\n');
+    return `${typeName} ${O.LANGUAGES[item.language] || ''} : ${lines[0] || '(vide)'}${item.content ? `, ${plural(lines.length, '1 ligne', 'lignes')}` : ''}`;
+  }
+  if (item.type === 'flipcard') {
+    const face = item.flipped ? item.back : item.content;
+    return `${typeName}, ${item.flipped ? 'verso' : 'recto'} visible : ${face || '(vide)'}`;
+  }
   return `${typeName} : ${item.content || '(vide)'}`;
 }
 
+function decorations(item) {
+  let out = '';
+  const tags = (item.tags || []).map(getTag).filter(Boolean);
+  if (tags.length) out += `, étiquettes : ${tags.map(t => t.name).join(', ')}`;
+  const reacts = O.REACTIONS.filter(([e]) => item.reactions?.[e]?.length).map(([e, name]) => `${e} ${name} ${item.reactions[e].length}`);
+  if (reacts.length) out += `, réactions : ${reacts.join(', ')}`;
+  return out;
+}
+
 export function getItemLabel(item) {
-  return itemLabel(item) + (item?.locked ? ' — 🔒 Élément verrouillé' : '');
+  if (!item) return '';
+  return itemLabel(item) + decorations(item) + (item.locked ? ' — 🔒 Élément verrouillé' : '');
 }
 
 export function isLocked(id) {
@@ -203,8 +271,15 @@ export function pasteItems(source, offset, speak = true) {
     copy.locked = false;
     copies.push(normalizeItem(copy));
   }
+  const groups = new Map();
   for (const copy of copies) {
     if (copy.parent) copy.parent = map.get(copy.parent) || (getItem(copy.parent) ? copy.parent : null);
+    if (copy.parentNode) copy.parentNode = map.get(copy.parentNode) || null;
+    if (copy.targetId) copy.targetId = map.get(copy.targetId) || null;
+    if (copy.groupId) {
+      if (!groups.has(copy.groupId)) groups.set(copy.groupId, O.uid('group'));
+      copy.groupId = groups.get(copy.groupId);
+    }
   }
   for (const original of source) {
     if (original.type !== 'connector' || !map.has(original.startId) || !map.has(original.endId)) continue;
@@ -213,6 +288,7 @@ export function pasteItems(source, offset, speak = true) {
     copies.push(link);
   }
   board.items.push(...copies);
+  for (const copy of copies) if (copy.type === 'mindmap' && !copy.parentNode) layoutMind(copy.id);
   selected = copies.filter(c => c.type !== 'connector').map(c => c.id);
   notify();
   if (speak) announce(`${plural(selected.length, '1 élément collé', 'éléments collés')}`);
@@ -220,7 +296,7 @@ export function pasteItems(source, offset, speak = true) {
 }
 
 export function collectForCopy(ids) {
-  const set = new Set(ids.filter(id => getItem(id)?.type !== 'connector'));
+  const set = new Set(withMindTrees(ids, false).filter(id => getItem(id)?.type !== 'connector'));
   return board.items
     .filter(i => set.has(i.id) || (i.type === 'connector' && set.has(i.startId) && set.has(i.endId)))
     .map(i => JSON.parse(JSON.stringify(i)));
@@ -336,6 +412,11 @@ export function getItemAriaLabel(item) {
       parts.push(`dans ${getItemLabel(parent)}`);
     }
   }
+  if (item.groupId) parts.push(`dans un groupe de ${board.items.filter(i => i.groupId === item.groupId).length} éléments`);
+  const notes = board.items.filter(c => c.type === 'comment' && c.targetId === item.id).length;
+  if (notes) parts.push(plural(notes, '1 commentaire', 'commentaires'));
+  if (item.type === 'drawing') parts.push(`trait ${O.nameOf(O.PEN_COLORS, item.stroke).toLowerCase()}, ${(O.PEN_WIDTHS.find(w => w[0] === item.strokeWidth) || [0, 'moyen'])[1].toLowerCase()}`);
+  if (HINTS[item.type]) parts.push(HINTS[item.type]);
   return parts.join(', ');
 }
 
@@ -363,7 +444,7 @@ export function moveItem(id, dx, dy) {
 }
 
 export function moveItems(ids, dx, dy) {
-  const items = editable(ids).filter(i => i.type !== 'connector');
+  const items = editable(withMindTrees(ids, true)).filter(isMovable);
   if (!items.length) return;
   history.pushState(snapshot());
   for (const item of items) {
@@ -385,13 +466,15 @@ export function removeItems(ids) {
     if (ids.some(blocked)) announce('Élément verrouillé : lien associé');
     return;
   }
-  const gone = new Set(items.map(i => i.id));
+  const gone = new Set(withMindTrees(items.map(i => i.id), false));
   const label = items.length === 1 ? getItemLabel(items[0]) : `${items.length} éléments`;
   history.pushState(snapshot());
   board.items = board.items.filter(i => !gone.has(i.id) && !(i.type === 'connector' && (gone.has(i.startId) || gone.has(i.endId))));
   for (const i of board.items) {
     if (gone.has(i.parent)) i.parent = null;
+    if (gone.has(i.targetId)) i.targetId = null;
   }
+  relayoutAll();
   notify();
   announce(`${label} supprimé${items.length > 1 ? 's' : ''}, annuler possible`);
 }
@@ -439,6 +522,7 @@ export function loadBoard(data) {
   history.clear();
   board = data;
   if (!board.items) board.items = [];
+  if (!Array.isArray(board.tags)) board.tags = [];
   if (!board.name) board.name = 'Nouveau tableau';
   board.items.forEach(normalizeItem);
   syncNextId();
@@ -462,10 +546,234 @@ export function getConnectors() {
   return board.items.filter(i => i.type === 'connector');
 }
 
+function isListed(i) {
+  return i.type !== 'connector' && i.type !== 'comment' && !(i.type === 'mindmap' && i.parentNode);
+}
+
 export function getChildrenOf(frameId) {
-  return board.items.filter(i => i.parent === frameId && i.type !== 'connector');
+  return board.items.filter(i => i.parent === frameId && isListed(i));
 }
 
 export function getOrphanItems() {
-  return board.items.filter(i => !i.parent && i.type !== 'frame' && i.type !== 'connector');
+  return board.items.filter(i => !i.parent && i.type !== 'frame' && isListed(i));
+}
+
+export function getComments() {
+  return board.items.filter(i => i.type === 'comment');
+}
+
+const HINTS = {
+  kanban: 'Entrée pour parcourir les cartes',
+  datatable: 'Entrée pour parcourir les cellules',
+  mindmap: 'flèches pour parcourir la carte, F2 pour modifier',
+  flipcard: 'Espace pour retourner',
+  drawing: 'Entrée pour modifier l’étiquette'
+};
+
+export function isMovable(i) {
+  return i && i.type !== 'connector' && !(i.type === 'comment' && i.targetId && getItem(i.targetId));
+}
+
+export function movableIds(ids) {
+  return withMindTrees(ids, true).filter(id => { const i = getItem(id); return isMovable(i) && !i.locked; });
+}
+
+export function transact(fn, message) {
+  history.pushState(snapshot());
+  const result = fn({ newId: generateId });
+  board.items.forEach(normalizeItem);
+  notify();
+  if (message) announce(typeof message === 'function' ? message(result) : message);
+  return result;
+}
+
+export function mutateItem(id, fn, message) {
+  if (!getItem(id) || isLocked(id)) return null;
+  return transact(() => fn(getItem(id)), message);
+}
+
+export function getAuthor() {
+  try { return localStorage.getItem(AUTHOR_KEY) || ''; } catch { return ''; }
+}
+
+export function setAuthor(name) {
+  try { localStorage.setItem(AUTHOR_KEY, name); } catch { /* stockage indisponible */ }
+}
+
+/* Groupes */
+export function groupMembers(id) {
+  const g = getItem(id)?.groupId;
+  return g ? board.items.filter(i => i.groupId === g).map(i => i.id) : [id];
+}
+
+export function groupItems(ids) {
+  const items = ids.map(getItem).filter(i => i && i.type !== 'connector' && i.type !== 'comment');
+  if (items.length < 2) { announce('Sélectionnez au moins deux éléments à grouper'); return; }
+  transact(() => { const g = O.uid('group'); items.forEach(i => { i.groupId = g; }); }, `Groupe de ${items.length} éléments créé`);
+}
+
+export function ungroupItems(ids) {
+  const gs = new Set(ids.map(getItem).filter(i => i?.groupId).map(i => i.groupId));
+  if (!gs.size) { announce('Aucun groupe dans la sélection'); return; }
+  transact(() => board.items.forEach(i => { if (gs.has(i.groupId)) delete i.groupId; }), gs.size === 1 ? 'Groupe dissous' : `${gs.size} groupes dissous`);
+}
+
+/* Carte mentale */
+export function mindChildren(id) {
+  return board.items.filter(i => i.type === 'mindmap' && i.parentNode === id);
+}
+
+export function mindDescendants(id) {
+  const out = [];
+  const walk = p => mindChildren(p).forEach(c => { out.push(c.id); walk(c.id); });
+  walk(id);
+  return out;
+}
+
+export function mindRoot(id) {
+  let i = getItem(id);
+  while (i?.parentNode && getItem(i.parentNode)) i = getItem(i.parentNode);
+  return i;
+}
+
+function mindLevel(item) {
+  let n = 0, p = getItem(item.parentNode);
+  while (p) { n++; p = getItem(p.parentNode); }
+  return n;
+}
+
+export function isMindHidden(item) {
+  let p = getItem(item.parentNode);
+  while (p) { if (p.collapsed) return true; p = getItem(p.parentNode); }
+  return false;
+}
+
+function withMindTrees(ids, whole) {
+  const out = new Set(ids);
+  for (const id of ids) {
+    const item = getItem(id);
+    if (item?.type !== 'mindmap') continue;
+    const start = whole ? mindRoot(id) : item;
+    out.add(start.id);
+    mindDescendants(start.id).forEach(d => out.add(d));
+  }
+  return [...out];
+}
+
+function layoutMind(rootId) {
+  const root = getItem(rootId);
+  if (!root) return;
+  const visibleKids = n => (n.collapsed ? [] : mindChildren(n.id));
+  const span = n => {
+    const kids = visibleKids(n);
+    if (!kids.length) return n.height;
+    return Math.max(n.height, kids.reduce((s, k) => s + span(k), 0) + O.MM.gapY * (kids.length - 1));
+  };
+  const place = (n, x, top, h) => {
+    n.x = Math.round(x);
+    n.y = Math.round(top + (h - n.height) / 2);
+    const kids = visibleKids(n);
+    const total = kids.reduce((s, k) => s + span(k), 0) + O.MM.gapY * Math.max(0, kids.length - 1);
+    let y = top + (h - total) / 2;
+    for (const k of kids) {
+      const hk = span(k);
+      place(k, x + n.width + O.MM.gapX, y, hk);
+      y += hk + O.MM.gapY;
+    }
+  };
+  const h = span(root);
+  place(root, root.x, root.y + root.height / 2 - h / 2, h);
+}
+
+function relayoutAll() {
+  board.items.filter(i => i.type === 'mindmap' && i.parentNode && !getItem(i.parentNode)).forEach(i => { i.parentNode = null; });
+  board.items.filter(i => i.type === 'mindmap' && !i.parentNode).forEach(r => layoutMind(r.id));
+}
+
+export function addMindNode(refId, asChild) {
+  const ref = getItem(refId);
+  if (ref?.type !== 'mindmap' || isLocked(refId)) return null;
+  const parentId = asChild || !ref.parentNode ? ref.id : ref.parentNode;
+  return transact(() => {
+    const parentItem = getItem(parentId);
+    parentItem.collapsed = false;
+    const node = normalizeItem({ id: generateId(), type: 'mindmap', parentNode: parentId, content: '', x: ref.x, y: ref.y, parent: ref.parent || null });
+    if (parentId === ref.id) board.items.push(node);
+    else board.items.splice(board.items.indexOf(ref) + 1, 0, node);
+    layoutMind(mindRoot(parentId).id);
+    selected = [node.id];
+    return node;
+  });
+}
+
+export function setMindCollapsed(id, collapsed) {
+  const item = getItem(id);
+  if (item?.type !== 'mindmap' || !mindChildren(id).length || !!item.collapsed === collapsed) return false;
+  transact(() => { item.collapsed = collapsed; layoutMind(mindRoot(id).id); }, collapsed ? 'Branche repliée' : 'Branche dépliée');
+  return true;
+}
+
+/* Étiquettes */
+export function getTags() {
+  return board.tags || (board.tags = []);
+}
+
+export function getTag(id) {
+  return getTags().find(t => t.id === id) || null;
+}
+
+export function createTag(name, color, ids = []) {
+  const targets = ids.map(getItem).filter(i => i && O.TAG_TYPES.includes(i.type) && !i.locked);
+  return transact(() => {
+    const tag = { id: O.uid('tag'), name, color };
+    getTags().push(tag);
+    targets.forEach(i => { i.tags = [...(i.tags || []), tag.id]; });
+    return tag;
+  }, `Étiquette « ${name} » créée${targets.length ? ' et ajoutée' : ''}`);
+}
+
+export function toggleTag(ids, tagId) {
+  const items = editable(ids).filter(i => O.TAG_TYPES.includes(i.type));
+  const tag = getTag(tagId);
+  if (!items.length || !tag) return;
+  const on = !items.every(i => i.tags?.includes(tagId));
+  transact(() => items.forEach(i => { i.tags = on ? [...new Set([...(i.tags || []), tagId])] : (i.tags || []).filter(t => t !== tagId); }),
+    `Étiquette « ${tag.name} » ${on ? 'ajoutée' : 'retirée'}`);
+}
+
+/* Réactions */
+export function toggleReaction(ids, emoji) {
+  const items = ids.map(getItem).filter(i => i && i.type !== 'connector' && i.type !== 'comment');
+  if (!items.length) return;
+  const me = getAuthor() || 'Moi';
+  const on = !items.every(i => i.reactions?.[emoji]?.includes(me));
+  const name = (O.REACTIONS.find(r => r[0] === emoji) || [])[1];
+  transact(() => items.forEach(i => {
+    const r = i.reactions = { ...(i.reactions || {}) };
+    const list = (r[emoji] || []).filter(a => a !== me);
+    if (on) list.push(me);
+    if (list.length) r[emoji] = list; else delete r[emoji];
+  }), () => `Réaction ${name} ${on ? 'ajoutée' : 'retirée'}, ${getItem(items[0].id)?.reactions?.[emoji]?.length || 0} au total`);
+}
+
+/* Commentaires */
+export function postMessage(id, text) {
+  const author = getAuthor() || 'Anonyme';
+  return transact(() => { getItem(id).messages.push({ author, date: new Date().toISOString(), text }); }, 'Message publié');
+}
+
+export function setResolved(id, resolved) {
+  return transact(() => { getItem(id).resolved = resolved; }, resolved ? 'Commentaire résolu' : 'Commentaire rouvert');
+}
+
+export function getContentSummary(item) {
+  switch (item.type) {
+    case 'connector': return getItemLabel(item);
+    case 'card': return item.title || '';
+    case 'kanban': return item.columns.map(c => `${c.name} : ${c.cards.map(k => k.text || '(vide)').join(', ') || '—'}`).join(' ; ');
+    case 'datatable': return item.rows.map(r => r.join(' | ')).join(' / ');
+    case 'flipcard': return `Recto : ${item.content || '(vide)'} / Verso : ${item.back || '(vide)'}`;
+    case 'comment': return item.messages.map(m => `${m.author} : ${m.text}`).join(' / ');
+    default: return item.content || '';
+  }
 }

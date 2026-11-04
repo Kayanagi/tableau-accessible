@@ -27,12 +27,19 @@
           <button id="btn-text" aria-keyshortcuts="t" type="button" aria-pressed="false" aria-label="Texte (T)">Texte</button>
           <button id="btn-card" type="button" aria-pressed="false" aria-label="Carte">Carte</button>
           <button id="btn-frame" aria-keyshortcuts="f" type="button" aria-pressed="false" aria-label="Cadre (F)">Cadre</button>
+          <button id="btn-more-tools" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tools-panel" aria-label="Plus d’outils">Plus…</button>
           <button id="btn-link" aria-keyshortcuts="l" type="button" aria-label="Nouveau lien entre &eacute;l&eacute;ments">Lien</button>
         </div>
         <fieldset id="sticky-palette" class="tool-palette" aria-describedby="sticky-palette-hint" hidden>
           <legend>Couleur du post-it</legend>
           <div class="tool-colors"></div>
           <p id="sticky-palette-hint" class="sr-only">Cliquez sur le canevas pour poser le post-it, ou Entrée pour le créer au centre de la vue. Échap pour annuler.</p>
+        </fieldset>
+        <fieldset id="pen-palette" class="tool-palette pen-palette" aria-describedby="pen-palette-hint" hidden>
+          <legend>Stylo</legend>
+          <div class="tool-colors pen-colors" role="radiogroup" aria-label="Couleur du trait"></div>
+          <div class="pen-widths" role="radiogroup" aria-label="Épaisseur du trait"></div>
+          <p id="pen-palette-hint" class="sr-only">Dessinez au pointeur sur le canevas. Échap pour quitter le stylo.</p>
         </fieldset>
         <div class="toolbar-group" role="group" aria-label="Organisation">
           <button id="btn-duplicate" type="button" aria-keyshortcuts="Control+d">Dupliquer</button>
@@ -58,6 +65,7 @@
           <input id="file-import" type="file" accept=".json" class="sr-only" aria-label="Choisir un fichier JSON &agrave; importer" tabindex="-1">
         </div>
         <div class="toolbar-group" role="group" aria-label="Param&egrave;tres">
+          <button id="btn-comments" type="button" aria-expanded="false" aria-controls="comments-panel" aria-keyshortcuts="Shift+c">Commentaires (Maj+C)</button>
           <button id="btn-theme" type="button" aria-label="Changer de th&egrave;me">Th&egrave;me</button>
           <button id="btn-help" type="button" aria-label="Aide et raccourcis (?)">Aide (?)</button>
         </div>
@@ -183,6 +191,24 @@
     </form>
   </dialog>
 
+  <dialog id="dialog-tag" aria-labelledby="dialog-tag-title">
+    <form>
+      <h2 class="dialog-title" id="dialog-tag-title">Nouvelle étiquette</h2>
+      <div class="field">
+        <label for="field-tag-name">Nom</label>
+        <input type="text" id="field-tag-name" name="tag-name" autocomplete="off" required maxlength="40">
+      </div>
+      <div class="field">
+        <label for="field-tag-color">Couleur</label>
+        <select id="field-tag-color" name="tag-color"></select>
+      </div>
+      <div class="dialog-actions">
+        <button type="submit" class="btn-primary">Créer et ajouter</button>
+        <button type="button" class="dialog-cancel">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="dialog-help" aria-labelledby="dialog-help-title">
     <h2 class="dialog-title" id="dialog-help-title">Aide et raccourcis clavier</h2>
 
@@ -217,6 +243,15 @@
       <dt><kbd>Tab</kbd> / <kbd>Maj</kbd>+<kbd>Tab</kbd></dt><dd>Naviguer entre les éléments du canevas</dd>
       <dt>Flèches / <kbd>Maj</kbd>+flèches</dt><dd>Déplacer la sélection de 10 px / 50 px</dd>
       <dt><kbd>Suppr</kbd></dt><dd>Supprimer la sélection</dd>
+      <dt>Bouton « Plus… »</dt><dd>Panneau Plus d’outils : recherche, flèches pour parcourir, <kbd>Entrée</kbd> crée l’outil au centre de la vue</dd>
+      <dt><kbd>P</kbd> / <kbd>E</kbd></dt><dd>Stylo / gomme (au pointeur) ; les tracés se sélectionnent avec <kbd>Tab</kbd>, se déplacent aux flèches, <kbd>Entrée</kbd> modifie leur étiquette, <kbd>Suppr</kbd> les supprime</dd>
+      <dt><kbd>C</kbd> / <kbd>Maj</kbd>+<kbd>C</kbd></dt><dd>Outil commentaire (sur l’élément sélectionné ou le canevas) / afficher ou masquer le panneau des commentaires</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>G</kbd> / <kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>G</kbd></dt><dd>Grouper / dégrouper ; un clic sélectionne le groupe, double-clic ou <kbd>Ctrl</kbd>+<kbd>Maj</kbd>+flèche bas entre dans le groupe</dd>
+      <dt>Carte mentale</dt><dd>Flèches pour parcourir (gauche replie, droite déplie) ; après une saisie ou un clic, <kbd>Tab</kbd> ajoute un enfant et <kbd>Entrée</kbd> un frère ; <kbd>F2</kbd> modifie ; <kbd>Échap</kbd> rend <kbd>Tab</kbd> à la navigation ; <kbd>Maj</kbd>+flèches déplace la carte</dd>
+      <dt>Kanban</dt><dd><kbd>Entrée</kbd> pour entrer, flèches pour parcourir, <kbd>Ctrl</kbd>+flèches gauche/droite pour changer de colonne, haut/bas pour l’ordre, <kbd>Insertion</kbd> ajoute une carte, <kbd>Entrée</kbd> modifie, <kbd>Échap</kbd> sort</dd>
+      <dt>Tableau de données</dt><dd><kbd>Entrée</kbd> pour entrer, flèches entre les cellules, <kbd>Entrée</kbd> modifie, <kbd>Suppr</kbd> efface, <kbd>Échap</kbd> sort ; lignes et colonnes depuis la barre de mise en forme</dd>
+      <dt>Carte recto-verso</dt><dd><kbd>Espace</kbd> ou bouton « Retourner » pour changer de face</dd>
+      <dt><kbd>F2</kbd></dt><dd>Modifier le texte de l’élément</dd>
     </dl>
 
     <h3>Trois vues synchronis&eacute;es</h3>
@@ -227,7 +262,7 @@
     </ul>
 
     <h3>Mod&egrave;le de donn&eacute;es</h3>
-    <p>Le tableau contient des &eacute;l&eacute;ments de types : post-it (texte + couleur), forme (rectangle, cercle, triangle, losange), texte libre, carte (titre + description), cadre (regroupement), lien (connecteur orient&eacute; entre deux &eacute;l&eacute;ments, avec &eacute;tiquette optionnelle).</p>
+    <p>Le tableau contient des &eacute;l&eacute;ments de types : post-it (texte + couleur), forme (rectangle, cercle, triangle, losange), texte libre, carte (titre + description), cadre (regroupement), lien (connecteur orient&eacute; entre deux &eacute;l&eacute;ments, avec &eacute;tiquette optionnelle), dessin &agrave; main lev&eacute;e, commentaire, carte mentale, kanban, tableau de donn&eacute;es, bloc de code et carte recto-verso. Post-its et cartes acceptent des &eacute;tiquettes ; tout objet accepte des r&eacute;actions.</p>
 
     <h3>Persistance</h3>
     <p>Les tableaux sont sauvegard&eacute;s automatiquement dans le navigateur (localStorage). Vous pouvez aussi exporter en JSON (r&eacute;importable) ou en Markdown (lisible).</p>
@@ -294,6 +329,7 @@
   </dialog>
 
   <p id="inline-editor-hint" class="sr-only">Échap, Ctrl+Entrée ou un clic à l’extérieur pour valider.</p>
+  <p id="mind-editor-hint" class="sr-only">Tab : valider et ajouter un nœud enfant. Entrée : valider et ajouter un nœud frère. Échap : valider.</p>
   <div id="announcer" aria-live="polite" aria-atomic="true" class="sr-only"></div>
 
   <script type="module" src="js/app.js"></script>

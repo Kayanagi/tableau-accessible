@@ -1,6 +1,8 @@
 import * as state from '../state.js';
+import { announce } from '../a11y/announcer.js';
 
 let container = null;
+let tagFilter = '';
 let sortCol = 'type';
 let sortAsc = true;
 
@@ -12,13 +14,37 @@ export function init(el) {
 export function render() {
   if (!container) return;
   const focusedId = container.contains(document.activeElement) ? document.activeElement.dataset.selectId : null;
+  const filterFocused = document.activeElement?.id === 'table-tag-filter';
   container.innerHTML = '';
 
-  const items = state.getItems();
+  const tags = state.getTags();
+  if (tagFilter && !state.getTag(tagFilter)) tagFilter = '';
+  const items = tagFilter ? state.getItems().filter(i => i.tags?.includes(tagFilter)) : state.getItems();
+  if (tags.length) {
+    const wrap = document.createElement('div');
+    wrap.className = 'table-filter';
+    const label = document.createElement('label');
+    label.htmlFor = 'table-tag-filter';
+    label.textContent = 'Filtrer par étiquette';
+    const select = document.createElement('select');
+    select.id = 'table-tag-filter';
+    select.add(new Option('Toutes les étiquettes', ''));
+    for (const t of tags) select.add(new Option(t.name, t.id));
+    select.value = tagFilter;
+    select.addEventListener('change', () => {
+      tagFilter = select.value;
+      render();
+      const n = tagFilter ? state.getItems().filter(i => i.tags?.includes(tagFilter)).length : state.getItems().length;
+      announce(`${n} élément(s) affiché(s)${tagFilter ? ` avec l’étiquette ${state.getTag(tagFilter).name}` : ''}`);
+    });
+    wrap.append(label, select);
+    container.appendChild(wrap);
+    if (filterFocused) select.focus();
+  }
 
   if (items.length === 0) {
     const p = document.createElement('p');
-    p.textContent = 'Aucun élément. Utilisez la barre d’outils pour en ajouter.';
+    p.textContent = tagFilter ? 'Aucun élément avec cette étiquette.' : 'Aucun élément. Utilisez la barre d’outils pour en ajouter.';
     p.classList.add('table-empty');
     container.appendChild(p);
     return;
@@ -28,7 +54,7 @@ export function render() {
   table.classList.add('items-table');
 
   const caption = document.createElement('caption');
-  caption.textContent = `${items.length} élément(s) dans le tableau`;
+  caption.textContent = `${items.length} élément(s) dans le tableau${tagFilter ? ` avec l’étiquette « ${state.getTag(tagFilter).name} »` : ''}`;
   table.appendChild(caption);
 
   const thead = document.createElement('thead');
@@ -42,6 +68,7 @@ export function render() {
     { key: 'type', label: 'Type' },
     { key: 'content', label: 'Contenu' },
     { key: 'color', label: 'Couleur' },
+    { key: 'tags', label: 'Étiquettes' },
     { key: 'x', label: 'X' },
     { key: 'y', label: 'Y' },
     { key: 'width', label: 'Largeur' },
@@ -116,6 +143,7 @@ export function render() {
     tr.appendChild(createTd((state.TYPES[item.type] || item.type) + (item.locked ? ' — 🔒 Verrouillé' : '')));
     tr.appendChild(createTd(getContentDisplay(item)));
     tr.appendChild(createTd(getColorDisplay(item)));
+    tr.appendChild(createTd(getTagsDisplay(item)));
     tr.appendChild(createTd(item.x != null ? item.x : '-'));
     tr.appendChild(createTd(item.y != null ? item.y : '-'));
     tr.appendChild(createTd(item.width || '-'));
@@ -144,6 +172,7 @@ export function render() {
 
   table.appendChild(tbody);
   container.appendChild(table);
+  renderDataTables(items.filter(i => i.type === 'datatable'));
   if (focusedId) container.querySelector(`[data-select-id="${focusedId}"]`)?.focus();
 }
 
@@ -158,6 +187,7 @@ function getCellValue(item, col) {
     case 'type': return state.TYPES[item.type] || item.type;
     case 'content': return getContentDisplay(item);
     case 'color': return getColorDisplay(item);
+    case 'tags': return getTagsDisplay(item);
     case 'x': return item.x != null ? item.x : -Infinity;
     case 'y': return item.y != null ? item.y : -Infinity;
     case 'width': return item.width || 0;
@@ -167,13 +197,37 @@ function getCellValue(item, col) {
 }
 
 function getContentDisplay(item) {
-  if (item.type === 'connector') {
-    return state.getItemLabel(item);
+  return state.getContentSummary(item);
+}
+
+function getTagsDisplay(item) {
+  return (item.tags || []).map(id => state.getTag(id)?.name).filter(Boolean).join(', ') || '-';
+}
+
+function renderDataTables(list) {
+  if (!list.length) return;
+  const h = document.createElement('h2');
+  h.className = 'data-tables-title';
+  h.textContent = 'Tableaux de données';
+  container.appendChild(h);
+  for (const item of list) {
+    const t = document.createElement('table');
+    t.className = 'items-table data-grid';
+    const cap = document.createElement('caption');
+    cap.textContent = item.content || 'Tableau de données';
+    const head = document.createElement('thead');
+    const hr = document.createElement('tr');
+    for (const v of item.rows[0]) { const th = document.createElement('th'); th.scope = 'col'; th.textContent = v; hr.appendChild(th); }
+    head.appendChild(hr);
+    const body = document.createElement('tbody');
+    for (const row of item.rows.slice(1)) {
+      const tr = document.createElement('tr');
+      for (const v of row) tr.appendChild(createTd(v));
+      body.appendChild(tr);
+    }
+    t.append(cap, head, body);
+    container.appendChild(t);
   }
-  if (item.type === 'card') {
-    return item.title || '';
-  }
-  return item.content || '';
 }
 
 function getColorDisplay(item) {

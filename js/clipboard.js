@@ -2,7 +2,7 @@ import * as state from './state.js';
 import { announce } from './a11y/announcer.js';
 
 const FORMAT = 'tableau-accessible';
-const STYLE_KEYS = { sticky_note: ['color', 'fontSize', 'bold', 'align'], shape: ['shape', 'fontSize', 'bold', 'align'], text: ['fontSize', 'bold', 'align'], card: ['fontSize', 'bold', 'align'], frame: [], connector: ['lineType'] };
+const STYLE_KEYS = { sticky_note: ['color', 'fontSize', 'bold', 'align'], shape: ['shape', 'fontSize', 'bold', 'align'], text: ['fontSize', 'bold', 'align'], card: ['fontSize', 'bold', 'align'], frame: [], connector: ['lineType'], drawing: ['stroke', 'strokeWidth'], flipcard: ['fontSize', 'bold', 'align'], mindmap: ['fontSize', 'bold'], code: ['language', 'fontSize'] };
 let clip = null;
 let pasteCount = 0;
 let style = null;

@@ -10,9 +10,14 @@ import * as dashboard from './views/dashboard.js';
 import * as editor from './views/inline-editor.js';
 import * as contextToolbar from './views/context-toolbar.js';
 import * as clipboard from './clipboard.js';
+import * as toolsPanel from './views/tools-panel.js';
+import * as commentsPanel from './views/comments-panel.js';
+import * as objects from './views/canvas-objects.js';
+import * as O from './objects.js';
 
 const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
-const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', f: 'frame' };
+const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
+const MORE_TOOLS = ['pen', 'eraser', 'comment', 'mindmap', 'kanban', 'datatable', 'code', 'flipcard'];
 
 let currentView = 'canvas';
 let currentTheme = 'auto';
@@ -96,6 +101,9 @@ function showBoard(boardId) {
   }
 
   editor.commit(false);
+  editor.commitField(false);
+  toolsPanel.close(false);
+  commentsPanel.close(false);
   canvas.setTool('select');
   state.loadBoard(board.données || { name: board.nom, items: [] });
 
@@ -117,7 +125,10 @@ function showBoard(boardId) {
 function initBoardView() {
   canvas.init(document.getElementById('view-canvas'));
   editor.init();
-  contextToolbar.init(document.getElementById('view-canvas'), { onProperties: openEditDialog });
+  contextToolbar.init(document.getElementById('view-canvas'), { onProperties: openEditDialog, onNewTag: openTagDialog, onOpenComment: id => commentsPanel.open(id, true) });
+  const appBoard = document.getElementById('app-board');
+  toolsPanel.init(appBoard, document.getElementById('btn-more-tools'), chooseTool);
+  commentsPanel.init(appBoard, document.getElementById('btn-comments'), gotoItem);
   outline.init(document.getElementById('view-outline'));
   table.init(document.getElementById('view-table'));
   setupTabs();
@@ -167,6 +178,7 @@ function setupToolbar() {
     colors.append(label);
   });
   setupToolPalette();
+  setupPenPalette();
   const selected = () => state.getSelectedIds();
   document.getElementById('btn-duplicate').onclick = () => duplicate(selected());
   document.getElementById('btn-lock').onclick = () => state.toggleLockedMany(selected());
@@ -197,10 +209,15 @@ function setupToolbar() {
     for (const [btnId, t] of Object.entries(TOOL_BUTTONS)) {
       document.getElementById(btnId).setAttribute('aria-pressed', String(t === tool || (btnId === 'btn-shape' && tool.startsWith('shape'))));
     }
-    const palette = document.getElementById('sticky-palette');
-    palette.hidden = tool !== 'sticky_note';
+    const more = document.getElementById('btn-more-tools');
+    more.classList.toggle('has-tool', MORE_TOOLS.includes(tool));
+    more.setAttribute('aria-label', MORE_TOOLS.includes(tool) ? `Plus d’outils (actif : ${canvas.TOOL_NAMES[tool]})` : 'Plus d’outils');
     const creation = document.querySelector('#app-board .creation-toolbar').getBoundingClientRect();
-    palette.style.bottom = matchMedia('(max-width: 640px)').matches ? `${innerHeight - creation.top + 6}px` : '';
+    for (const [paletteId, t] of [['sticky-palette', 'sticky_note'], ['pen-palette', 'pen']]) {
+      const palette = document.getElementById(paletteId);
+      palette.hidden = tool !== t;
+      palette.style.bottom = matchMedia('(max-width: 640px)').matches ? `${innerHeight - creation.top + 6}px` : '';
+    }
   });
   document.getElementById('btn-link').addEventListener('click', () => openLinkDialog());
   document.getElementById('btn-undo').addEventListener('click', () => state.undo());
@@ -249,6 +266,76 @@ function setupToolPalette() {
   });
 }
 
+function setupPenPalette() {
+  const palette = document.getElementById('pen-palette');
+  const colors = palette.querySelector('.pen-colors');
+  O.PEN_COLORS.forEach(([id, name, hex], index) => {
+    const label = document.createElement('label');
+    label.className = 'tool-color';
+    label.title = name;
+    const radio = document.createElement('input');
+    Object.assign(radio, { type: 'radio', name: 'pen-color', value: id, checked: index === 0 });
+    radio.setAttribute('aria-label', name);
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.backgroundColor = hex;
+    swatch.setAttribute('aria-hidden', 'true');
+    label.append(radio, swatch);
+    colors.append(label);
+  });
+  const widths = palette.querySelector('.pen-widths');
+  O.PEN_WIDTHS.forEach(([w, name]) => {
+    const label = document.createElement('label');
+    label.className = 'pen-width';
+    const radio = document.createElement('input');
+    Object.assign(radio, { type: 'radio', name: 'pen-width', value: String(w), checked: w === 4 });
+    label.append(radio, ` ${name}`);
+    widths.append(label);
+  });
+  palette.addEventListener('change', e => canvas.setPen(e.target.name === 'pen-color' ? e.target.value : null, e.target.name === 'pen-width' ? Number(e.target.value) : null));
+  palette.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); canvas.cancelTool(); document.getElementById('btn-more-tools').focus(); }
+  });
+}
+
+function chooseTool(tool, keyboard) {
+  if (keyboard && canvas.isCreationTool(tool)) { createAtCenter(tool); return; }
+  activateTool(tool, keyboard);
+  const active = document.activeElement;
+  if (!active || active === document.body || active.closest('[hidden]')) document.getElementById('btn-more-tools').focus();
+}
+
+function gotoItem(id) {
+  showCanvasTab();
+  canvas.reveal(id);
+  canvas.focusItem(id);
+  announcer.announce(`Élément atteint : ${state.getItemLabel(state.getItem(id))}`);
+}
+
+function openTagDialog(ids) {
+  const dialog = document.getElementById('dialog-tag');
+  const form = dialog.querySelector('form');
+  form.reset();
+  dialog.dataset.ids = JSON.stringify(ids || []);
+  dialog.showModal();
+}
+
+function setupTagDialog() {
+  const dialog = document.getElementById('dialog-tag');
+  const select = dialog.querySelector('[name="tag-color"]');
+  for (const [id, name] of O.TAG_COLORS) select.add(new Option(name, id));
+  dialog.querySelector('.dialog-cancel').addEventListener('click', () => dialog.close());
+  dialog.querySelector('form').addEventListener('submit', e => {
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const name = String(fd.get('tag-name') || '').trim();
+    if (!name) return;
+    state.createTag(name, fd.get('tag-color'), JSON.parse(dialog.dataset.ids || '[]'));
+    dialog.close();
+    canvas.focusItem(state.getSelectedId());
+  });
+}
+
 function showCanvasTab() {
   if (currentView !== 'canvas') document.getElementById('tab-canvas').click();
 }
@@ -257,9 +344,18 @@ function activateTool(tool, fromKey) {
   showCanvasTab();
   canvas.setTool(tool);
   const name = canvas.TOOL_NAMES[tool];
+  if (tool === 'pen' || tool === 'eraser') { activateDrawTool(tool, fromKey); return; }
   if (!canvas.isCreationTool(tool)) { announcer.announce(`Outil ${name} actif`); return; }
   announcer.announce(`Outil ${name} actif : cliquez sur le canevas pour poser l’élément, ou Entrée pour le créer au centre de la vue. Échap pour annuler.`);
   if (tool === 'sticky_note' && fromKey) document.querySelector('#sticky-palette input:checked')?.focus();
+}
+
+function activateDrawTool(tool, fromKey) {
+  const hint = tool === 'pen'
+    ? 'Outil Stylo actif : dessinez au pointeur sur le canevas. Échap pour quitter.'
+    : 'Outil Gomme actif : passez sur un tracé pour l’effacer. Échap pour quitter.';
+  announcer.announce(hint);
+  if (tool === 'pen' && fromKey) document.querySelector('#pen-palette input[name="pen-color"]:checked')?.focus();
 }
 
 function createAtCenter(tool) {
@@ -316,8 +412,11 @@ function setupDialogs() {
   canvas.getSvgElement().addEventListener('item-edit', (e) => {
     const item = state.getItem(e.detail.id);
     if (item?.type === 'connector') openEditDialog(item.id);
-    else if (item) editor.open(item.id, e.detail.isNew);
+    else if (item?.type === 'comment') commentsPanel.open(item.id, true);
+    else if (item && !objects.enterSub(item)) editor.open(item.id, e.detail.isNew);
   });
+  canvas.getSvgElement().addEventListener('comment-open', (e) => commentsPanel.open(e.detail.id, e.detail.focus));
+  setupTagDialog();
   document.addEventListener('table-edit', (e) => openEditDialog(e.detail.id));
   document.addEventListener('outline-focus', (e) => { if (currentView === 'canvas') canvas.focusItem(e.detail.id); });
 }
@@ -343,7 +442,7 @@ function setupDashboardDialogs() {
 function setupShortcuts() {
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
-    if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select, [contenteditable]')) return;
+    if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select, [contenteditable], .comments-panel, .tools-panel')) return;
     const boardVisible = !document.getElementById('app-board').hidden;
     if (!boardVisible) return;
     if (currentView === 'canvas') {
@@ -364,11 +463,13 @@ function setupShortcuts() {
       }
       if (e.ctrlKey && e.shiftKey && !e.altKey && ['ArrowDown', 'ArrowUp'].includes(e.key)) {
         e.preventDefault();
+        if (e.key === 'ArrowDown' && item?.groupId && state.getSelectedIds().length > 1 && canvas.enterGroup(id)) return;
         const target = e.key === 'ArrowDown' ? state.getChildrenOf(id)[0]?.id : item?.parent;
         if (target) canvas.focusItem(target);
         return;
       }
       if (e.ctrlKey && !e.altKey && key === 'd' && !e.shiftKey) { e.preventDefault(); duplicate(ids); return; }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && key === 'g') { e.preventDefault(); if (e.shiftKey) state.ungroupItems(ids); else state.groupItems(ids); return; }
       if (e.ctrlKey && e.shiftKey && !e.altKey && key === 'l') { e.preventDefault(); state.toggleLockedMany(ids); return; }
       const ctrl = e.ctrlKey || e.metaKey;
       if (ctrl && e.altKey && e.shiftKey && (['Equal', 'NumpadAdd', 'Minus', 'NumpadSubtract'].includes(e.code) || ['+', '=', '-', '_'].includes(e.key))) {
@@ -386,7 +487,8 @@ function setupShortcuts() {
       if (e.altKey && !ctrl && e.key === 'F10') { e.preventDefault(); contextToolbar.focus(); return; }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) {
         if (['PageUp', 'PageDown'].includes(e.key)) { e.preventDefault(); state.reorderItems(ids, e.key === 'PageUp'); return; }
-        if (TOOL_KEYS[key]) { e.preventDefault(); activateTool(TOOL_KEYS[key], true); return; }
+        if (e.shiftKey && key === 'c') { e.preventDefault(); commentsPanel.toggle(); return; }
+        if (TOOL_KEYS[key] && !e.shiftKey) { e.preventDefault(); activateTool(TOOL_KEYS[key], true); return; }
         if (key === 'l') { e.preventDefault(); openLinkDialog(); return; }
         if (e.key === 'Escape') {
           if (canvas.cancelTool()) { e.preventDefault(); return; }
@@ -411,13 +513,13 @@ function setupShortcuts() {
 
 function openEditDialog(id) {
   const item = state.getItem(id);
-  if (!item || state.isLocked(id)) return;
+  if (!item || item.type === 'comment' || state.isLocked(id)) return;
   editingId = id;
   if (item.type === 'connector') { openLinkDialogForEdit(item); return; }
   const dialog = document.getElementById('dialog-item');
   const form = dialog.querySelector('form');
   form.reset();
-  const titles = { sticky_note: 'Éditer le post-it', shape: 'Éditer la forme', text: 'Éditer le texte', card: 'Éditer la carte', frame: 'Éditer le cadre' };
+  const titles = { sticky_note: 'Éditer le post-it', shape: 'Éditer la forme', text: 'Éditer le texte', card: 'Éditer la carte', frame: 'Éditer le cadre', drawing: 'Éditer le dessin', mindmap: 'Éditer le nœud', kanban: 'Éditer le kanban', datatable: 'Éditer le tableau de données', code: 'Éditer le bloc de code', flipcard: 'Éditer la carte recto-verso' };
   dialog.querySelector('.dialog-title').textContent = titles[item.type] || 'Éditer';
   dialog.querySelector('[name="item-type"]').value = item.type;
   dialog.querySelector('.dialog-submit').textContent = 'Enregistrer';

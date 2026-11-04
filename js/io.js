@@ -46,7 +46,7 @@ export function exportMarkdown() {
       if (children.length === 0) {
         lines.push('*(vide)*');
       } else {
-        for (const child of children) lines.push(`- ${state.getItemLabel(child)}`);
+        pushItems(lines, children);
       }
       lines.push('');
     }
@@ -54,7 +54,7 @@ export function exportMarkdown() {
 
   if (orphans.length > 0) {
     if (frames.length > 0) { lines.push('## Éléments hors cadre'); lines.push(''); }
-    for (const item of orphans) lines.push(`- ${state.getItemLabel(item)}`);
+    pushItems(lines, orphans);
     lines.push('');
   }
 
@@ -72,11 +72,55 @@ export function exportMarkdown() {
     lines.push('');
   }
 
+  const comments = state.getComments();
+  if (comments.length > 0) {
+    lines.push('## Commentaires');
+    lines.push('');
+    for (const c of comments) {
+      const target = state.getItem(c.targetId);
+      lines.push(`- ${c.resolved ? '[x]' : '[ ]'} ${target ? `Sur ${state.getItemLabel(target)}` : 'Sur le canevas'}`);
+      for (const m of c.messages) lines.push(`  - ${m.author} (${m.date.slice(0, 16).replace('T', ' ')}) : ${m.text}`);
+    }
+    lines.push('');
+  }
+
   if (board.items.length === 0) { lines.push('*(tableau vide)*'); lines.push(''); }
 
   const md = lines.join('\n');
   download(md, `${board.name || 'tableau'}.md`, 'text/markdown');
   announce('Plan exporté en Markdown');
+}
+
+function pushItems(lines, items) {
+  const groups = new Set();
+  for (const item of items) {
+    if (!item.groupId) { pushItem(lines, item, ''); continue; }
+    if (groups.has(item.groupId)) continue;
+    groups.add(item.groupId);
+    const members = items.filter(i => i.groupId === item.groupId);
+    lines.push(`- Groupe de ${members.length} éléments`);
+    for (const m of members) pushItem(lines, m, '  ');
+  }
+}
+
+function pushItem(lines, item, indent) {
+  lines.push(`${indent}- ${state.getItemLabel(item)}`);
+  const sub = indent + '  ';
+  if (item.type === 'mindmap') for (const k of state.mindChildren(item.id)) pushItem(lines, k, sub);
+  if (item.type === 'kanban') for (const col of item.columns) {
+    lines.push(`${sub}- ${col.name}`);
+    for (const card of col.cards) lines.push(`${sub}  - ${card.text || '(vide)'}`);
+  }
+  if (item.type === 'flipcard') lines.push(`${sub}- Recto : ${item.content || '(vide)'}`, `${sub}- Verso : ${item.back || '(vide)'}`);
+  if (item.type === 'code' && item.content) {
+    lines.push('', `${sub}\`\`\`${item.language === 'text' ? '' : item.language}`, ...item.content.split('\n').map(l => sub + l), `${sub}\`\`\``, '');
+  }
+  if (item.type === 'datatable') {
+    const cell = v => String(v).replace(/\|/g, '\\|');
+    lines.push('', `${sub}| ${item.rows[0].map(cell).join(' | ')} |`, `${sub}|${item.rows[0].map(() => ' --- |').join('')}`);
+    for (const row of item.rows.slice(1)) lines.push(`${sub}| ${row.map(cell).join(' | ')} |`);
+    lines.push('');
+  }
 }
 
 function download(content, filename, mimeType) {

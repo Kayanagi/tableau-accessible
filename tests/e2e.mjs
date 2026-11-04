@@ -1,7 +1,7 @@
 import { chromium } from 'playwright';
 import { spawn } from 'child_process';
 
-const PORT = 8765;
+const PORT = Number(process.env.PORT) || 8765;
 const BASE = `http://localhost:${PORT}`;
 const results = [];
 let passed = 0, failed = 0;
@@ -505,6 +505,212 @@ try {
   log('Plan et Tableau : sélection multiple synchronisée (aria-selected, cases à cocher)', outlineSel === 2 && JSON.stringify(afterUncheck) === '["item-2"]' && tableChecked === 1);
   await page.click('#tab-canvas');
 
+  // === Nouveaux objets (1.4.0) ===
+  const label = id => page.getAttribute(`#canvas-items [data-id="${id}"]`, 'aria-label');
+  const activeId = () => page.evaluate(() => document.activeElement.closest('.canvas-item')?.getAttribute('data-id'));
+  const fromPanel = async query => {
+    await page.click('#btn-more-tools');
+    await page.waitForSelector('#tools-panel:not([hidden])');
+    await page.fill('#tools-search', query);
+    await page.keyboard.press('Enter');
+  };
+
+  await fresh([]);
+  await page.click('#btn-more-tools');
+  const dlg = await page.getAttribute('#tools-panel', 'role') === 'dialog' && await page.evaluate(() => document.activeElement.id) === 'tools-search';
+  await page.fill('#tools-search', 'kanban');
+  const visibleTools = await page.$$eval('#tools-panel .tools-list button', els => els.filter(b => !b.closest('[hidden]')).map(b => b.dataset.tool));
+  await page.keyboard.press('Escape');
+  log('Plus d’outils : dialogue, recherche filtrée, Échap rend le focus', dlg && JSON.stringify(visibleTools) === '["kanban"]' && await page.isHidden('#tools-panel') && await page.evaluate(() => document.activeElement.id) === 'btn-more-tools' && await page.getAttribute('#btn-more-tools', 'aria-expanded') === 'false');
+
+  await page.click('#btn-more-tools');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowDown');
+  const secondTool = await page.evaluate(() => document.activeElement.dataset.tool);
+  await page.keyboard.press('Escape');
+  const arrowsOk = secondTool === 'eraser';
+
+  await fromPanel('recto');
+  await page.waitForSelector('.inline-editor');
+  await page.keyboard.type('Question');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.inline-editor'));
+  snap = await snapshot();
+  const fc = snap.items[0];
+  log('Carte recto-verso : créée au clavier depuis le panneau (flèches, recherche), nom accessible', arrowsOk && fc?.type === 'flipcard' && /Carte recto-verso, recto visible : Question/.test(await label(fc.id)));
+  await page.keyboard.press('Space');
+  await announced(/Verso visible/);
+  const flipped = (await snapshot()).items[0].flipped;
+  await page.keyboard.press('Control+z');
+  log('Carte recto-verso : Espace retourne, annonce, annulable', flipped === true && (await snapshot()).items[0].flipped === false);
+
+  await fresh([]);
+  await page.focus('#board-title');
+  await page.keyboard.press('p');
+  const sb = await page.locator('.canvas-svg').boundingBox();
+  const penFrom = { x: sb.x + 400, y: sb.y + 300 }, penTo = { x: sb.x + 520, y: sb.y + 360 };
+  await drag(penFrom, penTo);
+  snap = await snapshot();
+  const dr = snap.items[0];
+  log('Stylo (P) : tracé à main levée, polyline compacte', dr?.type === 'drawing' && dr.points.length >= 4 && dr.points.length < 40 && await page.locator('#canvas-items .type-drawing polyline').count() === 2 && /^Dessin à main levée/.test(await label(dr.id)));
+  await page.keyboard.press('Escape');
+  await focus(dr.id);
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.field-editor');
+  await page.keyboard.type('Flèche');
+  await page.keyboard.press('Enter');
+  snap = await snapshot();
+  log('Tracé au clavier : déplacé et étiquette modifiable', snap.items[0].x === dr.x + 10 && snap.items[0].content === 'Flèche' && /Dessin à main levée : Flèche/.test(await label(dr.id)) && await activeId() === dr.id);
+  await page.keyboard.press('e');
+  await drag(penFrom, penTo);
+  log('Gomme (E) : le tracé touché est supprimé', (await snapshot()).items.length === 0);
+  await page.keyboard.press('Escape');
+
+  await fresh([note('item-1', 100, 100), note('item-2', 300, 100), note('item-3', 600, 100)]);
+  await focus('item-1');
+  await clickWith(mid(await box('item-2')), ['Shift']);
+  await page.keyboard.press('Control+g');
+  snap = await snapshot();
+  const grouped = snap.items[0].groupId && snap.items[0].groupId === snap.items[1].groupId;
+  await page.keyboard.press('Escape');
+  await page.mouse.click(...Object.values(mid(await box('item-2'))));
+  const whole = (await selection()).length;
+  await page.mouse.dblclick(...Object.values(mid(await box('item-2'))));
+  const inside = JSON.stringify(await selection());
+  log('Groupe : Ctrl+G, un clic sélectionne le groupe, double-clic entre dedans', grouped && whole === 2 && inside === '["item-2"]' && /dans un groupe de 2/.test(await label('item-1')));
+  await page.click('#tab-outline');
+  const groupNode = await page.locator('#view-outline [data-group]').textContent();
+  const nested = await page.locator('#view-outline [role="treeitem"]:has([data-group]) [role="group"] .outline-item-btn').count();
+  await page.click('#tab-canvas');
+  await focus('item-1');
+  await page.keyboard.press('Control+Shift+g');
+  log('Groupe : nœud parent dans le Plan, Ctrl+Maj+G dégroupe', /Groupe de 2 éléments/.test(groupNode) && nested === 2 && !(await snapshot()).items.some(i => i.groupId));
+
+  await page.evaluate(() => localStorage.setItem('tableau-accessible-auteur', 'Wesley'));
+  await fresh([note('item-1', 100, 100, { content: 'Idée' })]);
+  await focus('item-1');
+  await page.keyboard.press('c');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('#comments-panel:not([hidden])');
+  const replyFocused = await page.evaluate(() => document.activeElement.matches('.comment-reply textarea'));
+  await page.keyboard.type('À revoir');
+  await page.click('.comment-reply button[type="submit"]');
+  await announced(/Message publié/);
+  snap = await snapshot();
+  const cm = snap.items.find(i => i.type === 'comment');
+  log('Commentaire (C) : posé sur l’objet, fil avec auteur mémorisé et date', replyFocused && cm?.targetId === 'item-1' && cm.messages[0]?.author === 'Wesley' && !!cm.messages[0].date && /Commentaire de Wesley : « À revoir », 1 message, non résolu, sur Post-it/.test(await label(cm.id)) && /1 commentaire/.test(await label('item-1')) && await page.locator('.comment-messages time[datetime]').count() === 1);
+  await page.click('.comment-actions [data-act="resolve"]');
+  await announced(/Commentaire résolu/);
+  const resolved = (await snapshot()).items.find(i => i.type === 'comment').resolved;
+  await page.click('.comment-actions [data-act="goto"]');
+  const atTarget = await activeId();
+  await page.keyboard.press('Shift+C');
+  const hiddenAfter = await page.isHidden('#comments-panel');
+  await page.keyboard.press('Shift+C');
+  const shownAgain = await page.isVisible('#comments-panel');
+  await page.keyboard.press('Escape');
+  log('Commentaire : résolu annoncé, navigation vers l’objet, Maj+C affiche et masque', resolved === true && atTarget === 'item-1' && hiddenAfter && shownAgain && await page.isHidden('#comments-panel'));
+
+  await fresh([note('item-1', 100, 100, { content: 'A' }), note('item-2', 400, 100, { content: 'B' }), { id: 'item-3', type: 'card', x: 700, y: 100, width: 200, height: 120, title: 'C', content: '' }]);
+  await page.evaluate(async () => { const s = await import('/js/state.js'); s.createTag('Urgent', 'red', ['item-1', 'item-3']); });
+  await page.waitForSelector('#canvas-items [data-id="item-1"] .tag-pill');
+  const tagLabel = await label('item-3');
+  await page.click('#tab-table');
+  await page.selectOption('#table-tag-filter', { label: 'Urgent' });
+  const rows = await page.$$eval('#view-table .items-table:not(.data-grid) tbody tr', els => els.map(e => e.dataset.id).sort());
+  await page.selectOption('#table-tag-filter', '');
+  await page.click('#tab-canvas');
+  log('Étiquettes : affichées, dans le nom accessible, filtrées dans la vue Tableau', /étiquettes : Urgent/.test(tagLabel) && JSON.stringify(rows) === '["item-1","item-3"]');
+  await page.mouse.click(...Object.values(mid(await box('item-2'))));
+  await page.locator('.context-toolbar [data-key="tags"]').click();
+  await page.locator('.context-menu [role="menuitemcheckbox"]').first().click();
+  log('Étiquettes : ajout depuis la barre contextuelle', (await snapshot()).items[1].tags?.length === 1);
+
+  await page.locator('.context-toolbar [data-key="react"]').click();
+  await page.locator('.context-menu [role="menuitemcheckbox"]').first().click();
+  await announced(/Réaction pouce levé ajoutée, 1 au total/);
+  log('Réactions : compteur visible et dans le nom accessible', /réactions : 👍 pouce levé 1/.test(await label('item-2')) && /👍 1/.test(await page.locator('#canvas-items [data-id="item-2"]').textContent()));
+
+  await fresh([]);
+  await fromPanel('mentale');
+  await page.waitForSelector('.inline-editor');
+  await page.keyboard.type('Racine');
+  await page.keyboard.press('Tab');
+  await page.waitForFunction(() => document.activeElement.classList.contains('inline-editor') && !document.activeElement.value);
+  await page.keyboard.type('Enfant');
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => document.activeElement.classList.contains('inline-editor') && !document.activeElement.value);
+  await page.keyboard.type('Frère');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.inline-editor'));
+  snap = await snapshot();
+  const [root, kid, sib] = snap.items;
+  log('Carte mentale : Tab ajoute un enfant, Entrée un frère, disposition horizontale', root?.content === 'Racine' && kid?.parentNode === root.id && sib?.parentNode === root.id && kid.x > root.x + root.width && kid.x === sib.x && sib.y > kid.y && await page.locator('#canvas-items path[d*=" C "]').count() === 2);
+  await page.keyboard.press('ArrowUp');
+  const up = await activeId();
+  await page.keyboard.press('ArrowLeft');
+  const toRoot = await activeId();
+  await page.keyboard.press('ArrowLeft');
+  const folded = (await snapshot()).items[0].collapsed && await page.locator('#canvas-items .type-mindmap').count() === 1;
+  await page.click('#tab-outline');
+  const tree = await page.$eval('#view-outline [role="treeitem"][aria-expanded]', el => el.getAttribute('aria-expanded') + ':' + el.querySelectorAll('[role="group"] .outline-item-btn').length);
+  await page.click('#tab-canvas');
+  log('Carte mentale : flèches dans l’arbre, plier, arbre imbriqué dans le Plan', up === kid.id && toRoot === root.id && folded && tree === 'false:2');
+
+  const kb = { id: 'item-1', type: 'kanban', x: 100, y: 100, content: 'Sprint', columns: [{ id: 'c1', name: 'À faire', cards: [{ id: 'k1', text: 'Tâche A' }, { id: 'k2', text: 'Tâche B' }] }, { id: 'c2', name: 'En cours', cards: [{ id: 'k3', text: 'Tâche C' }] }, { id: 'c3', name: 'Fait', cards: [] }] };
+  await fresh([kb]);
+  await focus('item-1');
+  await page.keyboard.press('Enter');
+  const onCard = await page.evaluate(() => document.activeElement.dataset.sub);
+  await page.keyboard.press('Control+ArrowRight');
+  await announced(/Carte Tâche A déplacée dans En cours, position 1 sur 2/);
+  const kbSnap = (await snapshot()).items[0];
+  await page.keyboard.press('Control+ArrowDown');
+  await announced(/position 2 sur 2/);
+  log('Kanban : Ctrl+flèches déplacent la carte entre colonnes et dans l’ordre, annonce', onCard === 'card:k1' && kbSnap.columns[1].cards[0].id === 'k1' && (await snapshot()).items[0].columns[1].cards[1].id === 'k1' && await page.evaluate(() => document.activeElement.dataset.sub) === 'card:k1' && /Kanban : Sprint, 3 colonnes, 3 cartes/.test(await label('item-1')));
+  await page.keyboard.press('Escape');
+  const cardB = mid(await page.locator('[data-sub="card:k2"] rect').boundingBox());
+  const colFait = await page.locator('[data-sub="col:c3"] > rect').boundingBox();
+  await drag(cardB, { x: colFait.x + colFait.width / 2, y: colFait.y + 50 });
+  await announced(/Carte Tâche B déplacée dans Fait/);
+  log('Kanban : glisser une carte vers une autre colonne', (await snapshot()).items[0].columns[2].cards[0]?.id === 'k2');
+
+  await fresh([{ id: 'item-1', type: 'datatable', x: 100, y: 100, content: 'Budget', rows: [['Poste', 'Montant'], ['', ''], ['', '']] }]);
+  await focus('item-1');
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.field-editor');
+  await page.keyboard.type('120');
+  await page.keyboard.press('Enter');
+  snap = await snapshot();
+  const cellRole = await page.evaluate(() => document.activeElement.getAttribute('role') + ':' + document.activeElement.dataset.sub);
+  await page.locator('.context-toolbar [data-key="dt-row"]').click();
+  const rowsAfter = (await snapshot()).items[0].rows.length;
+  await page.click('#tab-table');
+  const grid = await page.$$eval('#view-table .data-grid th[scope="col"]', els => els.map(e => e.textContent).join(','));
+  await page.click('#tab-canvas');
+  log('Tableau de données : cellules au clavier, édition, ajout de ligne, rendu en table', snap.items[0].rows[1][1] === '120' && cellRole === 'gridcell:cell:1:1' && rowsAfter === 4 && grid === 'Poste,Montant' && /Tableau de données : Budget, 3 lignes, 2 colonnes/.test(await label('item-1')), `${snap.items[0].rows[1][1]} ${cellRole} ${rowsAfter} ${grid} ${await label('item-1')}`);
+
+  await fresh([{ id: 'item-1', type: 'code', x: 100, y: 100, width: 320, height: 180, language: 'javascript', content: 'const x = 1; // un\nreturn "ok";' }]);
+  const kw = await page.$$eval('#canvas-items .code-text tspan', els => els.filter(e => e.textContent === 'const').map(e => e.getAttribute('fill')));
+  await focus('item-1');
+  const langBtn = await page.locator('.context-toolbar [data-key="lang"]').textContent();
+  log('Bloc de code : nom accessible, coloration, langage dans la barre', /Bloc de code JavaScript : const x = 1; \/\/ un, 2 lignes/.test(await label('item-1')) && kw[0] === '#c9b5ff' && langBtn === 'JavaScript' && await page.locator('.context-toolbar [data-key="copy-code"]').count() === 1);
+
+  await fresh([{ id: 'item-1', type: 'mindmap', x: 100, y: 100, content: 'R', parentNode: null }, { id: 'item-2', type: 'mindmap', x: 0, y: 0, content: 'E', parentNode: 'item-1' }, note('item-3', 500, 100, { groupId: 'g1' }), note('item-4', 700, 100, { groupId: 'g1' })]);
+  await focus('item-1');
+  await page.keyboard.press('Control+a');
+  await page.keyboard.press('Control+c');
+  await page.keyboard.press('Control+v');
+  snap = await snapshot();
+  const pastedMap = snap.items.slice(4);
+  const newRoot = pastedMap.find(i => i.type === 'mindmap' && !i.parentNode);
+  const newGroup = pastedMap.filter(i => i.type === 'sticky_note').map(i => i.groupId);
+  log('Copier-coller : arbre et groupe recréés avec de nouveaux identifiants', pastedMap.length === 4 && pastedMap.some(i => i.parentNode === newRoot?.id) && newGroup[0] && newGroup[0] === newGroup[1] && newGroup[0] !== 'g1');
+
   log('Pas d\'erreurs console (1280px)', errors.length === 0, errors.join('; '));
   await ctx.close();
 
@@ -556,6 +762,15 @@ try {
     const w320 = await p320.$eval('body', el => el.scrollWidth);
     log('320px : barre contextuelle en bas, palette visible, sans débordement', w320 <= 320 && ctx.x >= 0 && ctx.x + ctx.width <= 320 && ctx.y + ctx.height <= creation.y && pal.x >= 0 && pal.x + pal.width <= 320, `scrollWidth=${w320}`);
     await p320.keyboard.press('Escape');
+    await p320.click('#btn-more-tools');
+    const tp = await p320.locator('#tools-panel').boundingBox();
+    const wTools = await p320.$eval('body', el => el.scrollWidth);
+    await p320.keyboard.press('Escape');
+    await p320.click('#btn-comments');
+    const cp = await p320.locator('#comments-panel').boundingBox();
+    const wComments = await p320.$eval('body', el => el.scrollWidth);
+    await p320.keyboard.press('Escape');
+    log('320px : panneaux Plus d’outils et Commentaires sans débordement', tp && cp && tp.x >= 0 && tp.x + tp.width <= 320 && cp.x >= 0 && cp.x + cp.width <= 320 && wTools <= 320 && wComments <= 320, `${wTools}/${wComments}`);
   }
 
   log('320px : pas d\'erreurs console', err320.length === 0, err320.join('; '));

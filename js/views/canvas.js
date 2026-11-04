@@ -1,6 +1,8 @@
 import * as state from '../state.js';
 import * as history from '../store/history.js';
 import { announce } from '../a11y/announcer.js';
+import * as O from '../objects.js';
+import * as obj from './canvas-objects.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const BASE_W = 2000;
@@ -11,11 +13,14 @@ const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 5;
 const LINK_BLUE = '#3859ff';
 const TOOL_SIZES = {
-  sticky_note: [150, 150], text: [200, 30], 'shape:rectangle': [120, 80], 'shape:circle': [100, 100], card: [200, 120], frame: [400, 300]
+  sticky_note: [150, 150], text: [200, 30], 'shape:rectangle': [120, 80], 'shape:circle': [100, 100], card: [200, 120], frame: [400, 300],
+  comment: [28, 28], mindmap: [170, 56], kanban: [548, 116], datatable: [360, 118], code: [320, 180], flipcard: [220, 140]
 };
 export const TOOL_NAMES = {
-  select: 'Sélection', hand: 'Main', sticky_note: 'Post-it', text: 'Texte', 'shape:rectangle': 'Rectangle', 'shape:circle': 'Cercle', card: 'Carte', frame: 'Cadre'
+  select: 'Sélection', hand: 'Main', sticky_note: 'Post-it', text: 'Texte', 'shape:rectangle': 'Rectangle', 'shape:circle': 'Cercle', card: 'Carte', frame: 'Cadre',
+  pen: 'Stylo', eraser: 'Gomme', comment: 'Commentaire', mindmap: 'Carte mentale', kanban: 'Kanban', datatable: 'Tableau de données', code: 'Bloc de code', flipcard: 'Carte recto-verso'
 };
+const DRAW_TOOLS = ['pen', 'eraser'];
 
 let svg = null;
 let itemsGroup = null;
@@ -35,6 +40,14 @@ let spaceDown = false;
 let editingId = null;
 let tool = 'select';
 let stickyColor = 'light_yellow';
+let penColor = 'ink';
+let penWidth = 4;
+let penState = null;
+let eraseState = null;
+let cardDrag = null;
+let enteredGroup = null;
+let mapMode = null;
+let lastSub = {};
 let container = null;
 let fontFamily = 'sans-serif';
 const viewListeners = new Set();
@@ -108,7 +121,12 @@ export function getTool() {
 }
 
 export function isCreationTool(t = tool) {
-  return t !== 'select' && t !== 'hand';
+  return t !== 'select' && t !== 'hand' && !DRAW_TOOLS.includes(t);
+}
+
+export function setPen(color, width) {
+  if (color) penColor = color;
+  if (width) penWidth = width;
 }
 
 export function setTool(t) {
@@ -213,11 +231,14 @@ export function getZoom() {
 
 export function render() {
   if (!itemsGroup) return;
+  state.syncDerived();
   const activeId = document.activeElement?.closest('.canvas-item')?.getAttribute('data-id');
+  const activeSub = document.activeElement?.dataset?.sub;
   itemsGroup.innerHTML = '';
   const multi = state.getSelectedIds().length > 1;
 
   state.getItems().forEach((item, idx) => {
+    if (item.type === 'mindmap' && state.isMindHidden(item)) return;
     const g = renderItem(item, idx);
     if (!g) return;
     if (state.isSelected(item.id)) {
@@ -229,7 +250,10 @@ export function render() {
   });
 
   updateFocusableItems();
-  if (activeId) itemsGroup.querySelector(`[data-id="${activeId}"]`)?.focus();
+  if (activeId) {
+    const g = itemsGroup.querySelector(`[data-id="${activeId}"]`);
+    ((activeSub && g?.querySelector(`[data-sub="${CSS.escape(activeSub)}"]`)) || g)?.focus({ preventScroll: true });
+  }
   renderOverlay();
   emitView();
 }
@@ -254,8 +278,16 @@ function renderItem(item, index) {
     case 'card': renderCard(g, item); break;
     case 'frame': renderFrame(g, item); break;
     case 'connector': renderConnector(g, item); break;
+    case 'drawing': obj.renderDrawing(g, item); break;
+    case 'comment': obj.renderComment(g, item); break;
+    case 'mindmap': obj.renderMindmap(g, item); break;
+    case 'kanban': obj.renderKanban(g, item); break;
+    case 'datatable': obj.renderDatatable(g, item); break;
+    case 'code': obj.renderCode(g, item); break;
+    case 'flipcard': obj.renderFlipcard(g, item); break;
     default: return null;
   }
+  if (item.type !== 'connector') obj.renderDecorations(g, item, itemBox(item));
 
   if (item.locked) {
     const badge = document.createElementNS(SVG_NS, 'text');
@@ -272,6 +304,14 @@ function renderItem(item, index) {
 function measure(text, fs, bold) {
   measureCtx.font = `${bold ? 'bold ' : ''}${fs}px ${fontFamily}`;
   return measureCtx.measureText(text).width;
+}
+
+export function measureText(text, fs) {
+  return measure(text, fs, false);
+}
+
+export function wrapText(text, maxW, fs) {
+  return wrap(text, maxW, fs, false);
 }
 
 function wrap(text, maxW, fs, bold) {
@@ -299,14 +339,18 @@ function wrap(text, maxW, fs, bold) {
 export function textBox(item) {
   const { x, y } = item;
   const w = item.width || 150, h = item.height || 100;
+  const tagH = item.tags?.length && O.TAG_TYPES.includes(item.type) ? 24 : 0;
   switch (item.type) {
-    case 'sticky_note': return { x: x + 10, y: y + 22, w: w - 20, h: h - 30, valign: 'middle' };
+    case 'sticky_note': return { x: x + 10, y: y + 22, w: w - 20, h: h - 30 - tagH, valign: 'middle' };
+    case 'mindmap': return { x: x + 10, y: y + 4, w: w - 20 - (state.mindChildren(item.id).length ? 22 : 0), h: h - 8, valign: 'middle' };
+    case 'flipcard': return { x: x + 12, y: y + 34, w: w - 24, h: h - 42, valign: 'middle' };
+    case 'code': return { x: x + 10, y: y + 32, w: w - 20, h: h - 38, valign: 'top' };
     case 'shape': {
       const k = !item.shape || item.shape === 'rectangle' ? 0 : item.shape === 'triangle' ? 0.25 : 0.15;
       const top = item.shape === 'triangle' ? y + h * 0.45 : y + h * k + 6;
       return { x: x + w * k + 6, y: top, w: w * (1 - 2 * k) - 12, h: y + h * (1 - k) - 6 - top, valign: 'middle' };
     }
-    case 'card': return { x: x + 10, y: y + 40, w: w - 20, h: h - 48, valign: 'top' };
+    case 'card': return { x: x + 10, y: y + 40, w: w - 20, h: h - 48 - tagH, valign: 'top' };
     case 'frame': return { x: x + 8, y: y - 24, w: w - 16, h: 20, valign: 'top' };
     default: return { x, y, w, h: Infinity, valign: 'top' };
   }
@@ -321,6 +365,14 @@ function fits(text, box, fs, bold) {
 export function textLayout(item, text = item.content || '') {
   const box = textBox(item);
   const bold = !!item.bold;
+  if (item.type === 'code') {
+    const fs = Number(item.fontSize) || 13, lh = fs * 1.25;
+    const max = Math.max(1, Math.floor(box.h / lh));
+    const cols = Math.max(4, Math.floor(box.w / (fs * 0.6)));
+    let lines = text ? text.split('\n').map(l => (l.length > cols ? l.slice(0, cols - 1) + '…' : l)) : [];
+    if (lines.length > max) { lines = lines.slice(0, max); lines[max - 1] = '…'; }
+    return { box, fs, lh, lines, bold: false, align: 'left' };
+  }
   let fs = item.fontSize;
   if (item.type === 'frame') fs = 13;
   else if (fs === 'auto') {
@@ -345,7 +397,7 @@ export function textLayout(item, text = item.content || '') {
   return { box, fs, lh, lines, bold, align: item.align || 'left' };
 }
 
-function appendLayoutText(g, item, ink) {
+export function appendLayoutText(g, item, ink) {
   const L = textLayout(item);
   if (!L.lines.length) return;
   const total = L.lines.length * L.lh;
@@ -370,6 +422,8 @@ function appendLayoutText(g, item, ink) {
 
 export function inkFor(item) {
   if (item.type === 'sticky_note') return item.color === 'black' ? '#ffffff' : '#1b1740';
+  if (item.type === 'code') return '#f1eeff';
+  if (item.type === 'mindmap' && !item.parentNode) return 'var(--on-primary)';
   return 'var(--fg)';
 }
 
@@ -603,14 +657,14 @@ function createRect(x, y, w, h, rx) {
   return r;
 }
 
-function svgEl(tag, attrs) {
+export function svgEl(tag, attrs) {
   const el = document.createElementNS(SVG_NS, tag);
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
   return el;
 }
 
 function selectionItems() {
-  return state.getSelectedIds().map(state.getItem).filter(i => i && i.type !== 'connector');
+  return state.getSelectedIds().map(state.getItem).filter(i => i && i.type !== 'connector' && !(i.type === 'mindmap' && state.isMindHidden(i)));
 }
 
 function unionBox(items) {
@@ -628,9 +682,9 @@ function renderOverlay() {
     const b = unionBox(items);
     overlay.appendChild(svgEl('rect', { x: b.x - 6 * u, y: b.y - 6 * u, width: b.w + 12 * u, height: b.h + 12 * u, fill: 'none', stroke: LINK_BLUE, 'stroke-width': 1.5 * u, 'stroke-dasharray': `${6 * u} ${4 * u}`, class: 'selection-box' }));
   }
-  if (items.length === 1 && state.getSelectedIds().length === 1 && !items[0].locked && items[0].id !== editingId && !dragState?.moved) {
+  if (items.length === 1 && state.getSelectedIds().length === 1 && !items[0].locked && items[0].id !== editingId && !dragState?.moved && items[0].type !== 'comment') {
     const b = itemBox(items[0]);
-    const corners = { nw: [b.x, b.y], ne: [b.x + b.w, b.y], sw: [b.x, b.y + b.h], se: [b.x + b.w, b.y + b.h] };
+    const corners = O.AUTO_SIZE.includes(items[0].type) ? {} : { nw: [b.x, b.y], ne: [b.x + b.w, b.y], sw: [b.x, b.y + b.h], se: [b.x + b.w, b.y + b.h] };
     for (const [name, [cx, cy]] of Object.entries(corners)) {
       const hit = svgEl('rect', { x: cx - 12 * u, y: cy - 12 * u, width: 24 * u, height: 24 * u, fill: 'transparent', 'data-handle': name, class: `handle handle-${name}` });
       overlay.append(hit, svgEl('rect', { x: cx - 5 * u, y: cy - 5 * u, width: 10 * u, height: 10 * u, fill: '#ffffff', stroke: LINK_BLUE, 'stroke-width': 1.5 * u, 'pointer-events': 'none' }));
@@ -647,6 +701,9 @@ function renderOverlay() {
   if (marquee?.moved) {
     const x = Math.min(marquee.start.x, marquee.cur.x), y = Math.min(marquee.start.y, marquee.cur.y);
     overlay.appendChild(svgEl('rect', { x, y, width: Math.abs(marquee.cur.x - marquee.start.x), height: Math.abs(marquee.cur.y - marquee.start.y), fill: 'rgba(56,89,255,0.08)', stroke: LINK_BLUE, 'stroke-width': u, class: 'marquee', 'pointer-events': 'none' }));
+  }
+  if (penState) {
+    overlay.appendChild(svgEl('polyline', { points: penState.points.map(p => `${p.x},${p.y}`).join(' '), fill: 'none', stroke: O.hexOf(O.PEN_COLORS, penColor), 'stroke-width': penWidth, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', class: 'pen-preview', 'pointer-events': 'none' }));
   }
   if (linkState) {
     overlay.appendChild(svgEl('line', { x1: linkState.from.x, y1: linkState.from.y, x2: linkState.to.x, y2: linkState.to.y, stroke: LINK_BLUE, 'stroke-width': 2 * u, 'stroke-dasharray': `${6 * u} ${4 * u}`, 'marker-end': 'url(#arrowhead)', class: 'link-preview', 'pointer-events': 'none' }));
@@ -668,18 +725,27 @@ function targetIds(id) {
 }
 
 function onKeyDown(e) {
+  const active = document.activeElement;
+  const sub = active?.dataset?.sub;
+  const holder = active?.closest?.('.canvas-item');
+  if (sub && holder) {
+    const subItem = state.getItem(holder.getAttribute('data-id'));
+    if (subItem) lastSub[subItem.id] = sub;
+    if (e.key !== 'Tab') { if (subItem) obj.onSubKey(e, subItem, sub); return; }
+  }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   if (e.key === 'Escape' && tool !== 'select') { e.preventDefault(); cancelTool(); return; }
   if (e.key === 'Enter' && isCreationTool()) { e.preventDefault(); createAtCenter(); return; }
+  if (e.key === 'Enter' && DRAW_TOOLS.includes(tool)) { e.preventDefault(); announce('Le tracé se fait au pointeur. Au clavier, Tab parcourt les tracés existants : flèches pour les déplacer, Entrée pour les décrire, Suppr pour les supprimer.'); return; }
   const groups = Array.from(itemsGroup.querySelectorAll('.canvas-item'));
   if (groups.length === 0) return;
 
-  const active = document.activeElement;
-  const idx = groups.indexOf(active);
+  const idx = groups.indexOf(holder);
   if (idx === -1) return;
 
-  const id = active.getAttribute('data-id');
+  const id = holder.getAttribute('data-id');
   const item = state.getItem(id);
+  if (!sub && item && itemKey(e, item)) return;
 
   switch (e.key) {
     case 'ArrowUp':
@@ -705,13 +771,15 @@ function onKeyDown(e) {
         focusedIndex = next;
         updateFocusableItems();
         groups[next].focus();
-        state.setSelectedId(groups[next].getAttribute('data-id'));
+        mapMode = null;
+        selectItem(groups[next].getAttribute('data-id'));
       }
       break;
     }
     case 'Enter': {
       e.preventDefault();
-      svg.dispatchEvent(new CustomEvent('item-edit', { detail: { id }, bubbles: true }));
+      if (item && obj.enterSub(item)) break;
+      edit(id);
       break;
     }
     case 'Delete':
@@ -733,6 +801,80 @@ function onKeyDown(e) {
   }
 }
 
+function itemKey(e, item) {
+  if (e.key === 'F2') { e.preventDefault(); if (!obj.enterSub(item)) edit(item.id); return true; }
+  if (item.type === 'flipcard' && e.key === ' ') { e.preventDefault(); obj.flip(item.id); return true; }
+  if (item.type !== 'mindmap') return false;
+  const inMap = mapMode === item.id && state.isSelected(item.id);
+  if (inMap && e.key === 'Tab' && !e.shiftKey) { e.preventDefault(); addMindNode(item.id, true); return true; }
+  if (inMap && e.key === 'Enter') { e.preventDefault(); addMindNode(item.id, !item.parentNode); return true; }
+  if (e.key === 'Escape') mapMode = null;
+  if (e.shiftKey || !e.key.startsWith('Arrow')) return false;
+  e.preventDefault();
+  const kids = state.mindChildren(item.id);
+  const siblings = item.parentNode ? state.mindChildren(item.parentNode) : [item];
+  const i = siblings.findIndex(s => s.id === item.id);
+  let target = null;
+  if (e.key === 'ArrowRight') { if (kids.length && item.collapsed) state.setMindCollapsed(item.id, false); else target = kids[0]?.id; }
+  else if (e.key === 'ArrowLeft') { if (kids.length && !item.collapsed) state.setMindCollapsed(item.id, true); else target = item.parentNode; }
+  else target = siblings[i + (e.key === 'ArrowDown' ? 1 : -1)]?.id;
+  mapMode = target || item.id;
+  if (target) focusItem(target);
+  return true;
+}
+
+export function addMindNode(id, child) {
+  const node = state.addMindNode(id, child);
+  if (!node) return null;
+  mapMode = node.id;
+  focusGroup(node.id);
+  svg.dispatchEvent(new CustomEvent('item-edit', { detail: { id: node.id, isNew: true }, bubbles: true }));
+  return node;
+}
+
+export function setMapMode(id) {
+  mapMode = id;
+}
+
+export function edit(id) {
+  svg.dispatchEvent(new CustomEvent('item-edit', { detail: { id }, bubbles: true }));
+}
+
+function groupSelection(id) {
+  const item = state.getItem(id);
+  return item?.groupId && enteredGroup !== item.groupId ? state.groupMembers(id) : [id];
+}
+
+export function selectItem(id) {
+  const item = state.getItem(id);
+  if (enteredGroup && item?.groupId !== enteredGroup) enteredGroup = null;
+  state.setSelection(groupSelection(id));
+}
+
+export function enterGroup(id) {
+  const item = state.getItem(id);
+  if (!item?.groupId) return false;
+  enteredGroup = item.groupId;
+  state.setSelectedId(id);
+  focusGroup(id);
+  announce(`Dans le groupe : ${state.getItemLabel(item)}`);
+  return true;
+}
+
+export function focusSub(id, s) {
+  lastSub[id] = s;
+  if (!state.isSelected(id) || state.getSelectedIds().length !== 1) state.setSelectedId(id);
+  const g = itemsGroup.querySelector(`[data-id="${id}"]`);
+  if (!g) return;
+  focusedIndex = Array.from(itemsGroup.children).indexOf(g);
+  updateFocusableItems();
+  g.querySelector(`[data-sub="${CSS.escape(s)}"]`)?.focus({ preventScroll: true });
+}
+
+export function getActiveSub(id) {
+  return lastSub[id] || null;
+}
+
 export function cancelTool() {
   if (tool === 'select') return false;
   setTool('select');
@@ -741,6 +883,7 @@ export function cancelTool() {
 }
 
 function onSpace(e) {
+  if (e.type === 'keydown' && e.defaultPrevented) return;
   if (e.key !== ' ' || !svg || container.hidden || document.getElementById('app-board')?.hidden) return;
   if (e.target.closest?.('input, textarea, select, button, a, dialog, [contenteditable], [role="menuitem"], [role="menuitemradio"]')) return;
   if (e.type === 'keydown') {
@@ -805,6 +948,8 @@ function onPointerDown(e) {
   if (e.button === 1 || tool === 'hand' || spaceDown) { e.preventDefault(); startPan(e); return; }
   if (e.button !== 0) return;
   const pt = screenToSvg(e.clientX, e.clientY);
+  if (tool === 'pen') { e.preventDefault(); penState = { points: [pt] }; svg.setPointerCapture(e.pointerId); return; }
+  if (tool === 'eraser') { e.preventDefault(); eraseState = { ids: new Set() }; eraseAt(e); svg.setPointerCapture(e.pointerId); return; }
   if (isCreationTool()) { e.preventDefault(); pendingCreate = pt; return; }
 
   const handle = e.target.closest('[data-handle]');
@@ -826,17 +971,29 @@ function onPointerDown(e) {
   }
 
   const g = e.target.closest('.canvas-item');
+  const action = e.target.closest('[data-action]');
+  if (g && action && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); runAction(action, g.getAttribute('data-id')); return; }
   if (g) {
     const id = g.getAttribute('data-id');
     lastDownId = id;
     const additive = e.shiftKey || e.ctrlKey || e.metaKey;
-    if (additive) state.toggleSelected(id);
-    else if (!state.isSelected(id)) state.setSelectedId(id);
-    focusGroup(id);
+    const subEl = additive ? null : e.target.closest('[data-sub]');
+    if (additive) {
+      const members = groupSelection(id);
+      const on = !members.every(state.isSelected);
+      state.setSelection(on ? [...state.getSelectedIds(), ...members] : state.getSelectedIds().filter(s => !members.includes(s)), true);
+    } else if (!state.isSelected(id)) selectItem(id);
+    if (state.getItem(id)?.type === 'mindmap') mapMode = id;
+    if (subEl) focusSub(id, subEl.dataset.sub); else focusGroup(id);
     if (!state.isSelected(id)) return;
     const item = state.getItem(id);
+    if (subEl?.dataset.sub.startsWith('card:') && !item.locked) {
+      cardDrag = { id, cardId: subEl.dataset.sub.slice(5), start: pt, moved: false };
+      svg.setPointerCapture(e.pointerId);
+      return;
+    }
     if (!item || item.type === 'connector' || state.isLocked(id)) return;
-    const ids = state.getSelectedIds().filter(sid => { const i = state.getItem(sid); return i && i.type !== 'connector' && !i.locked; });
+    const ids = state.movableIds(state.getSelectedIds());
     dragState = { ids, starts: new Map(ids.map(sid => [sid, { x: state.getItem(sid).x, y: state.getItem(sid).y }])), start: pt, moved: false };
     svg.setPointerCapture(e.pointerId);
     return;
@@ -847,6 +1004,36 @@ function onPointerDown(e) {
   if (!additive && state.getSelectedIds().length) state.setSelection([]);
   marquee = { start: pt, cur: pt, additive, base: state.getSelectedIds(), moved: false };
   svg.setPointerCapture(e.pointerId);
+}
+
+function runAction(el, id) {
+  const kind = el.dataset.action;
+  if (kind === 'kanban-add') { obj.addCard(id, Number(el.dataset.col)); return; }
+  focusItem(id);
+  if (kind === 'flip') obj.flip(id);
+  else if (kind === 'copy-code') obj.copyCode(id);
+  else if (kind === 'toggle-mind') state.setMindCollapsed(id, !state.getItem(id)?.collapsed);
+}
+
+function eraseAt(e) {
+  const hit = document.elementFromPoint(e.clientX, e.clientY)?.closest('.canvas-item.type-drawing');
+  const id = hit?.getAttribute('data-id');
+  if (id && !eraseState.ids.has(id)) { eraseState.ids.add(id); hit.classList.add('is-erased'); }
+}
+
+function finishPen() {
+  const raw = penState.points;
+  penState = null;
+  let pts = O.simplify(O.smooth(raw), 0.75 / zoom);
+  if (pts.length < 2) pts = [pts[0], { x: pts[0].x + 0.5, y: pts[0].y + 0.5 }];
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const x = Math.floor(Math.min(...xs)), y = Math.floor(Math.min(...ys));
+  const w = Math.max(1, Math.ceil(Math.max(...xs) - x)), h = Math.max(1, Math.ceil(Math.max(...ys) - y));
+  const points = pts.flatMap(p => [Math.round((p.x - x) * 10) / 10, Math.round((p.y - y) * 10) / 10]);
+  state.addItem({ type: 'drawing', x, y, width: w, height: h, vw: w, vh: h, points, stroke: penColor, strokeWidth: penWidth, content: '' });
+  state.setSelection([]);
+  renderOverlay();
+  announce('Tracé ajouté : Dessin à main levée');
 }
 
 function onWheel(e) {
@@ -881,6 +1068,21 @@ function onPointerMove(e) {
     return;
   }
   const pt = screenToSvg(e.clientX, e.clientY);
+  if (penState) {
+    const last = penState.points[penState.points.length - 1];
+    if (Math.hypot(pt.x - last.x, pt.y - last.y) * zoom >= 2) { penState.points.push(pt); renderOverlay(); }
+    return;
+  }
+  if (eraseState) { eraseAt(e); return; }
+  if (cardDrag) {
+    const dx = pt.x - cardDrag.start.x, dy = pt.y - cardDrag.start.y;
+    if (!cardDrag.moved && Math.abs(dx) * zoom <= 3 && Math.abs(dy) * zoom <= 3) return;
+    cardDrag.moved = true;
+    const el = itemsGroup.querySelector(`[data-id="${cardDrag.id}"] [data-sub="card:${CSS.escape(cardDrag.cardId)}"]`);
+    el?.setAttribute('transform', `translate(${dx} ${dy})`);
+    el?.classList.add('is-dragging');
+    return;
+  }
   if (resizeState) {
     const item = state.getItem(resizeState.id);
     if (!item) return;
@@ -917,6 +1119,20 @@ function onPointerUp(e) {
   if (panState) {
     panState = null;
     svg.classList.remove('is-panning');
+    return;
+  }
+  if (penState) { finishPen(); return; }
+  if (eraseState) {
+    const ids = [...eraseState.ids];
+    eraseState = null;
+    if (ids.length) state.removeItems(ids);
+    return;
+  }
+  if (cardDrag) {
+    const d = cardDrag;
+    cardDrag = null;
+    if (d.moved && e.type === 'pointerup') obj.dropCard(d.id, d.cardId, screenToSvg(e.clientX, e.clientY));
+    else if (d.moved) render();
     return;
   }
   if (pendingCreate) {
@@ -978,30 +1194,61 @@ function onPointerUp(e) {
 
 function onDoubleClick(e) {
   if (tool !== 'select' || !lastDownId || e.shiftKey || e.ctrlKey || e.metaKey) return;
-  svg.dispatchEvent(new CustomEvent('item-edit', { detail: { id: lastDownId }, bubbles: true }));
+  const item = state.getItem(lastDownId);
+  if (item?.groupId && enteredGroup !== item.groupId) { enterGroup(item.id); return; }
+  if (e.target.closest('[data-action]')) return;
+  const sub = e.target.closest('[data-sub]')?.dataset.sub;
+  if (sub) { obj.editSub(lastDownId, sub); return; }
+  edit(lastDownId);
 }
 
-export function createAt(t, pt) {
+function hitItem(pt) {
+  return [...state.getItems()].reverse().find(i => {
+    if (['connector', 'comment'].includes(i.type) || (i.type === 'mindmap' && state.isMindHidden(i))) return false;
+    const b = itemBox(i);
+    return pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h;
+  });
+}
+
+export function createAt(t, pt, useSelection = false) {
   const [type, shape] = t.split(':');
   const [w, h] = TOOL_SIZES[t] || [150, 150];
-  const data = { type, x: Math.round(pt.x - w / 2), y: Math.round(pt.y - h / 2), width: w, height: h, content: '' };
+  const data = { type, x: Math.round(pt.x - w / 2), y: Math.round(pt.y - h / 2), width: w, height: h, content: '', ...O.defaults(type) };
   if (type === 'sticky_note') data.color = stickyColor;
   if (type === 'shape') data.shape = shape || 'rectangle';
   if (type === 'card') data.title = '';
-  if (type !== 'frame') {
+  if (type === 'comment') {
+    const target = useSelection ? state.getItem(state.getSelectedId()) : hitItem(pt);
+    if (target && !['connector', 'comment'].includes(target.type)) data.targetId = target.id;
+  }
+  if (type !== 'frame' && type !== 'comment') {
     const frame = state.getFrames().filter(f => pt.x >= f.x && pt.x <= f.x + f.width && pt.y >= f.y && pt.y <= f.y + f.height).pop();
     data.parent = frame ? frame.id : null;
   }
   const item = state.addItem(data);
+  if (type === 'mindmap') mapMode = item.id;
   setTool('select');
   focusGroup(item.id);
-  svg.dispatchEvent(new CustomEvent('item-edit', { detail: { id: item.id, isNew: true }, bubbles: true }));
+  if (type === 'comment') svg.dispatchEvent(new CustomEvent('comment-open', { detail: { id: item.id, focus: true }, bubbles: true }));
+  else if (type === 'kanban' || type === 'datatable') announce(`${TOOL_NAMES[type]} ajouté. Entrée pour parcourir ${type === 'kanban' ? 'les cartes' : 'les cellules'}.`);
+  else svg.dispatchEvent(new CustomEvent('item-edit', { detail: { id: item.id, isNew: true }, bubbles: true }));
   return item;
 }
 
 export function createAtCenter(t = tool) {
   const { w, h } = viewSize();
-  return createAt(t, { x: Math.round(panX + w / 2), y: Math.round(panY + h / 2) });
+  return createAt(t, { x: Math.round(panX + w / 2), y: Math.round(panY + h / 2) }, true);
+}
+
+export function reveal(id) {
+  const item = state.getItem(id);
+  if (!item || !svg) return;
+  const b = itemBox(item);
+  const { w, h } = viewSize();
+  if (b.x >= panX && b.y >= panY && b.x + b.w <= panX + w && b.y + b.h <= panY + h) return;
+  panX = b.x + b.w / 2 - w / 2;
+  panY = b.y + b.h / 2 - h / 2;
+  updateViewBox();
 }
 
 export function focusItem(id) {
