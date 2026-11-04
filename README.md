@@ -1,15 +1,23 @@
 # Tableau blanc accessible
 
-Application statique de tableau blanc, accessible (WCAG 2.2 AA), multi-tableaux. Sans d&eacute;pendance externe, sans CDN, sans build.
+Application statique de tableau blanc, accessible (WCAG 2.2 AA), multi-tableaux. Sans dépendance externe, sans CDN, sans build.
 
-## Fonctionnalit&eacute;s
+## Fonctionnalités
 
-- **Dashboard** : page d'accueil avec navigation (Accueil, Favoris, Parcourir), mod&egrave;les de cr&eacute;ation, liste/grille des tableaux, recherche, tri, actions (ouvrir, renommer, dupliquer, favori, supprimer avec confirmation).
+- **Dashboard** : page d'accueil avec navigation (Accueil, Favoris, Parcourir), modèles de création, liste/grille des tableaux, recherche, tri, actions (ouvrir, renommer, dupliquer, favori, supprimer avec confirmation).
 - **Multi-tableaux** : chaque tableau a son propre espace dans le localStorage. Migration automatique depuis l'ancien format mono-tableau.
-- **Mod&egrave;les** : Vierge, Organigramme/flux, R&eacute;trospective 4 L, Feuille de route, Liste de t&acirc;ches.
-- **Trois vues synchronis&eacute;es** par tableau : Canevas (SVG interactif), Plan (arborescence), Tableau (table triable).
+- **Modèles** : Vierge, Organigramme/flux, Rétrospective 4 L, Feuille de route, Liste de tâches.
+- **Trois vues synchronisées** par tableau : Canevas (SVG interactif), Plan (arborescence), Tableau (table triable).
 - **Import/export** : JSON (depuis le dashboard ou le tableau), Markdown (depuis le tableau).
-- **Accessibilit&eacute;** : landmarks, lien d'&eacute;vitement, annonces aria-live, focus visible, cibles &ge; 24 px, contraste AA, th&egrave;me clair/sombre/contraste &eacute;lev&eacute;, `prefers-reduced-motion`, responsive &ge; 320 px.
+- **Accessibilité** : landmarks, lien d'évitement, annonces aria-live, focus visible, cibles ≥ 24 px, contraste AA, thème clair/sombre/contraste élevé, `prefers-reduced-motion`, responsive ≥ 320 px.
+
+Les raccourcis de création et d’organisation s’appliquent au Canevas, hors champs et dialogues. Les flèches permettent de parcourir les boutons des barres d’outils avec un seul arrêt de tabulation par barre.
+
+- 16 couleurs Miro identiques dans tous les thèmes, avec nom français et migration des anciennes couleurs.
+- Liens : ligne simple, flèche (par défaut), flèche à angles droits.
+- Verrouillage : déplacement, édition et suppression bloqués ; duplication, verrouillage et ordre annulables.
+- Barres de création et de zoom flottantes, adaptées aux petits écrans.
+- Thème DWES violet ; application disponible sur https://baro.dwes.fr.
 
 ## Lancement
 
@@ -33,18 +41,27 @@ Puis ouvrir `http://localhost:8080`.
 | Raccourci | Action |
 |-----------|--------|
 | N | Nouveau post-it |
+| T / S / R / O / L / F | Texte / forme / rectangle / cercle / lien / cadre |
+| Ctrl+D | Dupliquer l’élément |
+| Ctrl+Maj+L | Verrouiller / déverrouiller |
+| Page précédente / Page suivante | Premier plan / arrière-plan |
+| Ctrl+Alt+Maj+flèches | Objet le plus proche dans la direction |
+| Ctrl+Maj+flèche bas / haut | Entrer dans un cadre / sortir vers son parent |
 | ? | Ouvrir l'aide |
 | Ctrl+Z | Annuler |
-| Ctrl+Maj+Z | R&eacute;tablir |
-| +/- | Zoom avant/arri&egrave;re |
-| 0 | R&eacute;initialiser le zoom |
-| Tab / Maj+Tab | Naviguer entre les &eacute;l&eacute;ments |
-| Fl&egrave;ches | D&eacute;placer l'&eacute;l&eacute;ment (10 px) |
-| Maj+Fl&egrave;ches | D&eacute;placer en grand pas (50 px) |
-| Entr&eacute;e | &Eacute;diter l'&eacute;l&eacute;ment |
-| Suppr | Supprimer l'&eacute;l&eacute;ment |
+| Ctrl+Maj+Z | Rétablir |
+| +/- | Zoom avant/arrière |
+| 0 | Réinitialiser le zoom |
+| Maj+1 | Tout afficher (ajuster la vue au contenu) |
+| Glisser le fond / molette | Déplacer la vue |
+| Ctrl+molette | Zoomer sur le pointeur |
+| Tab / Maj+Tab | Naviguer entre les éléments |
+| Flèches | Déplacer l'élément (10 px) |
+| Maj+Flèches | Déplacer en grand pas (50 px) |
+| Entrée | Éditer l'élément |
+| Suppr | Supprimer l'élément |
 
-## Mod&egrave;le de donn&eacute;es
+## Modèle de données
 
 ### Multi-tableaux (localStorage `tableau-accessible-boards`)
 
@@ -55,10 +72,10 @@ Puis ouvrir `http://localhost:8080`.
     {
       "id": "board-1234-abc",
       "nom": "Mon tableau",
-      "cr&eacute;&eacute;": "2026-01-01T00:00:00.000Z",
-      "derni&egrave;reOuverture": "2026-01-01T12:00:00.000Z",
+      "créé": "2026-01-01T00:00:00.000Z",
+      "dernièreOuverture": "2026-01-01T12:00:00.000Z",
       "favori": false,
-      "donn&eacute;es": {
+      "données": {
         "name": "Mon tableau",
         "items": [ ... ]
       }
@@ -67,40 +84,40 @@ Puis ouvrir `http://localhost:8080`.
 }
 ```
 
-### Tableau individuel (champ `donn&eacute;es`)
+### Tableau individuel (champ `données`)
 
 ```json
 {
   "name": "Mon tableau",
   "items": [
-    { "id": "item-1", "type": "sticky_note", "x": 100, "y": 100, "width": 150, "height": 150, "content": "Id&eacute;e", "color": "yellow" },
-    { "id": "item-2", "type": "shape", "x": 300, "y": 200, "width": 120, "height": 80, "shape": "rectangle", "content": "&Eacute;tape" },
+    { "id": "item-1", "type": "sticky_note", "x": 100, "y": 100, "width": 150, "height": 150, "content": "Idée", "color": "light_yellow" },
+    { "id": "item-2", "type": "shape", "x": 300, "y": 200, "width": 120, "height": 80, "shape": "rectangle", "content": "Étape" },
     { "id": "item-3", "type": "text", "x": 500, "y": 100, "width": 200, "height": 30, "content": "Note" },
     { "id": "item-4", "type": "card", "x": 100, "y": 400, "width": 200, "height": 120, "title": "Titre", "content": "Description" },
     { "id": "item-5", "type": "frame", "x": 50, "y": 50, "width": 600, "height": 500, "content": "Groupe" },
-    { "id": "item-6", "type": "connector", "startId": "item-1", "endId": "item-2", "label": "reli&eacute;" }
+    { "id": "item-6", "type": "connector", "startId": "item-1", "endId": "item-2", "label": "relié" }
   ]
 }
 ```
 
 Types : `sticky_note`, `shape`, `text`, `card`, `frame`, `connector`.
 
-## Accessibilit&eacute;
+## Accessibilité
 
 - Landmarks : `<header>`, `<nav>`, `<main>` sur chaque vue.
-- Lien d'&eacute;vitement vers le contenu principal.
+- Lien d'évitement vers le contenu principal.
 - Annonces `aria-live` pour les actions et changements de vue.
 - `aria-sort` sur les colonnes triables.
-- `aria-pressed` sur les boutons &agrave; bascule (favori, vue grille/liste).
+- `aria-pressed` sur les boutons à bascule (favori, vue grille/liste).
 - `<dialog>` de confirmation pour la suppression.
 - `<time datetime>` pour les dates.
-- Contraste WCAG AA, cibles tactiles &ge; 24 px.
+- Contraste WCAG AA, cibles tactiles ≥ 24 px.
 
 ## Limites
 
-- Pas de collaboration en temps r&eacute;el (l'&eacute;tat JSON est con&ccedil;u pour &ecirc;tre s&eacute;rialisable).
-- Pas de redimensionnement &agrave; la souris.
-- Pas de courbes de B&eacute;zier pour les connecteurs.
+- Pas de collaboration en temps réel (l'état JSON est conçu pour être sérialisable).
+- Pas de redimensionnement à la souris.
+- Pas de courbes de Bézier pour les connecteurs.
 - Stockage local uniquement (localStorage).
 
 ## Tests

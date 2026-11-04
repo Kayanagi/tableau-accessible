@@ -1,15 +1,19 @@
 import * as history from './store/history.js';
 import { announce } from './a11y/announcer.js';
 
-const COLORS = {
-  yellow: 'Jaune',
-  blue: 'Bleu',
-  green: 'Vert',
-  pink: 'Rose',
-  orange: 'Orange',
-  purple: 'Violet',
-  gray: 'Gris'
-};
+export const PALETTE = [
+  ['light_yellow', 'Jaune clair', '#fff79e'], ['miro_yellow', 'Jaune', '#ffe86d'],
+  ['miro_orange', 'Orange', '#ffb575'], ['red', 'Rouge', '#ff9e9e'],
+  ['light_pink', 'Rose clair', '#ffd2f2'], ['miro_pink', 'Rose', '#fd9ae7'],
+  ['light_blue', 'Bleu clair', '#b2d0fe'], ['violet', 'Violet', '#b8acfb'],
+  ['miro_blue', 'Bleu', '#9ce6ff'], ['dark_blue', 'Bleu foncé', '#86b4f9'],
+  ['cyan', 'Cyan', '#81e7de'], ['dark_green', 'Vert foncé', '#6ae08d'],
+  ['light_green', 'Vert clair', '#d1f09f'], ['miro_green', 'Vert', '#b3e65f'],
+  ['miro_gray', 'Gris', '#f3f5f7'], ['black', 'Noir', '#151515']
+];
+const COLORS = Object.fromEntries(PALETTE.map(([id, name]) => [id, name]));
+export const LINE_TYPES = { line: 'Ligne simple', arrow: 'Flèche', orthogonal: 'Flèche à angles droits' };
+const LEGACY_COLORS = { yellow: 'miro_yellow', blue: 'miro_blue', green: 'miro_green', pink: 'miro_pink', orange: 'miro_orange', purple: 'violet', gray: 'miro_gray' };
 
 const SHAPES = {
   rectangle: 'Rectangle',
@@ -74,7 +78,7 @@ export function setSelectedId(id) {
   notify();
 }
 
-export function getItemLabel(item) {
+function itemLabel(item) {
   if (!item) return '';
   const typeName = TYPES[item.type] || item.type;
   if (item.type === 'sticky_note') {
@@ -91,7 +95,7 @@ export function getItemLabel(item) {
     const startLabel = startItem ? getItemLabel(startItem) : '?';
     const endLabel = endItem ? getItemLabel(endItem) : '?';
     const labelPart = item.label ? ` (${item.label})` : '';
-    return `${typeName} de ${startLabel} vers ${endLabel}${labelPart}`;
+    return `${LINE_TYPES[item.lineType] || LINE_TYPES.arrow} de ${startLabel} vers ${endLabel}${labelPart}`;
   }
   if (item.type === 'card') {
     return `${typeName} : ${item.title || '(sans titre)'}`;
@@ -101,6 +105,47 @@ export function getItemLabel(item) {
     return `${typeName} : ${item.content || '(sans nom)'}, ${children.length} élément(s)`;
   }
   return `${typeName} : ${item.content || '(vide)'}`;
+}
+
+export function getItemLabel(item) {
+  return itemLabel(item) + (item?.locked ? ' — 🔒 Élément verrouillé' : '');
+}
+
+export function isLocked(id) {
+  if (!getItem(id)?.locked) return false;
+  announce('Élément verrouillé');
+  return true;
+}
+
+export function duplicateItem(id) {
+  const item = getItem(id);
+  if (!item) return;
+  const copy = JSON.parse(JSON.stringify(item));
+  copy.x = (copy.x || 0) + 20;
+  copy.y = (copy.y || 0) + 20;
+  copy.locked = false;
+  const result = addItem(copy);
+  announce('Élément dupliqué');
+  return result;
+}
+
+export function toggleLocked(id) {
+  const item = getItem(id);
+  if (!item) return;
+  history.pushState(snapshot());
+  item.locked = !item.locked;
+  notify();
+  announce(item.locked ? 'Élément verrouillé' : 'Élément déverrouillé');
+}
+
+export function reorderItem(id, front) {
+  const item = getItem(id);
+  if (!item || isLocked(id)) return;
+  history.pushState(snapshot());
+  board.items = board.items.filter(i => i.id !== id);
+  if (front) board.items.push(item); else board.items.unshift(item);
+  notify();
+  announce(front ? 'Élément au premier plan' : 'Élément à l’arrière-plan');
 }
 
 export function getItemAriaLabel(item) {
@@ -142,6 +187,7 @@ export function addItem(item) {
 }
 
 export function updateItem(id, changes) {
+  if (isLocked(id)) return null;
   history.pushState(snapshot());
   const item = board.items.find(i => i.id === id);
   if (!item) return null;
@@ -152,7 +198,7 @@ export function updateItem(id, changes) {
 
 export function moveItem(id, dx, dy) {
   const item = board.items.find(i => i.id === id);
-  if (!item || item.type === 'connector') return;
+  if (!item || item.type === 'connector' || isLocked(id)) return;
   history.pushState(snapshot());
   item.x = Math.round(item.x + dx);
   item.y = Math.round(item.y + dy);
@@ -161,6 +207,8 @@ export function moveItem(id, dx, dy) {
 }
 
 export function removeItem(id) {
+  if (isLocked(id)) return;
+  if (board.items.some(i => i.locked && i.type === 'connector' && (i.startId === id || i.endId === id))) { announce('Élément verrouillé : lien associé'); return; }
   const item = board.items.find(i => i.id === id);
   if (!item) return;
   const label = getItemLabel(item);
@@ -222,6 +270,10 @@ export function loadBoard(data) {
   board = data;
   if (!board.items) board.items = [];
   if (!board.name) board.name = 'Nouveau tableau';
+  for (const item of board.items) {
+    if (item.type === 'sticky_note') item.color = LEGACY_COLORS[item.color] || item.color || 'light_yellow';
+    if (item.type === 'connector') item.lineType = item.lineType || 'arrow';
+  }
   syncNextId();
   selectedId = null;
   notify();

@@ -18,23 +18,31 @@
         <a href="#/" class="btn-back" aria-label="Retour au tableau de bord">&larr; Tableaux</a>
         <h1 id="board-title" tabindex="-1">Tableau</h1>
       </div>
-      <nav aria-label="Outils du tableau" class="toolbar" role="toolbar">
-        <div class="toolbar-group" role="group" aria-label="Cr&eacute;er">
-          <button id="btn-sticky" type="button" aria-label="Nouveau post-it (N)">Post-it</button>
-          <button id="btn-shape" type="button" aria-label="Nouvelle forme">Forme</button>
-          <button id="btn-text" type="button" aria-label="Nouveau texte">Texte</button>
+      <nav aria-label="Outils du tableau" class="toolbar" role="toolbar" aria-orientation="horizontal">
+        <div class="toolbar-group creation-toolbar" role="toolbar" aria-orientation="vertical" aria-label="Créer">
+          <button id="btn-sticky" aria-keyshortcuts="n" type="button" aria-label="Nouveau post-it (N)">Post-it</button>
+          <button id="btn-shape" aria-keyshortcuts="s r o" type="button" aria-label="Nouvelle forme">Forme</button>
+          <button id="btn-text" aria-keyshortcuts="t" type="button" aria-label="Nouveau texte">Texte</button>
           <button id="btn-card" type="button" aria-label="Nouvelle carte">Carte</button>
-          <button id="btn-frame" type="button" aria-label="Nouveau cadre">Cadre</button>
-          <button id="btn-link" type="button" aria-label="Nouveau lien entre &eacute;l&eacute;ments">Lien</button>
+          <button id="btn-frame" aria-keyshortcuts="f" type="button" aria-label="Nouveau cadre">Cadre</button>
+          <button id="btn-link" aria-keyshortcuts="l" type="button" aria-label="Nouveau lien entre &eacute;l&eacute;ments">Lien</button>
+        </div>
+        <div class="toolbar-group" role="group" aria-label="Organisation">
+          <button id="btn-duplicate" type="button" aria-keyshortcuts="Control+d">Dupliquer</button>
+          <button id="btn-lock" type="button" aria-keyshortcuts="Control+Shift+l">Verrouiller / déverrouiller</button>
+          <button id="btn-front" type="button" aria-keyshortcuts="PageUp">Premier plan</button>
+          <button id="btn-backward" type="button" aria-keyshortcuts="PageDown">Arrière-plan</button>
         </div>
         <div class="toolbar-group" role="group" aria-label="Historique">
           <button id="btn-undo" type="button" disabled aria-label="Annuler (Ctrl+Z)" aria-keyshortcuts="Control+z">Annuler</button>
           <button id="btn-redo" type="button" disabled aria-label="R&eacute;tablir (Ctrl+Maj+Z)" aria-keyshortcuts="Control+Shift+z">R&eacute;tablir</button>
         </div>
-        <div class="toolbar-group" role="group" aria-label="Zoom">
+        <div class="toolbar-group zoom-toolbar" role="toolbar" aria-orientation="horizontal" aria-label="Zoom">
           <button id="btn-zoom-out" type="button" aria-label="Zoom arri&egrave;re (-)">-</button>
-          <button id="btn-zoom-reset" type="button" aria-label="R&eacute;initialiser le zoom (0)">100 %</button>
+          <button id="btn-zoom-reset" type="button" aria-keyshortcuts="0" aria-describedby="zoom-reset-hint">100 %</button>
+          <span id="zoom-reset-hint" hidden>R&eacute;initialiser le zoom &agrave; 100 % (0)</span>
           <button id="btn-zoom-in" type="button" aria-label="Zoom avant (+)">+</button>
+          <button id="btn-zoom-fit" type="button" aria-keyshortcuts="Shift+1" title="Tout afficher (Maj+1)">Tout afficher</button>
         </div>
         <div class="toolbar-group" role="group" aria-label="Fichiers">
           <button id="btn-export-json" type="button">Exporter JSON</button>
@@ -148,6 +156,14 @@
       </div>
 
       <div class="field">
+        <label for="field-link-type">Type de ligne</label>
+        <select id="field-link-type" name="link-type">
+          <option value="line">Ligne simple</option>
+          <option value="arrow" selected>Flèche</option>
+          <option value="orthogonal">Flèche à angles droits</option>
+        </select>
+      </div>
+      <div class="field">
         <label for="field-link-label">&Eacute;tiquette (optionnel)</label>
         <input type="text" id="field-link-label" name="link-label" autocomplete="off">
       </div>
@@ -164,7 +180,15 @@
     <h2 class="dialog-title" id="dialog-help-title">Aide et raccourcis clavier</h2>
 
     <h3>Raccourcis clavier</h3>
+    <p>Les raccourcis de création et d’organisation fonctionnent dans la vue Canevas, hors des champs et dialogues. Les flèches naviguent dans les barres d’outils.</p>
     <dl class="shortcuts-list">
+      <dt>T / S / R / O / L / F</dt><dd>Texte / forme / rectangle / cercle / lien / cadre</dd>
+      <dt>Ctrl+D</dt><dd>Dupliquer</dd>
+      <dt>Ctrl+Maj+L</dt><dd>Verrouiller ou déverrouiller</dd>
+      <dt>Page précédente / Page suivante</dt><dd>Premier plan / arrière-plan</dd>
+      <dt>Ctrl+Alt+Maj+flèches</dt><dd>Sélectionner l’objet le plus proche dans cette direction</dd>
+      <dt>Ctrl+Maj+flèche bas / haut</dt><dd>Entrer dans un cadre / sortir vers son parent</dd>
+
       <dt><kbd>N</kbd></dt><dd>Nouveau post-it</dd>
       <dt><kbd>?</kbd></dt><dd>Ouvrir cette aide</dd>
       <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>Annuler</dd>
@@ -172,6 +196,9 @@
       <dt><kbd>+</kbd></dt><dd>Zoom avant</dd>
       <dt><kbd>-</kbd></dt><dd>Zoom arri&egrave;re</dd>
       <dt><kbd>0</kbd></dt><dd>R&eacute;initialiser le zoom</dd>
+      <dt><kbd>Maj</kbd>+<kbd>1</kbd></dt><dd>Tout afficher (ajuster la vue au contenu)</dd>
+      <dt>Glisser le fond / molette</dt><dd>D&eacute;placer la vue</dd>
+      <dt><kbd>Ctrl</kbd>+molette</dt><dd>Zoomer sur le pointeur</dd>
       <dt><kbd>Tab</kbd> / <kbd>Maj</kbd>+<kbd>Tab</kbd></dt><dd>Naviguer entre les &eacute;l&eacute;ments du canevas</dd>
       <dt><kbd aria-label="Fl&egrave;ches directionnelles">&larr;&uarr;&rarr;&darr;</kbd></dt><dd>D&eacute;placer l'&eacute;l&eacute;ment s&eacute;lectionn&eacute; (10 px)</dd>
       <dt><kbd>Maj</kbd>+<kbd aria-label="Fl&egrave;ches">&larr;&uarr;&rarr;&darr;</kbd></dt><dd>D&eacute;placer en grand pas (50 px)</dd>

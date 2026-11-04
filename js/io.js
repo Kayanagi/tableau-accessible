@@ -67,7 +67,7 @@ export function exportMarkdown() {
       const fl = from ? state.getItemLabel(from) : '?';
       const tl = to ? state.getItemLabel(to) : '?';
       const lb = c.label ? ` (${c.label})` : '';
-      lines.push(`- ${fl} → ${tl}${lb}`);
+      lines.push(`- ${state.LINE_TYPES[c.lineType] || state.LINE_TYPES.arrow} : ${fl} → ${tl}${lb}`);
     }
     lines.push('');
   }

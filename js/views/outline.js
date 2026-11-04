@@ -94,7 +94,7 @@ function createFrameNode(frame, selectedId) {
   const btn = document.createElement('button');
   btn.classList.add('outline-item-btn');
   btn.setAttribute('data-id', frame.id);
-  btn.innerHTML = `<span class="outline-icon" aria-hidden="true">□</span> <strong>${escapeHtml(frame.content || '(cadre sans nom)')}</strong>`;
+  btn.innerHTML = `<span class="outline-icon" aria-hidden="true">□</span> <strong>${escapeHtml((frame.content || '(cadre sans nom)') + (frame.locked ? ' — 🔒 Verrouillé' : ''))}</strong>`;
   btn.addEventListener('click', () => {
     state.setSelectedId(frame.id);
     dispatchFocus(frame.id);

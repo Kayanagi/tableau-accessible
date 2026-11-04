@@ -139,7 +139,7 @@ try {
 
   // Navigate to favorites
   await page.click('a[href="#/favoris"]');
-  await page.waitForSelector('#dashboard-title');
+  await page.waitForFunction(() => /favoris/i.test(document.querySelector('#dashboard-title')?.textContent || ''), null, { timeout: 3000 }).catch(() => {});
   const favTitle = await page.textContent('#dashboard-title');
   log('Navigation favoris : titre', favTitle && favTitle.includes('favoris'), favTitle);
 
@@ -195,7 +195,7 @@ try {
   await page.waitForSelector('#dialog-create-board[open]');
   await page.fill('[name="board-name"]', 'Mon tableau test');
   await page.click('#dialog-create-board .btn-primary');
-  await page.waitForFunction(() => location.hash.startsWith('#/tableau/'));
+  await page.waitForFunction(() => document.getElementById('board-title')?.textContent === 'Mon tableau test', null, { timeout: 5000 }).catch(() => {});
   const createdTitle = await page.textContent('#board-title');
   log('Création via dialog : titre', createdTitle === 'Mon tableau test', createdTitle);
 
@@ -206,7 +206,7 @@ try {
   // --- Hash navigation & focus ---
   // Navigate to parcourir
   await page.click('a[href="#/parcourir"]');
-  await page.waitForSelector('#dashboard-title');
+  await page.waitForFunction(() => /Tous les tableaux/.test(document.querySelector('#dashboard-title')?.textContent || ''), null, { timeout: 5000 }).catch(() => {});
   const parcTitle = await page.textContent('#dashboard-title');
   log('Hash /parcourir : titre', parcTitle && parcTitle.includes('Tous les tableaux'), parcTitle);
 
@@ -242,6 +242,76 @@ try {
     await page.waitForTimeout(100);
   }
 
+  await page.goto(BASE + '/#/tableau/' + await page.evaluate(async () => {
+    const boards = await import('/js/store/boards.js');
+    return boards.create('Tests Miro', { name: 'Tests Miro', items: [] }).id;
+  }));
+  await page.waitForSelector('#app-board:not([hidden])');
+  await page.waitForFunction(() => document.getElementById('board-title')?.textContent === 'Tests Miro');
+  await page.waitForTimeout(100);
+  const load = async items => page.evaluate(async items => {
+    const state = await import('/js/state.js');
+    state.loadBoard({ name: 'Tests Miro', items });
+  }, items);
+  const focus = async id => page.evaluate(async id => (await import('/js/views/canvas.js')).focusItem(id), id);
+  const snapshot = () => page.evaluate(async () => (await import('/js/state.js')).getSnapshot());
+  for (const [key, type] of [['n', 'sticky_note'], ['t', 'text'], ['r', 'shape'], ['l', 'connector']]) {
+    await page.focus('#board-title');
+    await page.keyboard.press(key);
+    const dialog = type === 'connector' ? '#dialog-link' : '#dialog-item';
+    log(`Raccourci ${key.toUpperCase()} : dialogue`, await page.locator(dialog).evaluate(el => el.open));
+    if (key === 'n') {
+      const palette = await page.locator('[name="item-color"]').evaluateAll(els => els.map(el => ({ label: el.getAttribute('aria-label'), color: el.nextElementSibling.style.backgroundColor })));
+      const expected = ['#fff79e','#ffe86d','#ffb575','#ff9e9e','#ffd2f2','#fd9ae7','#b2d0fe','#b8acfb','#9ce6ff','#86b4f9','#81e7de','#6ae08d','#d1f09f','#b3e65f','#f3f5f7','#151515'];
+      log('Palette : 16 couleurs exactes et radios nommées', await page.evaluate(({ palette, expected }) => palette.length === 16 && palette.every((p, i) => { const el = document.createElement('span'); el.style.color = expected[i]; return p.color === el.style.color && p.label.endsWith(`${i + 1} sur 16`); }), { palette, expected }));
+    }
+    await page.keyboard.press('Escape');
+  }
+  const note = (id, x, y, extra = {}) => ({ id, type: 'sticky_note', x, y, width: 100, height: 100, content: id, color: 'yellow', ...extra });
+  await load([note('item-1', 100, 100), note('item-2', 300, 100), note('item-3', 600, 100)]);
+  log('Couleur ancienne migrée au chargement', (await snapshot()).items[0].color === 'miro_yellow');
+  await focus('item-1');
+  await page.keyboard.press('Control+d');
+  log('Ctrl+D : duplication', (await snapshot()).items.length === 4);
+  await page.keyboard.press('Control+Shift+l');
+  await page.keyboard.press('Delete');
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('Enter');
+  const locked = (await snapshot()).items[3];
+  log('Verrouillage : suppression, déplacement et édition bloqués', locked?.locked && locked.x === 120 && !await page.locator('#dialog-item').evaluate(el => el.open));
+  await page.keyboard.press('Control+z');
+  const unlocked = !(await snapshot()).items[3].locked;
+  await page.keyboard.press('Control+z');
+  log('Historique : verrouillage et duplication annulables', unlocked && (await snapshot()).items.length === 3);
+  await focus('item-1');
+  await page.keyboard.press('PageUp');
+  log('Page précédente : premier plan SVG et données', (await snapshot()).items.at(-1).id === 'item-1' && await page.locator('#canvas-items > :last-child').getAttribute('data-id') === 'item-1');
+  await page.keyboard.press('Control+Alt+Shift+ArrowRight');
+  log('Navigation : objet le plus proche', await page.evaluate(() => document.activeElement.getAttribute('data-id')) === 'item-2');
+  await load([{ id: 'item-1', type: 'frame', x: 0, y: 0, width: 500, height: 400, content: 'Cadre' }, note('item-2', 100, 100, { parent: 'item-1' })]);
+  await focus('item-1');
+  await page.keyboard.press('Control+Shift+ArrowDown');
+  const entered = await page.evaluate(() => document.activeElement.getAttribute('data-id')) === 'item-2';
+  await page.keyboard.press('Control+Shift+ArrowUp');
+  log('Cadre : entrer et sortir', entered && await page.evaluate(() => document.activeElement.getAttribute('data-id')) === 'item-1');
+  await page.click('#btn-link');
+  await page.selectOption('[name="link-start"]', 'item-1');
+  await page.selectOption('[name="link-end"]', 'item-2');
+  await page.selectOption('[name="link-type"]', 'orthogonal');
+  await page.click('#dialog-link .dialog-submit');
+  log('Lien orthogonal : dialogue et tracé SVG', (await snapshot()).items.at(-1).lineType === 'orthogonal' && / H .* V .* H /.test(await page.locator('.type-connector path').first().getAttribute('d')));
+  await page.click('#tab-outline');
+  await page.keyboard.press('n');
+  log('Raccourcis désactivés dans le Plan', !await page.locator('#dialog-item').evaluate(el => el.open));
+  await page.click('#tab-canvas');
+  await page.click('#btn-sticky');
+  await page.fill('[name="item-content"]', 'ntrl');
+  log('Raccourcis désactivés dans un champ', await page.inputValue('[name="item-content"]') === 'ntrl' && !await page.locator('#dialog-link').evaluate(el => el.open));
+  await page.keyboard.press('Escape');
+  await page.focus('#btn-sticky');
+  await page.keyboard.press('ArrowDown');
+  log('Barre de création : navigation par flèches', await page.evaluate(() => document.activeElement.id) === 'btn-shape');
+
   log('Pas d\'erreurs console (1280px)', errors.length === 0, errors.join('; '));
   await ctx.close();
 
@@ -266,6 +336,11 @@ try {
   log('320px : nav visible', navLinks.length === 3);
 
   // Open a board at 320px
+  if (!await p320.locator('.board-link').count()) {
+    await p320.locator('.template-btn').first().click();
+    await p320.waitForSelector('#app-board:not([hidden])');
+    await p320.click('.btn-back');
+  }
   const links320 = await p320.$$('.board-link');
   if (links320.length > 0) {
     await links320[0].click();
@@ -283,6 +358,7 @@ try {
   await ctx320.close();
 
 } catch (err) {
+  log('Exécution complète des tests', false, err.message);
   console.error('Erreur fatale:', err);
 } finally {
   if (browser) await browser.close();

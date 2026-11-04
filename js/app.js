@@ -96,6 +96,7 @@ function showBoard(boardId) {
   });
 
   document.getElementById('board-title').textContent = board.nom;
+  requestAnimationFrame(() => canvas.zoomToFit());
   document.title = `${board.nom} — Tableau blanc accessible`;
 
   requestAnimationFrame(() => {
@@ -140,6 +141,41 @@ function setupTabs() {
 }
 
 function setupToolbar() {
+  const colors = document.querySelector('.color-options');
+  colors.replaceChildren();
+  state.PALETTE.forEach(([id, name, hex], index) => {
+    const label = document.createElement('label');
+    label.className = 'color-option';
+    const radio = document.createElement('input');
+    Object.assign(radio, { type: 'radio', name: 'item-color', value: id, defaultChecked: index === 0 });
+    radio.setAttribute('aria-label', `${name}, ${index + 1} sur 16`);
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.style.backgroundColor = hex;
+    swatch.setAttribute('aria-hidden', 'true');
+    label.append(radio, swatch, document.createTextNode(name));
+    colors.append(label);
+  });
+  const selected = () => state.getSelectedId();
+  document.getElementById('btn-duplicate').onclick = () => { const copy = state.duplicateItem(selected()); if (copy) canvas.focusItem(copy.id); };
+  document.getElementById('btn-lock').onclick = () => state.toggleLocked(selected());
+  document.getElementById('btn-front').onclick = () => state.reorderItem(selected(), true);
+  document.getElementById('btn-backward').onclick = () => state.reorderItem(selected(), false);
+  document.querySelectorAll('#app-board [role="toolbar"]').forEach(bar => {
+    const buttons = () => [...bar.querySelectorAll('button')].filter(b => !b.disabled && b.closest('[role="toolbar"]') === bar);
+    const reset = () => { bar.querySelectorAll('button').forEach(b => { if (b.closest('[role="toolbar"]') === bar) b.tabIndex = -1; }); const all = buttons(); all.forEach((b, i) => b.tabIndex = i === 0 ? 0 : -1); };
+    reset();
+    bar.addEventListener('focusin', e => { if (e.target.matches('button') && e.target.closest('[role="toolbar"]') === bar) buttons().forEach(b => b.tabIndex = b === e.target ? 0 : -1); });
+    bar.addEventListener('keydown', e => {
+      if (!['ArrowDown', 'ArrowUp', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+      const all = buttons(), i = all.indexOf(document.activeElement);
+      if (i < 0) return;
+      e.preventDefault(); e.stopPropagation();
+      const next = e.key === 'Home' ? 0 : e.key === 'End' ? all.length - 1 : (i + (['ArrowRight', 'ArrowDown'].includes(e.key) ? 1 : -1) + all.length) % all.length;
+      all[next].focus();
+    });
+    state.subscribe(() => { if (!buttons().some(b => b.tabIndex === 0)) reset(); });
+  });
   document.getElementById('btn-sticky').addEventListener('click', () => openCreateDialog('sticky_note'));
   document.getElementById('btn-shape').addEventListener('click', () => openCreateDialog('shape'));
   document.getElementById('btn-text').addEventListener('click', () => openCreateDialog('text'));
@@ -151,6 +187,7 @@ function setupToolbar() {
   document.getElementById('btn-zoom-in').addEventListener('click', () => canvas.zoomIn());
   document.getElementById('btn-zoom-out').addEventListener('click', () => canvas.zoomOut());
   document.getElementById('btn-zoom-reset').addEventListener('click', () => canvas.zoomReset());
+  document.getElementById('btn-zoom-fit').addEventListener('click', () => canvas.zoomToFit());
   document.getElementById('btn-export-json').addEventListener('click', () => io.exportJSON());
   document.getElementById('btn-export-md').addEventListener('click', () => io.exportMarkdown());
   document.getElementById('btn-import').addEventListener('click', () => document.getElementById('file-import').click());
@@ -232,9 +269,39 @@ function setupDashboardDialogs() {
 
 function setupShortcuts() {
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select')) return;
+    if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select, [contenteditable]')) return;
     const boardVisible = !document.getElementById('app-board').hidden;
     if (!boardVisible) return;
+    if (currentView === 'canvas') {
+      const key = e.key.toLowerCase();
+      const id = document.activeElement.closest?.('.canvas-item')?.getAttribute('data-id') || state.getSelectedId();
+      const item = state.getItem(id);
+      if (e.ctrlKey && e.shiftKey && e.altKey && e.key.startsWith('Arrow')) {
+        e.preventDefault();
+        if (item) {
+          const cx = item.x + (item.width || 0) / 2, cy = item.y + (item.height || 0) / 2;
+          const candidates = state.getNonConnectorItems().filter(i => i.id !== id).map(i => ({ i, dx: i.x + (i.width || 0) / 2 - cx, dy: i.y + (i.height || 0) / 2 - cy }))
+            .filter(c => e.key === 'ArrowRight' ? c.dx > 0 : e.key === 'ArrowLeft' ? c.dx < 0 : e.key === 'ArrowDown' ? c.dy > 0 : c.dy < 0)
+            .sort((a, b) => Math.hypot(a.dx, a.dy) - Math.hypot(b.dx, b.dy));
+          if (candidates[0]) canvas.focusItem(candidates[0].i.id);
+        }
+        return;
+      }
+      if (e.ctrlKey && e.shiftKey && !e.altKey && ['ArrowDown', 'ArrowUp'].includes(e.key)) {
+        e.preventDefault();
+        const target = e.key === 'ArrowDown' ? state.getChildrenOf(id)[0]?.id : item?.parent;
+        if (target) canvas.focusItem(target);
+        return;
+      }
+      if (e.ctrlKey && !e.altKey && key === 'd' && !e.shiftKey) { e.preventDefault(); const copy = state.duplicateItem(id); if (copy) canvas.focusItem(copy.id); return; }
+      if (e.ctrlKey && e.shiftKey && !e.altKey && key === 'l') { e.preventDefault(); state.toggleLocked(id); return; }
+      if (!e.ctrlKey && !e.altKey && !e.metaKey) {
+        if (['PageUp', 'PageDown'].includes(e.key)) { e.preventDefault(); state.reorderItem(id, e.key === 'PageUp'); return; }
+        const types = { n: 'sticky_note', t: 'text', s: 'shape', r: 'shape', o: 'shape', f: 'frame' };
+        if (types[key]) { e.preventDefault(); openCreateDialog(types[key]); if (key === 'o') document.querySelector('[name="item-shape"][value="circle"]').checked = true; return; }
+        if (key === 'l') { e.preventDefault(); openLinkDialog(); return; }
+      }
+    }
 
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); state.undo(); }
     else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' && e.shiftKey || e.key === 'Z')) { e.preventDefault(); state.redo(); }
@@ -242,7 +309,8 @@ function setupShortcuts() {
     else if ((e.key === '+' || e.key === '=') && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomIn(); }
     else if (e.key === '-' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomOut(); }
     else if (e.key === '0' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomReset(); }
-    else if (e.key === 'n' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); openCreateDialog('sticky_note'); }
+    else if (e.code === 'Digit1' && e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomToFit(); }
+
   });
 }
 
@@ -266,7 +334,7 @@ function openCreateDialog(type) {
 
 function openEditDialog(id) {
   const item = state.getItem(id);
-  if (!item) return;
+  if (!item || state.isLocked(id)) return;
   editingId = id;
   if (item.type === 'connector') { openLinkDialogForEdit(item); return; }
   const dialog = document.getElementById('dialog-item');
@@ -323,12 +391,12 @@ function submitItemForm() {
     x: parseInt(fd.get('item-x'), 10) || 0, y: parseInt(fd.get('item-y'), 10) || 0,
     width: parseInt(fd.get('item-width'), 10) || 150, height: parseInt(fd.get('item-height'), 10) || 150
   };
-  if (type === 'sticky_note') data.color = fd.get('item-color') || 'yellow';
+  if (type === 'sticky_note') data.color = fd.get('item-color') || 'light_yellow';
   if (type === 'shape') data.shape = fd.get('item-shape') || 'rectangle';
   if (type === 'card') data.title = fd.get('item-title') || '';
   if (type === 'text') { data.width = 200; data.height = 30; }
   const parent = fd.get('item-parent');
-  if (parent && type !== 'frame') data.parent = parent;
+  data.parent = parent && type !== 'frame' ? parent : null;
   if (editingId) {
     state.updateItem(editingId, data);
     announcer.announce(`${state.TYPES[type]} modifié`);
@@ -364,12 +432,13 @@ function openLinkDialogForEdit(item) {
   form.querySelector('[name="link-start"]').value = item.startId;
   form.querySelector('[name="link-end"]').value = item.endId;
   form.querySelector('[name="link-label"]').value = item.label || '';
+  form.querySelector('[name="link-type"]').value = item.lineType || 'arrow';
   dialog.showModal();
 }
 
 function populateLinkSelects() {
   const items = state.getNonConnectorItems();
-  document.querySelectorAll('#dialog-link select').forEach(sel => {
+  document.querySelectorAll('#dialog-link [name="link-start"], #dialog-link [name="link-end"]').forEach(sel => {
     sel.innerHTML = '<option value="">-- Choisir --</option>';
     for (const item of items) {
       const opt = document.createElement('option');
@@ -386,15 +455,16 @@ function submitLinkForm() {
   const startId = fd.get('link-start');
   const endId = fd.get('link-end');
   const label = fd.get('link-label') || '';
+  const lineType = fd.get('link-type') || 'arrow';
   if (!startId || !endId || startId === endId) {
     announcer.announce('Veuillez choisir deux éléments différents');
     return;
   }
   if (editingId) {
-    state.updateItem(editingId, { startId, endId, label });
+    state.updateItem(editingId, { startId, endId, label, lineType });
     announcer.announce('Lien modifié');
   } else {
-    state.addItem({ type: 'connector', startId, endId, label, x: 0, y: 0 });
+    state.addItem({ type: 'connector', startId, endId, label, lineType, x: 0, y: 0 });
     const s = state.getItem(startId);
     const t = state.getItem(endId);
     announcer.announce(`Lien créé entre ${s ? state.getItemLabel(s) : '?'} et ${t ? state.getItemLabel(t) : '?'}`);

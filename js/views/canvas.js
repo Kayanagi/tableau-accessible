@@ -14,20 +14,11 @@ let svg = null;
 let itemsGroup = null;
 let zoom = 1;
 let panX = 0;
+let panState = null;
 let panY = 0;
 let focusedIndex = -1;
 let dragState = null;
 let container = null;
-
-const colorValues = {
-  yellow: { bg: 'var(--note-yellow)', pattern: 'pattern-hlines' },
-  blue: { bg: 'var(--note-blue)', pattern: 'pattern-dlines-r' },
-  green: { bg: 'var(--note-green)', pattern: 'pattern-dots' },
-  pink: { bg: 'var(--note-pink)', pattern: 'pattern-dlines-l' },
-  orange: { bg: 'var(--note-orange)', pattern: 'pattern-cross' },
-  purple: { bg: 'var(--note-purple)', pattern: 'pattern-vlines' },
-  gray: { bg: 'var(--note-gray)', pattern: null }
-};
 
 export function init(el) {
   container = el;
@@ -43,8 +34,10 @@ export function init(el) {
   svg.appendChild(defs);
 
   const grid = document.createElementNS(SVG_NS, 'rect');
-  grid.setAttribute('width', '100%');
-  grid.setAttribute('height', '100%');
+  grid.setAttribute('x', '-50000');
+  grid.setAttribute('y', '-50000');
+  grid.setAttribute('width', '100000');
+  grid.setAttribute('height', '100000');
   grid.setAttribute('fill', 'url(#grid)');
   grid.classList.add('canvas-grid');
   svg.appendChild(grid);
@@ -59,6 +52,8 @@ export function init(el) {
   svg.addEventListener('pointermove', onPointerMove);
   svg.addEventListener('pointerup', onPointerUp);
   svg.addEventListener('keydown', onKeyDown);
+  svg.addEventListener('wheel', onWheel, { passive: false });
+  new ResizeObserver(() => updateViewBox()).observe(svg);
 
   state.subscribe(() => render());
 }
@@ -93,23 +88,64 @@ function buildDefs() {
   `;
 }
 
+function viewSize() {
+  const w = svg?.clientWidth || BASE_W;
+  const h = svg?.clientHeight || BASE_H;
+  return { w: w / zoom, h: h / zoom };
+}
+
 function updateViewBox() {
   if (!svg) return;
-  const w = BASE_W / zoom;
-  const h = BASE_H / zoom;
+  const { w, h } = viewSize();
   svg.setAttribute('viewBox', `${panX} ${panY} ${w} ${h}`);
+  const label = document.getElementById('btn-zoom-reset');
+  if (label) label.textContent = `${Math.round(zoom * 100)} %`;
+}
+
+function zoomAt(factor, cx, cy) {
+  const before = viewSize();
+  const fx = cx === undefined ? 0.5 : (cx - panX) / before.w;
+  const fy = cy === undefined ? 0.5 : (cy - panY) / before.h;
+  const px = panX + before.w * fx;
+  const py = panY + before.h * fy;
+  zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoom * factor));
+  const after = viewSize();
+  panX = px - after.w * fx;
+  panY = py - after.h * fy;
+  updateViewBox();
+}
+
+export function panBy(dx, dy) {
+  panX += dx / zoom;
+  panY += dy / zoom;
+  updateViewBox();
+}
+
+export function zoomToFit() {
+  const items = state.getItems().filter(i => i.type !== 'connector');
+  if (!svg || !items.length || !svg.clientWidth) { zoomReset(); return; }
+  const minX = Math.min(...items.map(i => i.x));
+  const minY = Math.min(...items.map(i => i.y));
+  const maxX = Math.max(...items.map(i => i.x + (i.width || 100)));
+  const maxY = Math.max(...items.map(i => i.y + (i.height || 100)));
+  const pad = 40;
+  const z = Math.min(svg.clientWidth / (maxX - minX + pad * 2), svg.clientHeight / (maxY - minY + pad * 2));
+  zoom = Math.min(1.5, Math.max(MIN_ZOOM, z));
+  const { w, h } = viewSize();
+  panX = (minX + maxX) / 2 - w / 2;
+  panY = (minY + maxY) / 2 - h / 2;
+  updateViewBox();
+  announce(`Vue ajustée au contenu, zoom ${Math.round(zoom * 100)} %`);
 }
 
 export function zoomIn() {
-  zoom = Math.min(MAX_ZOOM, zoom * 1.25);
-  updateViewBox();
-  announce(`Zoom ${Math.round(zoom * 100)}%`);
+  zoomAt(1.25);
+  announce(`Zoom ${Math.round(zoom * 100)} %`);
 }
 
 export function zoomOut() {
-  zoom = Math.max(MIN_ZOOM, zoom / 1.25);
-  updateViewBox();
-  announce(`Zoom ${Math.round(zoom * 100)}%`);
+  zoomAt(1 / 1.25);
+  announce(`Zoom ${Math.round(zoom * 100)} %`);
 }
 
 export function zoomReset() {
@@ -117,7 +153,7 @@ export function zoomReset() {
   panX = 0;
   panY = 0;
   updateViewBox();
-  announce('Zoom reinitialise');
+  announce('Zoom réinitialisé à 100 %');
 }
 
 export function getZoom() {
@@ -126,15 +162,13 @@ export function getZoom() {
 
 export function render() {
   if (!itemsGroup) return;
+  const activeId = document.activeElement?.closest('.canvas-item')?.getAttribute('data-id');
   itemsGroup.innerHTML = '';
 
   const items = state.getItems();
   const selectedId = state.getSelectedId();
 
-  const frames = items.filter(i => i.type === 'frame');
-  const regular = items.filter(i => i.type !== 'frame' && i.type !== 'connector');
-  const connectors = items.filter(i => i.type === 'connector');
-  const ordered = [...frames, ...regular, ...connectors];
+  const ordered = items;
 
   ordered.forEach((item, idx) => {
     const g = renderItem(item, idx);
@@ -146,6 +180,7 @@ export function render() {
   });
 
   updateFocusableItems();
+  if (activeId) itemsGroup.querySelector(`[data-id="${activeId}"]`)?.focus();
 }
 
 function renderItem(item, index) {
@@ -166,13 +201,23 @@ function renderItem(item, index) {
     default: return null;
   }
 
+  if (item.locked) {
+    const badge = document.createElementNS(SVG_NS, 'text');
+    badge.setAttribute('x', item.x || 0);
+    badge.setAttribute('y', (item.y || 0) + (item.height || 30) + 18);
+    badge.setAttribute('fill', 'var(--fg)');
+    badge.setAttribute('font-size', '14');
+    badge.textContent = '🔒 Verrouillé';
+    g.appendChild(badge);
+  }
   return g;
 }
 
 function renderStickyNote(g, item) {
   const { x, y, width = 150, height = 150, color = 'yellow', content = '' } = item;
   const colorName = state.COLORS[color] || color;
-  const cv = colorValues[color] || colorValues.yellow;
+  const cv = { bg: (state.PALETTE.find(c => c[0] === color) || state.PALETTE[0])[2] };
+  const ink = color === 'black' ? '#ffffff' : '#1b1740';
 
   const rect = createRect(x, y, width, height, 6);
   rect.setAttribute('fill', cv.bg);
@@ -192,13 +237,14 @@ function renderStickyNote(g, item) {
   badge.setAttribute('x', x + 6);
   badge.setAttribute('y', y + 14);
   badge.setAttribute('font-size', '10');
-  badge.setAttribute('fill', 'var(--note-text)');
+  badge.setAttribute('fill', ink);
   badge.setAttribute('aria-hidden', 'true');
   badge.classList.add('color-badge');
   badge.textContent = colorName;
   g.appendChild(badge);
 
   appendWrappedText(g, content, x + 8, y + 30, width - 16, 14);
+  g.querySelectorAll('text').forEach(t => t.setAttribute('fill', ink));
 }
 
 function renderShape(g, item) {
@@ -311,38 +357,69 @@ function renderFrame(g, item) {
   }
 }
 
+function center(i) {
+  return { x: i.x + (i.width || 100) / 2, y: i.y + (i.height || 100) / 2 };
+}
+
+function edgePoint(i, toward) {
+  const c = center(i);
+  const hw = (i.width || 100) / 2;
+  const hh = (i.height || 100) / 2;
+  const dx = toward.x - c.x;
+  const dy = toward.y - c.y;
+  if (!dx && !dy) return c;
+  let t;
+  if (i.type === 'shape' && i.shape === 'circle') t = 1 / Math.hypot(dx / hw, dy / hh);
+  else if (i.type === 'shape' && i.shape === 'diamond') t = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
+  else t = Math.min(dx ? hw / Math.abs(dx) : Infinity, dy ? hh / Math.abs(dy) : Infinity);
+  return { x: c.x + dx * t, y: c.y + dy * t };
+}
+
+function sideAnchor(i, toward, horizontal) {
+  const c = center(i);
+  const hw = (i.width || 100) / 2;
+  const hh = (i.height || 100) / 2;
+  return horizontal
+    ? { x: c.x + Math.sign(toward.x - c.x || 1) * hw, y: c.y }
+    : { x: c.x, y: c.y + Math.sign(toward.y - c.y || 1) * hh };
+}
+
 function renderConnector(g, item) {
   const startItem = state.getItem(item.startId);
   const endItem = state.getItem(item.endId);
   if (!startItem || !endItem) return;
 
-  const x1 = startItem.x + (startItem.width || 100) / 2;
-  const y1 = startItem.y + (startItem.height || 100) / 2;
-  const x2 = endItem.x + (endItem.width || 100) / 2;
-  const y2 = endItem.y + (endItem.height || 100) / 2;
-
-  const hitLine = document.createElementNS(SVG_NS, 'line');
-  hitLine.setAttribute('x1', x1);
-  hitLine.setAttribute('y1', y1);
-  hitLine.setAttribute('x2', x2);
-  hitLine.setAttribute('y2', y2);
-  hitLine.setAttribute('stroke', 'transparent');
-  hitLine.setAttribute('stroke-width', '16');
-  g.appendChild(hitLine);
-
-  const line = document.createElementNS(SVG_NS, 'line');
-  line.setAttribute('x1', x1);
-  line.setAttribute('y1', y1);
-  line.setAttribute('x2', x2);
-  line.setAttribute('y2', y2);
-  line.setAttribute('stroke', 'var(--connector-stroke)');
-  line.setAttribute('stroke-width', '2');
-  line.setAttribute('marker-end', 'url(#arrowhead)');
-  g.appendChild(line);
+  const a = center(startItem);
+  const b = center(endItem);
+  let d, mx, my;
+  if (item.lineType === 'orthogonal') {
+    const horizontal = Math.abs(b.x - a.x) > Math.abs(b.y - a.y);
+    const s = sideAnchor(startItem, b, horizontal);
+    const e = sideAnchor(endItem, a, horizontal);
+    if (horizontal) {
+      mx = (s.x + e.x) / 2; my = (s.y + e.y) / 2;
+      d = `M ${s.x} ${s.y} H ${mx} V ${e.y} H ${e.x}`;
+    } else {
+      mx = (s.x + e.x) / 2; my = (s.y + e.y) / 2;
+      d = `M ${s.x} ${s.y} V ${my} H ${e.x} V ${e.y}`;
+    }
+  } else {
+    const s = edgePoint(startItem, b);
+    const e = edgePoint(endItem, a);
+    mx = (s.x + e.x) / 2; my = (s.y + e.y) / 2;
+    d = `M ${s.x} ${s.y} L ${e.x} ${e.y}`;
+  }
+  for (const hit of [true, false]) {
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute('d', d);
+    path.setAttribute('fill', 'none');
+    path.setAttribute('stroke', hit ? 'transparent' : 'var(--connector-stroke)');
+    path.setAttribute('stroke-width', hit ? '16' : '2');
+    if (!hit && item.lineType !== 'line') path.setAttribute('marker-end', 'url(#arrowhead)');
+    g.appendChild(path);
+  }
 
   if (item.label) {
-    const mx = (x1 + x2) / 2;
-    const my = (y1 + y2) / 2;
     const bg = document.createElementNS(SVG_NS, 'rect');
     const textLen = item.label.length * 7 + 12;
     bg.setAttribute('x', mx - textLen / 2);
@@ -421,6 +498,7 @@ function updateFocusableItems() {
 }
 
 function onKeyDown(e) {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
   const groups = Array.from(itemsGroup.querySelectorAll('.canvas-item'));
   if (groups.length === 0) return;
 
@@ -513,11 +591,12 @@ function onPointerDown(e) {
     state.setSelectedId(id);
 
     const groups = Array.from(itemsGroup.querySelectorAll('.canvas-item'));
-    focusedIndex = groups.indexOf(g);
+    const current = itemsGroup.querySelector(`[data-id="${id}"]`);
+    focusedIndex = Array.from(itemsGroup.children).indexOf(current);
     updateFocusableItems();
-    g.focus();
+    current?.focus();
 
-    if (item && item.type !== 'connector') {
+    if (item && item.type !== 'connector' && !state.isLocked(id)) {
       const svgPt = screenToSvg(e.clientX, e.clientY);
       dragState = {
         id,
@@ -531,10 +610,29 @@ function onPointerDown(e) {
     }
   } else {
     state.setSelectedId(null);
+    panState = { x: e.clientX, y: e.clientY, panX, panY };
+    svg.setPointerCapture(e.pointerId);
+    svg.classList.add('is-panning');
+  }
+}
+
+function onWheel(e) {
+  e.preventDefault();
+  if (e.ctrlKey || e.metaKey) {
+    const pt = screenToSvg(e.clientX, e.clientY);
+    zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, pt.x, pt.y);
+  } else {
+    panBy(e.shiftKey ? e.deltaY : e.deltaX, e.shiftKey ? 0 : e.deltaY);
   }
 }
 
 function onPointerMove(e) {
+  if (panState) {
+    panX = panState.panX - (e.clientX - panState.x) / zoom;
+    panY = panState.panY - (e.clientY - panState.y) / zoom;
+    updateViewBox();
+    return;
+  }
   if (!dragState) return;
   const svgPt = screenToSvg(e.clientX, e.clientY);
   const dx = svgPt.x - dragState.startX;
@@ -560,6 +658,11 @@ function onPointerMove(e) {
 }
 
 function onPointerUp(e) {
+  if (panState) {
+    panState = null;
+    svg.classList.remove('is-panning');
+    return;
+  }
   if (dragState) {
     if (dragState.moved) {
       const item = state.getItem(dragState.id);
@@ -579,19 +682,19 @@ function onPointerUp(e) {
 
 export function focusItem(id) {
   const groups = Array.from(itemsGroup.querySelectorAll('.canvas-item'));
-  const g = groups.find(el => el.getAttribute('data-id') === id);
+  state.setSelectedId(id);
+  const g = Array.from(itemsGroup.querySelectorAll('.canvas-item')).find(el => el.getAttribute('data-id') === id);
   if (g) {
-    focusedIndex = groups.indexOf(g);
+    const current = itemsGroup.querySelector(`[data-id="${id}"]`);
+    focusedIndex = Array.from(itemsGroup.children).indexOf(current);
     updateFocusableItems();
-    g.focus();
-    state.setSelectedId(id);
+    current?.focus();
   }
 }
 
 export function getViewCenter() {
-  const w = BASE_W / zoom;
-  const h = BASE_H / zoom;
-  return { x: Math.round(panX + w / 2), y: Math.round(panY + h / 2) };
+  const { w, h } = viewSize();
+  return { x: Math.round((panX + w / 2) / 10) * 10, y: Math.round((panY + h / 2) / 10) * 10 };
 }
 
 export function getSvgElement() {

@@ -362,7 +362,11 @@ main {
   height: 100%;
   min-height: 400px;
   display: block;
+  cursor: grab;
+  touch-action: none;
 }
+.canvas-svg.is-panning { cursor: grabbing; }
+.canvas-item { cursor: move; }
 .canvas-item {
   cursor: pointer;
   transition: filter 0.1s;
@@ -955,3 +959,46 @@ dialog ul {
   .board-header-top { gap: 0.5rem; }
   .btn-back { font-size: 0.8rem; padding: 0.2rem 0.35rem; }
 }
+
+/* Outils flottants du canevas */
+#app-board .toolbar { flex-wrap: wrap; }
+#app-board .creation-toolbar,
+#app-board .zoom-toolbar {
+  position: fixed;
+  z-index: 5;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 2px 4px rgba(34,36,40,.08);
+  padding: 4px;
+}
+#app-board .creation-toolbar { left: 12px; top: 260px; flex-direction: column; }
+#app-board .zoom-toolbar { right: 16px; bottom: 16px; }
+#app-board .creation-toolbar button,
+#app-board .zoom-toolbar button { min-width: 40px; min-height: 40px; }
+#view-canvas { padding-left: 96px; }
+#app-board:has(#view-canvas[hidden]) .creation-toolbar,
+#app-board:has(#view-canvas[hidden]) .zoom-toolbar { position: static; flex-direction: row; }
+.swatch { display: inline-block; flex-shrink: 0; width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 50%; }
+.color-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.color-option { min-height: 32px; }
+@media (max-width: 640px) {
+  #app-board .creation-toolbar { top: auto; bottom: 58px; left: 4px; right: 4px; flex-direction: row; flex-wrap: wrap; justify-content: center; }
+  #app-board .zoom-toolbar { bottom: 4px; right: 4px; }
+  #app-board .toolbar-group { flex-wrap: wrap; }
+  #app-board .creation-toolbar button { min-width: 24px; min-height: 32px; }
+  #view-canvas { padding-left: 0; padding-bottom: 112px; }
+  #app-board .board-header-top { flex-wrap: wrap; }
+  #app-board h1 { overflow-wrap: anywhere; min-width: 0; }
+  .color-options { grid-template-columns: 1fr; }
+  #view-table { overflow-x: auto; }
+}
+
+#app-board:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+}
+#app-board .board-main { min-height: 0; }
+#app-board .canvas-svg { min-height: 0; }

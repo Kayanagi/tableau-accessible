@@ -99,7 +99,7 @@ export function render() {
     if (item.id === selectedId) tr.classList.add('table-selected');
     tr.setAttribute('data-id', item.id);
 
-    tr.appendChild(createTd(state.TYPES[item.type] || item.type));
+    tr.appendChild(createTd((state.TYPES[item.type] || item.type) + (item.locked ? ' — 🔒 Verrouillé' : '')));
     tr.appendChild(createTd(getContentDisplay(item)));
     tr.appendChild(createTd(getColorDisplay(item)));
     tr.appendChild(createTd(item.x != null ? item.x : '-'));
