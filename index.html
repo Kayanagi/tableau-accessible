@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tableau blanc accessible</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Aller au contenu principal</a>
+
+  <div id="app-dashboard"></div>
+
+  <div id="app-board" hidden>
+    <header role="banner">
+      <div class="board-header-top">
+        <a href="#/" class="btn-back" aria-label="Retour au tableau de bord">&larr; Tableaux</a>
+        <h1 id="board-title" tabindex="-1">Tableau</h1>
+      </div>
+      <nav aria-label="Outils du tableau" class="toolbar" role="toolbar">
+        <div class="toolbar-group" role="group" aria-label="Cr&eacute;er">
+          <button id="btn-sticky" type="button" aria-label="Nouveau post-it (N)">Post-it</button>
+          <button id="btn-shape" type="button" aria-label="Nouvelle forme">Forme</button>
+          <button id="btn-text" type="button" aria-label="Nouveau texte">Texte</button>
+          <button id="btn-card" type="button" aria-label="Nouvelle carte">Carte</button>
+          <button id="btn-frame" type="button" aria-label="Nouveau cadre">Cadre</button>
+          <button id="btn-link" type="button" aria-label="Nouveau lien entre &eacute;l&eacute;ments">Lien</button>
+        </div>
+        <div class="toolbar-group" role="group" aria-label="Historique">
+          <button id="btn-undo" type="button" disabled aria-label="Annuler (Ctrl+Z)" aria-keyshortcuts="Control+z">Annuler</button>
+          <button id="btn-redo" type="button" disabled aria-label="R&eacute;tablir (Ctrl+Maj+Z)" aria-keyshortcuts="Control+Shift+z">R&eacute;tablir</button>
+        </div>
+        <div class="toolbar-group" role="group" aria-label="Zoom">
+          <button id="btn-zoom-out" type="button" aria-label="Zoom arri&egrave;re (-)">-</button>
+          <button id="btn-zoom-reset" type="button" aria-label="R&eacute;initialiser le zoom (0)">100 %</button>
+          <button id="btn-zoom-in" type="button" aria-label="Zoom avant (+)">+</button>
+        </div>
+        <div class="toolbar-group" role="group" aria-label="Fichiers">
+          <button id="btn-export-json" type="button">Exporter JSON</button>
+          <button id="btn-export-md" type="button">Exporter Markdown</button>
+          <button id="btn-import" type="button">Importer</button>
+          <input id="file-import" type="file" accept=".json" class="sr-only" aria-label="Choisir un fichier JSON &agrave; importer" tabindex="-1">
+        </div>
+        <div class="toolbar-group" role="group" aria-label="Param&egrave;tres">
+          <button id="btn-theme" type="button" aria-label="Changer de th&egrave;me">Th&egrave;me</button>
+          <button id="btn-help" type="button" aria-label="Aide et raccourcis (?)">Aide (?)</button>
+        </div>
+      </nav>
+    </header>
+
+    <nav aria-label="Vues" class="view-tabs">
+      <div role="tablist">
+        <button role="tab" id="tab-canvas" aria-selected="true" aria-controls="view-canvas">Canevas</button>
+        <button role="tab" id="tab-outline" aria-selected="false" aria-controls="view-outline">Plan</button>
+        <button role="tab" id="tab-table" aria-selected="false" aria-controls="view-table">Tableau</button>
+      </div>
+    </nav>
+
+    <main class="board-main" tabindex="-1">
+      <div id="view-canvas" role="tabpanel" aria-labelledby="tab-canvas" class="view-panel"></div>
+      <div id="view-outline" role="tabpanel" aria-labelledby="tab-outline" class="view-panel" hidden></div>
+      <div id="view-table" role="tabpanel" aria-labelledby="tab-table" class="view-panel" hidden></div>
+    </main>
+  </div>
+
+  <dialog id="dialog-item" aria-labelledby="dialog-item-title">
+    <form>
+      <h2 class="dialog-title" id="dialog-item-title">Nouvel &eacute;l&eacute;ment</h2>
+      <input type="hidden" name="item-type" value="sticky_note">
+
+      <div class="field">
+        <label for="field-content">Texte</label>
+        <textarea id="field-content" name="item-content" rows="3"></textarea>
+      </div>
+
+      <fieldset class="field fields-card-title" hidden>
+        <legend>Titre de la carte</legend>
+        <input type="text" name="item-title" id="field-title" autocomplete="off">
+      </fieldset>
+
+      <fieldset class="field fields-color" hidden>
+        <legend>Couleur</legend>
+        <div class="color-options">
+          <label class="color-option"><input type="radio" name="item-color" value="yellow" checked><span class="swatch swatch-yellow" aria-hidden="true"></span> Jaune</label>
+          <label class="color-option"><input type="radio" name="item-color" value="blue"><span class="swatch swatch-blue" aria-hidden="true"></span> Bleu</label>
+          <label class="color-option"><input type="radio" name="item-color" value="green"><span class="swatch swatch-green" aria-hidden="true"></span> Vert</label>
+          <label class="color-option"><input type="radio" name="item-color" value="pink"><span class="swatch swatch-pink" aria-hidden="true"></span> Rose</label>
+          <label class="color-option"><input type="radio" name="item-color" value="orange"><span class="swatch swatch-orange" aria-hidden="true"></span> Orange</label>
+          <label class="color-option"><input type="radio" name="item-color" value="purple"><span class="swatch swatch-purple" aria-hidden="true"></span> Violet</label>
+          <label class="color-option"><input type="radio" name="item-color" value="gray"><span class="swatch swatch-gray" aria-hidden="true"></span> Gris</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="field fields-shape" hidden>
+        <legend>Type de forme</legend>
+        <div class="shape-options">
+          <label><input type="radio" name="item-shape" value="rectangle" checked> Rectangle</label>
+          <label><input type="radio" name="item-shape" value="circle"> Cercle</label>
+          <label><input type="radio" name="item-shape" value="triangle"> Triangle</label>
+          <label><input type="radio" name="item-shape" value="diamond"> Losange</label>
+        </div>
+      </fieldset>
+
+      <fieldset class="field">
+        <legend>Position</legend>
+        <div class="field-row">
+          <label>X <input type="number" name="item-x" value="100" step="10"></label>
+          <label>Y <input type="number" name="item-y" value="100" step="10"></label>
+        </div>
+      </fieldset>
+
+      <fieldset class="field fields-size">
+        <legend>Taille</legend>
+        <div class="field-row">
+          <label>Largeur <input type="number" name="item-width" value="150" min="20" step="10"></label>
+          <label>Hauteur <input type="number" name="item-height" value="150" min="20" step="10"></label>
+        </div>
+      </fieldset>
+
+      <div class="field fields-parent">
+        <label for="field-parent">Cadre parent</label>
+        <select id="field-parent" name="item-parent">
+          <option value="">Aucun</option>
+        </select>
+      </div>
+
+      <div class="dialog-actions">
+        <button type="submit" class="dialog-submit btn-primary">Cr&eacute;er</button>
+        <button type="button" class="dialog-cancel">Annuler</button>
+        <button type="button" class="dialog-delete btn-danger" hidden>Supprimer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dialog-link" aria-labelledby="dialog-link-title">
+    <form>
+      <h2 class="dialog-title" id="dialog-link-title">Nouveau lien</h2>
+
+      <div class="field">
+        <label for="field-link-start">&Eacute;l&eacute;ment source</label>
+        <select id="field-link-start" name="link-start" required></select>
+      </div>
+
+      <div class="field">
+        <label for="field-link-end">&Eacute;l&eacute;ment cible</label>
+        <select id="field-link-end" name="link-end" required></select>
+      </div>
+
+      <div class="field">
+        <label for="field-link-label">&Eacute;tiquette (optionnel)</label>
+        <input type="text" id="field-link-label" name="link-label" autocomplete="off">
+      </div>
+
+      <div class="dialog-actions">
+        <button type="submit" class="dialog-submit btn-primary">Cr&eacute;er</button>
+        <button type="button" class="dialog-cancel">Annuler</button>
+        <button type="button" class="dialog-delete btn-danger" hidden>Supprimer</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dialog-help" aria-labelledby="dialog-help-title">
+    <h2 class="dialog-title" id="dialog-help-title">Aide et raccourcis clavier</h2>
+
+    <h3>Raccourcis clavier</h3>
+    <dl class="shortcuts-list">
+      <dt><kbd>N</kbd></dt><dd>Nouveau post-it</dd>
+      <dt><kbd>?</kbd></dt><dd>Ouvrir cette aide</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd></dt><dd>Annuler</dd>
+      <dt><kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>Z</kbd></dt><dd>R&eacute;tablir</dd>
+      <dt><kbd>+</kbd></dt><dd>Zoom avant</dd>
+      <dt><kbd>-</kbd></dt><dd>Zoom arri&egrave;re</dd>
+      <dt><kbd>0</kbd></dt><dd>R&eacute;initialiser le zoom</dd>
+      <dt><kbd>Tab</kbd> / <kbd>Maj</kbd>+<kbd>Tab</kbd></dt><dd>Naviguer entre les &eacute;l&eacute;ments du canevas</dd>
+      <dt><kbd aria-label="Fl&egrave;ches directionnelles">&larr;&uarr;&rarr;&darr;</kbd></dt><dd>D&eacute;placer l'&eacute;l&eacute;ment s&eacute;lectionn&eacute; (10 px)</dd>
+      <dt><kbd>Maj</kbd>+<kbd aria-label="Fl&egrave;ches">&larr;&uarr;&rarr;&darr;</kbd></dt><dd>D&eacute;placer en grand pas (50 px)</dd>
+      <dt><kbd>Entr&eacute;e</kbd></dt><dd>&Eacute;diter l'&eacute;l&eacute;ment s&eacute;lectionn&eacute;</dd>
+      <dt><kbd>Suppr</kbd></dt><dd>Supprimer l'&eacute;l&eacute;ment s&eacute;lectionn&eacute;</dd>
+      <dt><kbd>&Eacute;chap</kbd></dt><dd>D&eacute;s&eacute;lectionner</dd>
+    </dl>
+
+    <h3>Trois vues synchronis&eacute;es</h3>
+    <ul>
+      <li><strong>Canevas</strong> : vue visuelle SVG, &eacute;l&eacute;ments repositionnables &agrave; la souris et au clavier.</li>
+      <li><strong>Plan</strong> : liste hi&eacute;rarchique des cadres et &eacute;l&eacute;ments, avec indication des liens.</li>
+      <li><strong>Tableau</strong> : table triable de tous les &eacute;l&eacute;ments avec leurs propri&eacute;t&eacute;s.</li>
+    </ul>
+
+    <h3>Mod&egrave;le de donn&eacute;es</h3>
+    <p>Le tableau contient des &eacute;l&eacute;ments de types : post-it (texte + couleur), forme (rectangle, cercle, triangle, losange), texte libre, carte (titre + description), cadre (regroupement), lien (connecteur orient&eacute; entre deux &eacute;l&eacute;ments, avec &eacute;tiquette optionnelle).</p>
+
+    <h3>Persistance</h3>
+    <p>Les tableaux sont sauvegard&eacute;s automatiquement dans le navigateur (localStorage). Vous pouvez aussi exporter en JSON (r&eacute;importable) ou en Markdown (lisible).</p>
+
+    <h3>Limites</h3>
+    <ul>
+      <li>Pas de collaboration en temps r&eacute;el : l'&eacute;tat est local. Le format JSON est con&ccedil;u pour &ecirc;tre s&eacute;rialisable en vue d'un ajout futur de temps r&eacute;el.</li>
+      <li>Pas de redimensionnement &agrave; la souris (utiliser les champs taille dans le formulaire d'&eacute;dition).</li>
+    </ul>
+
+    <div class="dialog-actions">
+      <button type="button" class="dialog-close btn-primary">Fermer</button>
+    </div>
+  </dialog>
+
+  <dialog id="dialog-create-board" aria-labelledby="dialog-create-title">
+    <form>
+      <h2 class="dialog-title" id="dialog-create-title">Cr&eacute;er un tableau</h2>
+      <div class="field">
+        <label for="field-board-name">Nom du tableau</label>
+        <input type="text" id="field-board-name" name="board-name" value="Nouveau tableau" autocomplete="off" required>
+      </div>
+      <fieldset class="field">
+        <legend>Mod&egrave;le</legend>
+        <div class="template-radios">
+          <label><input type="radio" name="board-template" value="vierge" checked> Vierge</label>
+          <label><input type="radio" name="board-template" value="organigramme"> Organigramme / flux</label>
+          <label><input type="radio" name="board-template" value="retrospective"> R&eacute;trospective 4 L</label>
+          <label><input type="radio" name="board-template" value="feuille-de-route"> Feuille de route</label>
+          <label><input type="radio" name="board-template" value="liste-taches"> Liste de t&acirc;ches</label>
+        </div>
+      </fieldset>
+      <div class="dialog-actions">
+        <button type="submit" class="btn-primary">Cr&eacute;er</button>
+        <button type="button" class="dialog-cancel">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dialog-rename-board" aria-labelledby="dialog-rename-title">
+    <form>
+      <h2 class="dialog-title" id="dialog-rename-title">Renommer le tableau</h2>
+      <input type="hidden" name="rename-id">
+      <div class="field">
+        <label for="field-rename-name">Nouveau nom</label>
+        <input type="text" id="field-rename-name" name="rename-name" autocomplete="off" required>
+      </div>
+      <div class="dialog-actions">
+        <button type="submit" class="btn-primary">Renommer</button>
+        <button type="button" class="dialog-cancel">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog id="dialog-delete-board" aria-labelledby="dialog-delete-title">
+    <form>
+      <h2 class="dialog-title" id="dialog-delete-title">Supprimer le tableau</h2>
+      <input type="hidden" name="delete-id">
+      <p>Voulez-vous vraiment supprimer &laquo;&nbsp;<span class="delete-board-name"></span>&nbsp;&raquo; ? Cette action est irr&eacute;versible.</p>
+      <div class="dialog-actions">
+        <button type="submit" class="btn-danger">Supprimer</button>
+        <button type="button" class="dialog-cancel">Annuler</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="announcer" aria-live="polite" aria-atomic="true" class="sr-only"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

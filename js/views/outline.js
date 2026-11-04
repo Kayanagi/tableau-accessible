@@ -1,0 +1,199 @@
+import * as state from '../state.js';
+
+let container = null;
+
+export function init(el) {
+  container = el;
+  state.subscribe(() => render());
+}
+
+export function render() {
+  if (!container) return;
+  container.innerHTML = '';
+
+  const board = state.getBoard();
+  const frames = state.getFrames();
+  const orphans = state.getOrphanItems();
+  const connectors = state.getConnectors();
+  const selectedId = state.getSelectedId();
+
+  const heading = document.createElement('h2');
+  heading.textContent = board.name;
+  heading.classList.add('outline-title');
+  container.appendChild(heading);
+
+  if (board.items.length === 0) {
+    const empty = document.createElement('p');
+    empty.textContent = 'Tableau vide. Utilisez la barre d’outils pour ajouter des éléments.';
+    empty.classList.add('outline-empty');
+    container.appendChild(empty);
+    return;
+  }
+
+  const list = document.createElement('ul');
+  list.setAttribute('role', 'tree');
+  list.setAttribute('aria-label', 'Structure du tableau');
+  list.classList.add('outline-tree');
+
+  for (const frame of frames) {
+    const li = createFrameNode(frame, selectedId);
+    list.appendChild(li);
+  }
+
+  if (orphans.length > 0) {
+    if (frames.length > 0) {
+      const sep = document.createElement('li');
+      sep.setAttribute('role', 'treeitem');
+      sep.classList.add('outline-separator');
+      const span = document.createElement('span');
+      span.textContent = 'Hors cadre';
+      span.classList.add('outline-group-label');
+      sep.appendChild(span);
+
+      const subList = document.createElement('ul');
+      subList.setAttribute('role', 'group');
+      for (const item of orphans) {
+        subList.appendChild(createItemNode(item, selectedId, connectors));
+      }
+      sep.appendChild(subList);
+      list.appendChild(sep);
+    } else {
+      for (const item of orphans) {
+        list.appendChild(createItemNode(item, selectedId, connectors));
+      }
+    }
+  }
+
+  if (connectors.length > 0) {
+    const sepLi = document.createElement('li');
+    sepLi.setAttribute('role', 'treeitem');
+    sepLi.classList.add('outline-separator');
+    const span = document.createElement('span');
+    span.textContent = `Liens (${connectors.length})`;
+    span.classList.add('outline-group-label');
+    sepLi.appendChild(span);
+
+    const subList = document.createElement('ul');
+    subList.setAttribute('role', 'group');
+    for (const c of connectors) {
+      subList.appendChild(createConnectorNode(c, selectedId));
+    }
+    sepLi.appendChild(subList);
+    list.appendChild(sepLi);
+  }
+
+  container.appendChild(list);
+}
+
+function createFrameNode(frame, selectedId) {
+  const li = document.createElement('li');
+  li.setAttribute('role', 'treeitem');
+  li.setAttribute('aria-expanded', 'true');
+  if (frame.id === selectedId) li.classList.add('outline-selected');
+
+  const btn = document.createElement('button');
+  btn.classList.add('outline-item-btn');
+  btn.setAttribute('data-id', frame.id);
+  btn.innerHTML = `<span class="outline-icon" aria-hidden="true">□</span> <strong>${escapeHtml(frame.content || '(cadre sans nom)')}</strong>`;
+  btn.addEventListener('click', () => {
+    state.setSelectedId(frame.id);
+    dispatchFocus(frame.id);
+  });
+  li.appendChild(btn);
+
+  const children = state.getChildrenOf(frame.id);
+  if (children.length > 0) {
+    const subList = document.createElement('ul');
+    subList.setAttribute('role', 'group');
+    const connectors = state.getConnectors();
+    for (const child of children) {
+      subList.appendChild(createItemNode(child, selectedId, connectors));
+    }
+    li.appendChild(subList);
+  } else {
+    const empty = document.createElement('span');
+    empty.textContent = '(vide)';
+    empty.classList.add('outline-empty-frame');
+    li.appendChild(empty);
+  }
+
+  return li;
+}
+
+function createItemNode(item, selectedId, connectors) {
+  const li = document.createElement('li');
+  li.setAttribute('role', 'treeitem');
+  if (item.id === selectedId) li.classList.add('outline-selected');
+
+  const btn = document.createElement('button');
+  btn.classList.add('outline-item-btn');
+  btn.setAttribute('data-id', item.id);
+
+  const icon = getTypeIcon(item);
+  const label = state.getItemLabel(item);
+  btn.innerHTML = `<span class="outline-icon" aria-hidden="true">${icon}</span> ${escapeHtml(label)}`;
+  btn.addEventListener('click', () => {
+    state.setSelectedId(item.id);
+    dispatchFocus(item.id);
+  });
+  li.appendChild(btn);
+
+  const links = connectors.filter(c => c.startId === item.id || c.endId === item.id);
+  if (links.length > 0) {
+    const linkInfo = document.createElement('ul');
+    linkInfo.classList.add('outline-links');
+    linkInfo.setAttribute('aria-label', 'Liens');
+    for (const c of links) {
+      const otherId = c.startId === item.id ? c.endId : c.startId;
+      const other = state.getItem(otherId);
+      const dir = c.startId === item.id ? 'vers' : 'depuis';
+      const linkLi = document.createElement('li');
+      linkLi.textContent = `Relie ${dir} ${other ? state.getItemLabel(other) : '?'}${c.label ? ' (' + c.label + ')' : ''}`;
+      linkInfo.appendChild(linkLi);
+    }
+    li.appendChild(linkInfo);
+  }
+
+  return li;
+}
+
+function createConnectorNode(c, selectedId) {
+  const li = document.createElement('li');
+  li.setAttribute('role', 'treeitem');
+  if (c.id === selectedId) li.classList.add('outline-selected');
+
+  const btn = document.createElement('button');
+  btn.classList.add('outline-item-btn');
+  btn.setAttribute('data-id', c.id);
+
+  const label = state.getItemLabel(c);
+  btn.innerHTML = `<span class="outline-icon" aria-hidden="true">→</span> ${escapeHtml(label)}`;
+  btn.addEventListener('click', () => {
+    state.setSelectedId(c.id);
+    dispatchFocus(c.id);
+  });
+  li.appendChild(btn);
+  return li;
+}
+
+function getTypeIcon(item) {
+  switch (item.type) {
+    case 'sticky_note': return '■';
+    case 'shape': return '○';
+    case 'text': return 'T';
+    case 'card': return '▣';
+    case 'frame': return '□';
+    case 'connector': return '→';
+    default: return '•';
+  }
+}
+
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function dispatchFocus(id) {
+  document.dispatchEvent(new CustomEvent('outline-focus', { detail: { id } }));
+}
