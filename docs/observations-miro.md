@@ -58,3 +58,26 @@ Les boutons sont nommés `place <couleur> sticky note, N of 16`.
 
 - Reprendre : les 16 couleurs, les raccourcis à une lettre, la sélection du plus proche objet par flèches, entrer dans un cadre et en sortir, le verrouillage, le regroupement.
 - Corriger : donner un équivalent texte à chaque objet (vues Plan et Tableau), des landmarks, un lien d'évitement, une annonce vocale de chaque action.
+
+## Tests en conditions réelles (tableau « Untitled » créé pour l'occasion)
+
+- `N` ouvre un panneau de 16 couleurs (2 colonnes) et un bouton « Stack » ; un clic sur le canevas pose le post-it à cet endroit et le sélectionne.
+- Double-clic : édition du texte **sur place**. Taille de police « Auto » : le texte grossit pour remplir le post-it.
+- `Ctrl+D` : la copie est posée juste à droite de l'original, avec un petit écart, et devient la sélection.
+- Sélection : 4 poignées d'angle (redimensionnement) et 4 points bleus au milieu des côtés (tirer un lien depuis un point vers un autre objet).
+- Barre contextuelle au-dessus de la sélection (post-it) : changer de type, police, taille (Auto, +, -), gras, alignement, lien, taille du post-it (S/M/L), couleur, afficher l'auteur, étiquettes, réaction emoji, commentaire, verrouiller, menu « Plus ».
+- Menu « Plus » : copier, copier le lien, copier en image, dupliquer, supprimer, commenter, copier/coller le style (`Ctrl+Alt+C` / `Ctrl+Alt+V`), effacer le contenu (`Ctrl+Retour arrière`), organiser (ordre), lier à un objet (`Ctrl+Alt+K`), verrouiller, créer un cadre autour, enregistrer comme modèle, exporter en CSV, infos.
+- Cadres : formats personnalisé, A4, Lettre, Mobile, Tablette, Ordinateur.
+- Formes rapides : rectangle, cercle, losange, triangle, plus une bibliothèque « More shapes ».
+
+## Panneau « Outils, médias et intégrations »
+
+- Formats : Prototype, Diagramme (Mermaid), Tableau, Frise chronologique, Kanban, Matrice, Parcours utilisateur, Doc, Diapositives, Activités interactives, Talktrack (vidéo).
+- Essentiels : stylo, post-it, carte (tâche assignable), bloc de code, carte recto-verso, cadre, grille, carte mentale, note, personnes, pile de post-its, modèles, texte, carte utilisateur.
+- Diagrammes : formes de diagramme, Draw.io, calques, organigramme.
+- Planification : colonnes, dépendances, estimation, story points, tailles de t-shirt, user story map.
+- Activités : code pour rejoindre, choix multiple, question ouverte, échelle, classement, nuage de mots, matrice 2×2.
+
+## Bibliothèque de modèles
+
+Catégories : Réunions et ateliers, Idéation et brainstorming, Recherche et design, Agile, Stratégie et planification, Diagrammes et cartographie, Présentations, Wireframes et prototypes, Formats, Modèles avec IA, Modèles de l'équipe, Miroverse (communauté).
