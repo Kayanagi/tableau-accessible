@@ -1,0 +1,16 @@
+# À ajouter dans le bloc server du vhost baro.dwes.fr.conf.
+#
+# Préalable bloquant : le bloc /server/ doit être en ligne AVANT la première fusion du dossier
+# server/ dans main, puisque main est servi tel quel depuis la racine du dépôt.
+#
+# Aucun add_header dans ces blocs : il annulerait tous les en-têtes de sécurité hérités
+# (HSTS, CSP, etc.).
+
+location ^~ /server/ { return 404; }
+
+location ^~ /api/ {
+    include snippets/proxy.conf;          # Upgrade + $connection_upgrade déjà définis
+    proxy_read_timeout 120s;              # ping WebSocket toutes les 30 s
+    client_max_body_size 4m;
+    proxy_pass http://127.0.0.1:3006;
+}

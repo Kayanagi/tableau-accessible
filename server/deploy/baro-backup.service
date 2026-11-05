@@ -1,0 +1,16 @@
+[Unit]
+Description=Sauvegarde de la base de Baro
+
+[Service]
+Type=oneshot
+# Même utilisateur que le processus PM2 baro-server, propriétaire de /var/lib/baro et /var/backups/baro.
+User=kayanagi
+Environment=BARO_DB=/var/lib/baro/baro.db
+Environment=BARO_BACKUP_DIR=/var/backups/baro
+WorkingDirectory=/var/www/tableau-accessible/server
+ExecStart=/usr/bin/node scripts/backup.mjs
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/baro /var/backups/baro
