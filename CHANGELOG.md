@@ -2,6 +2,16 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.6.0] - 2026-11-05
+
+### Ajouté
+- Panneau Cadres : liste numérotée, nombre d’éléments, ajustement de la vue, renommage et ordre persistant (`frameOrder`, facultatif), boutons et Alt+flèches.
+- Mode Présenter : plein écran ou repli plein fenêtre, navigation clavier, compteur annoncé et sortie par Échap ; vue entière sans cadre.
+- Mini-carte interactive (M), synchronisée avec les objets et la vue.
+- Recherche locale (Ctrl+F dans le tableau), résultats surlignés, compteur et navigation par Entrée / Maj+Entrée.
+- Déplacement de la vue avec les flèches sur le canevas sans sélection ; Maj augmente le pas.
+- Aide, documentation et 17 tests de navigation et présentation, dont le repli sans Fullscreen API et le format 320 px.
+
 ## [1.5.0] - 2026-11-04
 
 ### Ajouté

@@ -866,6 +866,91 @@ try {
   log('320px : pas d\'erreurs console', err320.length === 0, err320.join('; '));
   await ctx320.close();
 
+  // Présentation et navigation : contexte isolé et Fullscreen API indisponible.
+  const navCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const nav = await navCtx.newPage();
+  await nav.addInitScript(() => { Element.prototype.requestFullscreen = undefined; });
+  await nav.goto(BASE);
+  await nav.locator('.template-btn').first().click();
+  await nav.waitForFunction(() => !document.getElementById('app-board').hidden);
+  await nav.evaluate(async () => {
+    const s = await import('/js/state.js');
+    s.loadBoard({ name: 'Navigation', items: [
+      { id: 'item-1', type: 'frame', content: 'Début', x: 0, y: 0, width: 500, height: 400 },
+      { id: 'item-2', type: 'frame', content: 'Fin', x: 2000, y: 0, width: 500, height: 400 },
+      { id: 'item-3', type: 'text', content: 'Trouvaille première', parent: 'item-1', x: 50, y: 50, width: 150, height: 30 },
+      { id: 'item-4', type: 'kanban', content: 'Projet', x: 2050, y: 80, columns: [{ id: 'col-1', name: 'À faire', cards: [{ id: 'card-1', text: 'Trouvaille kanban' }] }] }
+    ] });
+  });
+  await nav.click('#btn-frames');
+  await nav.waitForFunction(() => document.querySelectorAll('#frames-panel [data-action="visit"]').length === 2);
+  log('Cadres : liste numérotée et nombre d’éléments', (await nav.textContent('#frames-panel ol')).includes('1. Début — 1 élément'));
+  await nav.click('#frames-panel [data-frame="item-2"][data-action="visit"]');
+  log('Cadres : ajustement sur le cadre', await nav.evaluate(async () => {
+    const c = await import('/js/views/canvas.js'); const v = c.getViewport();
+    return v.x <= 2000 && v.y <= 0 && v.x + v.w >= 2500 && v.y + v.h >= 400;
+  }));
+  await nav.keyboard.press('Alt+ArrowUp');
+  await nav.waitForFunction(() => document.querySelector('#frames-panel [data-action="visit"]').dataset.frame === 'item-2');
+  log('Cadres : Alt+flèche réordonne', (await nav.textContent('#frames-panel [data-action="visit"]')).startsWith('1. Fin'));
+  await nav.reload();
+  await nav.waitForFunction(() => !!document.querySelector('.canvas-item'));
+  await nav.click('#btn-frames');
+  await nav.waitForFunction(() => document.querySelector('#frames-panel [data-action="visit"]')?.dataset.frame === 'item-2');
+  log('Cadres : ordre persistant après rechargement', true);
+  await nav.click('#frames-panel [data-frame="item-2"][data-action="rename"]');
+  await nav.locator('dialog[open] input').fill('Arrivée');
+  await nav.locator('dialog[open] form button').click();
+  await nav.waitForFunction(() => document.querySelector('#frames-panel ol').textContent.includes('Arrivée'));
+  log('Cadres : renommage depuis le panneau', true);
+  await nav.keyboard.press('Escape');
+  log('Cadres : Échap ferme et rend le focus', await nav.evaluate(() => document.getElementById('frames-panel').hidden && document.activeElement.id === 'btn-frames'));
+  await nav.click('#btn-present');
+  await nav.waitForFunction(() => document.getElementById('app-board').classList.contains('is-presenting'));
+  log('Présentation : entrée avec repli plein fenêtre', await nav.evaluate(() => !document.fullscreenElement && !document.getElementById('presentation-controls').hidden));
+  log('Présentation : compteur initial', (await nav.textContent('#presentation-controls [role=status]')) === 'Cadre 1 sur 2 : Arrivée');
+  await nav.keyboard.press('ArrowRight');
+  await nav.waitForFunction(() => document.querySelector('#presentation-controls [role=status]').textContent === 'Cadre 2 sur 2 : Début');
+  await nav.keyboard.press('ArrowLeft');
+  await nav.waitForFunction(() => document.querySelector('#presentation-controls [role=status]').textContent === 'Cadre 1 sur 2 : Arrivée');
+  log('Présentation : suivant et précédent au clavier', true);
+  await nav.keyboard.press('Escape');
+  log('Présentation : Échap quitte et rend le focus', await nav.evaluate(() => !document.getElementById('app-board').classList.contains('is-presenting') && document.activeElement.id === 'btn-present'));
+  await nav.focus('.canvas-svg');
+  await nav.keyboard.press('m');
+  await nav.waitForFunction(() => document.getElementById('btn-minimap').getAttribute('aria-pressed') === 'true');
+  log('Mini-carte : M bascule avec état accessible', await nav.locator('#minimap').isVisible());
+  const beforeMap = await nav.locator('.canvas-svg').getAttribute('viewBox');
+  await nav.locator('#minimap').click({ position: { x: 10, y: 10 } });
+  await nav.waitForFunction(old => document.querySelector('.canvas-svg').getAttribute('viewBox') !== old, beforeMap);
+  log('Mini-carte : clic déplace la vue', true);
+  await nav.focus('.canvas-svg');
+  await nav.keyboard.press('Control+f');
+  await nav.locator('#board-search-input').fill('Trouvaille');
+  await nav.waitForFunction(() => document.querySelector('#board-search [role=status]').textContent === '2 résultats');
+  log('Recherche : compteur et surlignage', await nav.locator('.search-result').count() === 2);
+  await nav.keyboard.press('Enter');
+  await nav.waitForFunction(() => document.querySelector('.canvas-item.selected')?.dataset.id === 'item-3');
+  log('Recherche : Entrée sélectionne le premier résultat', (await nav.textContent('#board-search [role=status]')) === '1 sur 2');
+  await nav.keyboard.press('Enter');
+  await nav.waitForFunction(() => document.querySelector('.canvas-item.selected')?.dataset.id === 'item-4');
+  log('Recherche : résultat dans une carte kanban', (await nav.textContent('#board-search [role=status]')) === '2 sur 2');
+  await nav.keyboard.press('Escape');
+  await nav.evaluate(async () => { (await import('/js/state.js')).setSelection([]); document.querySelector('.canvas-svg').focus(); });
+  const beforeArrow = await nav.locator('.canvas-svg').getAttribute('viewBox');
+  await nav.keyboard.press('ArrowRight');
+  await nav.waitForFunction(old => document.querySelector('.canvas-svg').getAttribute('viewBox') !== old, beforeArrow);
+  log('Canevas : flèche sans sélection déplace la vue', true);
+  await nav.evaluate(async () => { (await import('/js/state.js')).loadBoard({ name: 'Vide', items: [] }); });
+  await nav.click('#btn-present');
+  await nav.waitForFunction(() => document.querySelector('#presentation-controls [role=status]').textContent === 'Vue entière. Ajoutez des cadres pour présenter');
+  const emptyPresentation = await nav.locator('#presentation-controls').isVisible();
+  await nav.keyboard.press('Escape');
+  await nav.setViewportSize({ width: 320, height: 700 });
+  await nav.click('#btn-frames');
+  log('Présentation sans cadre et navigation à 320 px sans débordement', emptyPresentation && await nav.evaluate(() => document.body.scrollWidth <= 320));
+  await navCtx.close();
+
 } catch (err) {
   log('Exécution complète des tests', false, err.message);
   console.error('Erreur fatale:', err);

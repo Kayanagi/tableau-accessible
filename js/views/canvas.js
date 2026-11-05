@@ -58,8 +58,8 @@ export function init(el) {
   container = el;
   svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('role', 'application');
-  svg.setAttribute('aria-label', 'Canevas du tableau blanc. Utilisez Tab pour naviguer entre les éléments, flèches pour déplacer, Entrée pour modifier le texte, Suppr pour supprimer.');
-  svg.setAttribute('focusable', 'false');
+  svg.setAttribute('aria-label', 'Canevas du tableau blanc. Utilisez Tab pour naviguer entre les éléments, flèches pour déplacer les éléments ou la vue sans sélection, Maj pour un plus grand pas, Entrée pour modifier le texte, Suppr pour supprimer.');
+  svg.setAttribute('tabindex', '0');
   svg.classList.add('canvas-svg');
   svg.dataset.tool = 'select';
 
@@ -725,6 +725,14 @@ function targetIds(id) {
 }
 
 function onKeyDown(e) {
+  if (e.defaultPrevented) return;
+  if (e.target === svg && !state.getSelectedIds().length && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.startsWith('Arrow')) {
+    e.preventDefault();
+    const step = e.shiftKey ? 200 : 50;
+    panBy(e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0, e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0);
+    announce('Vue déplacée');
+    return;
+  }
   const active = document.activeElement;
   const sub = active?.dataset?.sub;
   const holder = active?.closest?.('.canvas-item');
@@ -796,6 +804,7 @@ function onKeyDown(e) {
     case 'Escape': {
       e.preventDefault();
       if (state.getSelectedIds().length) state.setSelection([], true);
+      svg.focus({ preventScroll: true });
       break;
     }
   }
@@ -1279,4 +1288,29 @@ export function getSvgElement() {
 
 export function getContainer() {
   return container;
+}
+
+export function fitFrame(id) {
+  const item = state.getItem(id);
+  if (!item || !svg?.clientWidth) return;
+  const b = itemBox(item);
+  zoom = Math.min(MAX_ZOOM, svg.clientWidth / (b.w + 64), svg.clientHeight / (b.h + 64));
+  centerView(b.x + b.w / 2, b.y + b.h / 2);
+}
+
+export function centerView(x, y) {
+  const { w, h } = viewSize();
+  panX = x - w / 2;
+  panY = y - h / 2;
+  updateViewBox();
+}
+
+export function getViewport() {
+  const { w, h } = viewSize();
+  return { x: panX, y: panY, w, h };
+}
+
+export function restoreViewport(view) {
+  zoom = (svg.clientWidth || BASE_W) / view.w;
+  centerView(view.x + view.w / 2, view.y + view.h / 2);
 }

@@ -1,6 +1,7 @@
 import * as history from './store/history.js';
 import { announce } from './a11y/announcer.js';
 import * as O from './objects.js';
+import * as L from './lines.js';
 
 export const PALETTE = [
   ['light_yellow', 'Jaune clair', '#fff79e'], ['miro_yellow', 'Jaune', '#ffe86d'],
@@ -539,7 +540,9 @@ export function getNonConnectorItems() {
 }
 
 export function getFrames() {
-  return board.items.filter(i => i.type === 'frame');
+  const frames = board.items.filter(i => i.type === 'frame');
+  const order = Array.isArray(board.frameOrder) ? board.frameOrder : [];
+  return [...frames.filter(f => order.includes(f.id)).sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)), ...frames.filter(f => !order.includes(f.id))];
 }
 
 export function getConnectors() {
@@ -776,4 +779,14 @@ export function getContentSummary(item) {
     case 'comment': return item.messages.map(m => `${m.author} : ${m.text}`).join(' / ');
     default: return item.content || '';
   }
+}
+
+export function moveFrame(id, direction) {
+  const ids = getFrames().map(f => f.id);
+  const from = ids.indexOf(id), to = from + direction;
+  if (from < 0 || to < 0 || to >= ids.length) return;
+  history.pushState(snapshot());
+  [ids[from], ids[to]] = [ids[to], ids[from]];
+  board.frameOrder = ids;
+  notify();
 }

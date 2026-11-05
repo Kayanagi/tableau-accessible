@@ -1226,3 +1226,56 @@ dialog ul {
 .dialog-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
 .dialog-header h2 { margin: 0; }
 .dialog-header + form { display: flex; flex-direction: column; gap: .75rem; margin-top: 1rem; }
+
+.frames-panel {
+  position: fixed; z-index: 12; top: 0; right: 0; bottom: 0;
+  width: min(360px, 100vw); padding: 12px; overflow-y: auto;
+  background: var(--surface); color: var(--fg); border-left: 1px solid var(--border);
+  box-shadow: -4px 0 16px #0002;
+}
+.frames-panel[hidden], .board-search[hidden], .minimap[hidden], .presentation-controls[hidden] { display: none; }
+.frames-panel ol { list-style: none; padding: 0; }
+.frames-panel li { display: flex; flex-wrap: wrap; gap: 4px; padding: 12px 0; border-bottom: 1px solid var(--border); }
+.frames-panel li > button:first-child { flex-basis: 100%; text-align: left; overflow-wrap: anywhere; }
+.frames-panel button, .board-search button, .presentation-controls button { min-height: 32px; min-width: 24px; }
+.board-search {
+  position: absolute; z-index: 8; top: 8px; left: 100px; right: 8px;
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+}
+.board-search label { flex-basis: 100%; }
+.board-search input { min-width: 0; flex: 1 1 120px; width: 140px; min-height: 32px; font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border); }
+.minimap { position: fixed; z-index: 6; right: 16px; bottom: 76px; width: 200px; height: 130px; background: var(--surface); border: 2px solid var(--border); border-radius: 8px; touch-action: none; }
+.minimap-object { fill: var(--primary); fill-opacity: .3; stroke: var(--fg); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.minimap-view { fill: none; stroke: var(--primary); stroke-width: 3; vector-effect: non-scaling-stroke; }
+.canvas-item.search-result > :first-child { stroke: var(--primary); stroke-width: 4; stroke-dasharray: 5 3; }
+.canvas-item.search-current > :first-child { stroke-width: 6; stroke-dasharray: none; }
+#app-board.is-presenting { position: fixed; inset: 0; z-index: 100; background: var(--bg); }
+#app-board.is-presenting > :not(.board-main):not(.presentation-controls) { display: none; }
+#app-board.is-presenting .board-main { flex: 1; margin: 0; padding: 0; }
+#app-board.is-presenting #view-canvas { padding: 0 0 72px; height: 100%; }
+#app-board.is-presenting #view-canvas > :not(.canvas-svg),
+#app-board.is-presenting #canvas-overlay { display: none; }
+.presentation-controls { position: absolute; z-index: 101; bottom: 8px; left: 8px; right: 8px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px; padding: 4px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.presentation-controls [role=status] { overflow-wrap: anywhere; min-width: 0; }
+@media (max-width: 640px) {
+  #app-board .zoom-toolbar { left: 4px; justify-content: center; }
+  #app-board .zoom-toolbar button { min-width: 24px; min-height: 32px; padding: 3px; font-size: .75rem; }
+  #app-board .creation-toolbar { bottom: 84px; }
+  #view-canvas { padding-bottom: 144px; }
+  .board-search { left: 4px; right: 4px; }
+  .minimap { bottom: 132px; right: 4px; width: 150px; height: 100px; }
+  .presentation-controls { gap: 4px; font-size: .8rem; }
+  .presentation-controls [role=status] { flex-basis: 100%; text-align: center; order: -1; }
+  #app-board.is-presenting #view-canvas { padding-bottom: 100px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #app-board.is-presenting *, .minimap { animation: none; transition: none; scroll-behavior: auto; }
+}
+
+#app-board:has(#view-canvas[hidden]) .minimap { display: none; }
+.frames-head { display: flex; justify-content: space-between; align-items: center; gap: .5rem; margin-bottom: .5rem; }
+.frames-head h2 { font-size: 1rem; }
+.minimap-line { fill: none; stroke: var(--fg); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.canvas-item.search-result > :first-child { stroke: var(--primary) !important; stroke-width: 4 !important; stroke-dasharray: 5 3 !important; }
+.canvas-item.search-current > :first-child { stroke-width: 6 !important; stroke-dasharray: none !important; }

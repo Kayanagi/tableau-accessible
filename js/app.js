@@ -1,3 +1,4 @@
+import * as navigation from './views/navigation.js';
 import * as boardActions from './views/board-actions.js';
 import * as state from './state.js';
 import * as announcer from './a11y/announcer.js';
@@ -54,6 +55,7 @@ function onRouteChange(route, oldRoute) {
 function showDashboard(route) {
   if (unsubAutoSave) { unsubAutoSave(); unsubAutoSave = null; }
   currentBoardId = null;
+  if (boardInitialized) navigation.reset();
 
   document.getElementById('app-board').hidden = true;
   const el = document.querySelector('.board-main');
@@ -101,6 +103,7 @@ function showBoard(boardId) {
     boardInitialized = true;
   }
 
+  navigation.reset();
   editor.commit(false);
   editor.commitField(false);
   toolsPanel.close(false);
@@ -136,6 +139,7 @@ function initBoardView() {
   setupTabs();
   setupToolbar();
   setupDialogs();
+  navigation.init(showCanvasTab);
   setupShortcuts();
 }
 
@@ -447,7 +451,7 @@ function setupDashboardDialogs() {
 function setupShortcuts() {
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
-    if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select, [contenteditable], .comments-panel, .tools-panel')) return;
+    if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select, [contenteditable], .comments-panel, .tools-panel, .frames-panel, .board-search')) return;
     const boardVisible = !document.getElementById('app-board').hidden;
     if (!boardVisible) return;
     if (currentView === 'canvas') {
@@ -497,7 +501,7 @@ function setupShortcuts() {
         if (key === 'l') { e.preventDefault(); openLinkDialog(); return; }
         if (e.key === 'Escape') {
           if (canvas.cancelTool()) { e.preventDefault(); return; }
-          if (state.getSelectedIds().length) { e.preventDefault(); state.setSelection([], true); return; }
+          if (state.getSelectedIds().length) { e.preventDefault(); state.setSelection([], true); canvas.getSvgElement().focus({ preventScroll: true }); return; }
         }
         const onControl = e.target.closest('button, a, [role="menuitem"]');
         if (e.key === 'Enter' && !onControl && canvas.isCreationTool()) { e.preventDefault(); createAtCenter(canvas.getTool()); return; }

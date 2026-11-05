@@ -193,3 +193,13 @@ npm install playwright
 npx playwright install chromium
 node e2e.mjs   # sert le dossier parent du script sur le port 8765 (PORT=… pour en changer)
 ```
+
+### Présentation et navigation (1.6.0)
+
+« Cadres », dans les contrôles en bas à droite, ouvre un panneau non modal : choisir un cadre ajuste la vue, les boutons Monter / Descendre ou Alt+flèche haut/bas changent son ordre, Renommer change son nom. Le champ facultatif `frameOrder` conserve les identifiants dans l’ordre de présentation ; sans ce champ, l’ordre existant des cadres est conservé. Les nouveaux cadres rejoignent la fin de la liste. Échap ferme le panneau et rend le focus.
+
+« Présenter » affiche un cadre à la fois, en plein écran si disponible, sinon en superposition plein fenêtre. Flèches gauche/droite, Espace, Page précédente/suivante et Début/Fin parcourent les cadres ; Échap ou Quitter termine la présentation. Sans cadre, la vue entière est présentée avec le message « Ajoutez des cadres pour présenter ». Aucune transition animée.
+
+M ou « Mini-carte » affiche un aperçu simplifié, masqué initialement (y compris à 320 px). Cliquer ou glisser dessus déplace la vue ; le bouton indique son état. Sur le fond du canevas, sans sélection, les flèches déplacent la vue et Maj augmente le pas.
+
+« Rechercher » ou Ctrl+F lorsque le focus est dans la vue tableau ouvre la recherche locale : textes, titres, étiquettes, tableaux, kanbans, cartes mentales et code. Les objets trouvés sont surlignés. Entrée / Maj+Entrée sélectionne le résultat suivant / précédent et l’amène à l’écran ; le compteur annonce sa position. Échap ferme et rend le focus.
