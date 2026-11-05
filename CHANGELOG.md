@@ -2,6 +2,11 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.8.1] - 2026-11-05
+
+### Corrigé
+- À 320 px, la barre de mise en forme ne recouvre plus le panneau « Actions du tableau » quand il est déplié.
+
 ## [1.8.0] - 2026-11-05
 
 ### Ajouté

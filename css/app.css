@@ -1509,3 +1509,4 @@ dialog.template-store[open] { display: flex; flex-direction: column; }
   .shortcuts-list dt { text-align: left; white-space: normal; }
 }
 dialog { margin: auto; }
+#app-board:has(#board-tools.is-open) .context-toolbar.is-docked { display: none; }
