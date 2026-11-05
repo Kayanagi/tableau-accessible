@@ -1,70 +1,175 @@
-import { TEMPLATES, CATEGORIES, getCustomTemplates, removeTemplate } from '../store/templates.js';
+import { TEMPLATES, CATEGORIES, getCustomTemplates, removeTemplate, setTemplateShared, getTemplate, markUsed, getUsage } from '../store/templates.js';
 import { dialog, ask } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
+import { getPref, setPref } from '../preferences.js';
+import { preview, describeContent } from './template-preview.js';
 
-const NS = 'http://www.w3.org/2000/svg';
-export function preview(snapshot) {
-  const svg = document.createElementNS(NS, 'svg');
-  svg.classList.add('template-preview');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', `Aperçu : ${snapshot.name}`);
-  const items = snapshot.items.filter(i => i.type !== 'connector');
-  const left = Math.min(0, ...items.map(i => i.x));
-  const top = Math.min(0, ...items.map(i => i.y));
-  svg.setAttribute('viewBox', `${left - 10} ${top - 10} ${Math.max(300, ...items.map(i => i.x + (i.width || 200))) - left + 20} ${Math.max(180, ...items.map(i => i.y + (i.height || 140))) - top + 20}`);
-  for (const i of snapshot.items) {
-    if (i.type === 'connector') {
-      const a = snapshot.items.find(v => v.id === i.startId), b = snapshot.items.find(v => v.id === i.endId);
-      if (!a || !b) continue;
-      const line = document.createElementNS(NS, 'line');
-      for (const [k, v] of Object.entries({ x1: a.x + (a.width || 200) / 2, y1: a.y + (a.height || 140) / 2, x2: b.x + (b.width || 200) / 2, y2: b.y + (b.height || 140) / 2, stroke: '#4a2fcc', 'stroke-width': 4 })) line.setAttribute(k, v);
-      svg.append(line); continue;
-    }
-    const rect = document.createElementNS(NS, 'rect');
-    for (const [k, v] of Object.entries({ x: i.x, y: i.y, width: i.width || 200, height: i.height || 140, fill: i.type === 'frame' ? '#f7f7fb' : i.type === 'sticky_note' ? '#fff79e' : '#e6e0ff', stroke: '#4a2fcc', 'stroke-width': 2, rx: 4 })) rect.setAttribute(k, v);
-    const text = document.createElementNS(NS, 'text');
-    text.setAttribute('x', i.x + 8); text.setAttribute('y', i.y + 24);
-    text.setAttribute('font-size', 16); text.setAttribute('fill', '#1b1740');
-    text.textContent = (i.title || i.content || '').slice(0, 32);
-    svg.append(rect, text);
+const USE_CASES = CATEGORIES.filter(c => c !== 'Mes modèles');
+const SECTIONS = {
+  all: { title: 'Tous les modèles', filter: () => true },
+  community: { title: 'Communauté', filter: t => t.partage },
+  mine: { title: 'Mes modèles', filter: t => t.categorie === 'Mes modèles' },
+  formats: { title: 'Formats', filter: t => !!t.format, tagsOf: t => (t.format ? [t.format] : []) }
+};
+const fold = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('fr');
+const authorOf = t => (t.categorie === 'Mes modèles' ? 'Vous' : 'DWES');
+const sectionOf = key => (key.startsWith('cat:') ? { title: key.slice(4), filter: t => t.categorie === key.slice(4) } : SECTIONS[key]);
+const plural = (n, word) => `${n} ${word}${n > 1 ? 's' : ''}`;
+
+function make(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') node.className = v;
+    else if (k === 'text') node.textContent = v;
+    else if (k.startsWith('on')) node[k] = v;
+    else node.setAttribute(k, v);
   }
-  return svg;
+  node.append(...children);
+  return node;
 }
+
 export function openLibrary(use) {
-  dialog('Bibliothèque de modèles', el => {
-    el.classList.add('template-library');
-    const filters = document.createElement('div');
-    const category = document.createElement('select');
-    category.id = 'template-category'; category.setAttribute('aria-label', 'Catégorie de modèles');
-    category.add(new Option('Toutes les catégories', ''));
-    CATEGORIES.forEach(c => category.add(new Option(c, c)));
-    const search = document.createElement('input');
-    search.id = 'template-search'; search.type = 'search'; search.setAttribute('aria-label', 'Rechercher un modèle');
-    const status = document.createElement('p'); status.setAttribute('role', 'status');
-    const list = document.createElement('div'); list.className = 'library-results';
-    const field = (text, control) => { const l = document.createElement('label'); l.className = 'library-field'; l.append(text, control); control.removeAttribute('aria-label'); return l; };
-    search.placeholder = 'SWOT, rétro, kanban…';
-    filters.className = 'library-filters';
-    filters.append(field('Catégorie', category), field('Rechercher', search)); el.append(filters, status, list);
-    const render = () => {
-      list.replaceChildren();
-      const found = [...TEMPLATES, ...getCustomTemplates()].filter(t => (!category.value || t.categorie === category.value) && `${t.nom} ${t.description}`.toLocaleLowerCase('fr').includes(search.value.toLocaleLowerCase('fr')));
-      status.textContent = `${found.length} modèle(s)`;
-      for (const t of found) {
-        const card = document.createElement('article'); card.dataset.template = t.id;
-        const h = document.createElement('h3'); h.textContent = t.nom;
-        const desc = document.createElement('p'); desc.textContent = t.description;
-        const button = document.createElement('button'); button.textContent = 'Utiliser ce modèle';
-        button.onclick = () => { el.close(); use(t.id); };
-        card.append(h, preview(t.données()), desc, button);
-        if (t.categorie === 'Mes modèles') {
-          const del = document.createElement('button'); del.textContent = 'Supprimer le modèle';
-          del.onclick = () => ask(`Supprimer « ${t.nom} » ?`, '', () => { removeTemplate(t.id); render(); search.focus(); announce('Modèle supprimé'); }, true);
-          card.append(del);
-        }
-        list.append(card);
-      }
-    };
-    category.onchange = render; search.oninput = render; render();
+  const view = { section: 'all', tag: '', sort: 'recommended', query: '', previewId: null };
+  let root, main, status, searchInput;
+
+  const allTemplates = () => [...TEMPLATES, ...getCustomTemplates()];
+  const choose = id => { markUsed(id); root.close(); use(id); };
+
+  const found = () => {
+    const q = fold(view.query.trim());
+    const section = q ? SECTIONS.all : sectionOf(view.section);
+    let list = allTemplates().filter(section.filter);
+    if (q) list = list.filter(t => fold(`${t.nom} ${t.categorie} ${t.description} ${(t.tags || []).join(' ')} ${t.format || ''}`).includes(q));
+    const tagsOf = section.tagsOf || (t => t.tags || []);
+    if (view.tag && !q) list = list.filter(t => tagsOf(t).includes(view.tag));
+    const order = allTemplates().map(t => t.id);
+    if (view.sort === 'name') list.sort((a, b) => a.nom.localeCompare(b.nom, 'fr'));
+    else if (view.sort === 'recent') {
+      const usage = getUsage();
+      list.sort((a, b) => (usage[b.id] || b.créé || 0) - (usage[a.id] || a.créé || 0) || order.indexOf(b.id) - order.indexOf(a.id));
+    } else list.sort((a, b) => (b.recommande ? 1 : 0) - (a.recommande ? 1 : 0) || order.indexOf(a.id) - order.indexOf(b.id));
+    return list;
+  };
+
+  const select = key => {
+    view.section = key;
+    view.tag = '';
+    view.query = '';
+    searchInput.value = '';
+    view.previewId = null;
+    root.querySelectorAll('[data-section]').forEach(b => {
+      if (b.dataset.section === key) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+    });
+    root.querySelector('.store-nav-toggle').textContent = `Catégories : ${sectionOf(key).title}`;
+    if (matchMedia('(max-width: 640px)').matches) toggleNav(false);
+    renderMain();
+    announce(`${sectionOf(key).title} : ${plural(found().length, 'modèle')}`);
+  };
+
+  const toggleNav = open => {
+    const toggle = root.querySelector('.store-nav-toggle');
+    root.querySelector('.store-nav').classList.toggle('is-open', open);
+    toggle.setAttribute('aria-expanded', String(open));
+  };
+
+  const useButton = t => make('button', { type: 'button', class: 'btn-primary store-use', text: 'Utiliser le modèle', 'aria-label': `Utiliser le modèle ${t.nom}`, onclick: () => choose(t.id) });
+
+  const card = t => {
+    const data = t.données();
+    const hover = make('div', { class: 'store-hover' },
+      make('p', { text: t.description }),
+      make('div', { class: 'store-hover-actions' }, useButton(t), make('button', { type: 'button', class: 'store-preview-btn', text: 'Aperçu', 'aria-label': `Aperçu de ${t.nom}`, onclick: () => { view.previewId = t.id; renderMain(); } }))
+    );
+    const thumb = make('div', { class: 'store-thumb' }, preview({ ...data, name: t.nom }), hover);
+    const node = make('article', { class: 'store-card', 'data-template': t.id }, thumb, make('div', { class: 'store-meta' }, make('span', { class: 'store-author', text: authorOf(t) }), make('h4', { text: t.nom })));
+    if (t.categorie === 'Mes modèles') {
+      node.append(make('div', { class: 'store-own' },
+        make('button', { type: 'button', text: 'Partageable', 'aria-pressed': String(!!t.partage), 'aria-label': `Partageable : ${t.nom}`, onclick: () => { setTemplateShared(t.id, !t.partage); renderMain(); announce(t.partage ? 'Modèle retiré des partageables' : 'Modèle marqué comme partageable'); root.querySelector(`[data-template="${t.id}"] .store-own button`)?.focus(); } }),
+        make('button', { type: 'button', text: 'Supprimer le modèle', 'aria-label': `Supprimer le modèle ${t.nom}`, onclick: () => ask(`Supprimer « ${t.nom} » ?`, '', () => { removeTemplate(t.id); renderMain(); searchInput.focus(); announce('Modèle supprimé'); }, true) })
+      ));
+    }
+    return node;
+  };
+
+  const renderPreview = t => {
+    const data = t.données();
+    const back = make('button', { type: 'button', class: 'store-back', text: '← Retour à la liste', onclick: () => backToList(t.id) });
+    const heading = make('h3', { tabindex: '-1', text: t.nom });
+    main.replaceChildren(make('div', { class: 'store-detail' },
+      back, heading,
+      make('div', { class: 'store-large' }, preview({ ...data, name: t.nom }, { width: 800, large: true })),
+      make('p', { text: t.description }),
+      make('dl', { class: 'store-facts' },
+        make('dt', { text: 'Éléments' }), make('dd', { text: `${data.items.length} (${describeContent(data.items)})` }),
+        make('dt', { text: 'Catégorie' }), make('dd', { text: t.categorie }),
+        make('dt', { text: 'Auteur' }), make('dd', { text: authorOf(t) })),
+      useButton(t)
+    ));
+    heading.focus();
+    announce(`Aperçu de ${t.nom}`);
+  };
+
+  const backToList = id => {
+    view.previewId = null;
+    renderMain();
+    root.querySelector(`[data-template="${id}"] .store-preview-btn`)?.focus();
+  };
+
+  const renderMain = () => {
+    if (view.previewId) { const t = getTemplate(view.previewId); if (t) { renderPreview(t); return; } view.previewId = null; }
+    const searching = !!view.query.trim();
+    const section = searching ? { title: `Résultats pour « ${view.query.trim()} »` } : sectionOf(view.section);
+    const list = found();
+    const head = make('div', { class: 'store-head' });
+    head.append(make('h3', { text: section.title }));
+    status = make('p', { class: 'store-count', role: 'status', text: plural(list.length, 'modèle') });
+    head.append(status);
+    const sort = make('select', { id: 'store-sort' });
+    [['recommended', 'Recommandés'], ['name', 'Nom A-Z'], ['recent', 'Récents']].forEach(([v, name]) => sort.add(new Option(name, v, v === view.sort, v === view.sort)));
+    sort.onchange = () => { view.sort = sort.value; renderMain(); root.querySelector('#store-sort').focus(); announce(`Tri : ${sort.options[sort.selectedIndex].text}`); };
+    head.append(make('label', { class: 'store-sort', for: 'store-sort', text: 'Trier par' }), sort);
+    const blocks = [head];
+    const pool = searching ? [] : allTemplates().filter(sectionOf(view.section).filter);
+    const tagsOf = sectionOf(view.section).tagsOf || (t => t.tags || []);
+    const tags = [...new Set(pool.flatMap(tagsOf))];
+    if (tags.length > 1 && !['all', 'community', 'mine'].includes(view.section)) {
+      blocks.push(make('div', { class: 'store-pills', role: 'group', 'aria-label': 'Filtrer' }, ...['', ...tags].map(tag => make('button', {
+        type: 'button', class: 'store-pill', text: tag || 'Tout', 'data-tag': tag, 'aria-pressed': String(view.tag === tag),
+        onclick: () => { view.tag = tag; renderMain(); root.querySelector(`.store-pill[data-tag="${CSS.escape(tag)}"]`)?.focus(); announce(`${tag || 'Tout'} : ${plural(found().length, 'modèle')}`); }
+      }))));
+    }
+    if (view.section === 'community' && !searching) {
+      blocks.push(make('p', { class: 'store-notice', id: 'store-community-note', text: 'La publication de modèles par la communauté arrivera avec le serveur. Pour l’instant, cette page présente les modèles partageables disponibles sur cet appareil : ceux de DWES et les vôtres marqués « Partageable ». Rien n’est envoyé.' }));
+    }
+    if (list.length) blocks.push(make('div', { class: 'store-grid' }, ...list.map(card)));
+    else blocks.push(make('p', { class: 'store-empty', text: searching ? 'Aucun modèle ne correspond à la recherche.' : view.section === 'mine' ? 'Aucun modèle personnel. Dans un tableau, choisissez « Enregistrer comme modèle ».' : 'Aucun modèle dans cette catégorie.' }));
+    main.replaceChildren(...blocks);
+  };
+
+  root = dialog('Boutique de modèles', el => {
+    el.classList.add('template-store');
+    searchInput = make('input', { id: 'store-search', type: 'search', placeholder: 'Rechercher par nom ou catégorie', 'aria-label': 'Rechercher par nom ou catégorie', autocomplete: 'off' });
+    searchInput.oninput = () => { view.query = searchInput.value; view.previewId = null; renderMain(); };
+    const onCreate = make('input', { id: 'store-on-create', type: 'checkbox' });
+    onCreate.checked = getPref('storeOnCreate');
+    onCreate.onchange = () => { setPref('storeOnCreate', onCreate.checked); announce(onCreate.checked ? 'La boutique s’ouvrira à la création d’un tableau' : 'Dialogue simple à la création d’un tableau'); };
+    const top = make('div', { class: 'store-top' }, searchInput,
+      make('label', { class: 'store-check', for: 'store-on-create' }, onCreate, 'Afficher à la création d’un tableau'),
+      make('button', { type: 'button', id: 'store-blank', class: 'store-blank', text: 'Tableau vierge', onclick: () => choose('vierge') }));
+    const navItem = (key, text) => make('li', {}, make('button', { type: 'button', 'data-section': key, text, onclick: () => select(key) }));
+    const nav = make('nav', { class: 'store-nav', 'aria-label': 'Catégories de modèles' },
+      make('ul', {}, navItem('all', 'Tous les modèles'), navItem('community', 'Communauté'), navItem('mine', 'Mes modèles')),
+      make('h3', { text: 'Cas d’usage' }), make('ul', {}, ...USE_CASES.map(c => navItem(`cat:${c}`, c))),
+      make('h3', { text: 'Types' }), make('ul', {}, navItem('formats', 'Formats')));
+    const toggle = make('button', { type: 'button', class: 'store-nav-toggle', 'aria-expanded': 'false', text: 'Catégories : Tous les modèles', onclick: () => toggleNav(!nav.classList.contains('is-open')) });
+    main = make('main', { class: 'store-main', tabindex: '-1' });
+    main.setAttribute('role', 'region');
+    main.setAttribute('aria-label', 'Modèles');
+    el.append(top, toggle, make('div', { class: 'store-body' }, nav, main));
+    el.addEventListener('cancel', e => { if (view.previewId) { e.preventDefault(); backToList(view.previewId); } });
+    nav.querySelector('[data-section="all"]').setAttribute('aria-current', 'true');
   });
+  renderMain();
+  searchInput.focus();
+  return root;
 }

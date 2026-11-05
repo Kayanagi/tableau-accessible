@@ -193,7 +193,14 @@ try {
 
   // --- Create via dialog ---
   await page.click('button:text("Créer un tableau")');
+  await page.waitForSelector('dialog.template-store[open]');
+  log('Boutique : ouverte par Créer un tableau, case cochée par défaut', await page.isChecked('#store-on-create'));
+  await page.uncheck('#store-on-create');
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('dialog.template-store'));
+  await page.click('button:text("Créer un tableau")');
   await page.waitForSelector('#dialog-create-board[open]');
+  log('Boutique : case décochée, dialogue simple', await page.locator('dialog.template-store').count() === 0);
   await page.fill('[name="board-name"]', 'Mon tableau test');
   await page.click('#dialog-create-board .btn-primary');
   await page.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Mon tableau test'), null, { timeout: 5000 }).catch(() => {});
@@ -754,24 +761,81 @@ try {
   await d.waitForFunction(() => location.hash === '#/' && !document.querySelector('.space-row'));
   log('Espace : suppression conserve le tableau', await d.locator('.board-link').count() === 1);
   await d.click('#btn-template-library');
-  await d.selectOption('#template-category', 'Agile');
-  log('Bibliothèque : filtre par catégorie', await d.locator('.library-results article').count() === 6);
-  await d.selectOption('#template-category', '');
-  await d.fill('#template-search', 'Persona');
-  log('Bibliothèque : recherche', await d.locator('.library-results article').count() === 1 && await d.locator('.library-results h3').textContent() === 'Persona');
-  log('Bibliothèque : aperçu SVG généré', await d.locator('.library-results svg rect').count() === 3);
-  await d.getByRole('button', { name: 'Utiliser ce modèle', exact: true }).click();
+  await d.waitForSelector('dialog.template-store[open]');
+  const totalTemplates = await d.locator('.store-card').count();
+  const allCurrent = await d.getAttribute('.store-nav [data-section="all"]', 'aria-current') === 'true';
+  log('Boutique : au moins 40 modèles, anciens identifiants conservés', totalTemplates >= 40 && await d.evaluate(async () => { const { getTemplate } = await import('/js/store/templates.js'); return ['vierge', 'organigramme', 'retrospective', 'feuille-de-route', 'liste-taches', 'brainstorming', 'start-stop-continue', 'daily', 'kanban-projet', 'diagramme-flux', 'carte-mentale', 'eisenhower', 'swot', 'persona', 'parcours-utilisateur', 'lean-canvas', 'user-story-map', 'effort-impact', 'ordre-du-jour', 'revue-sprint'].every(getTemplate); }), `${totalTemplates} modèles`);
+  log('Boutique : grande fenêtre, navigation et colonne active', allCurrent && (await d.locator('dialog.template-store').boundingBox()).width > 1000 && await d.locator('.store-nav [data-section]').count() === 12 && await d.evaluate(() => document.activeElement.id) === 'store-search');
+  await d.click('.store-nav [data-section="cat:Agile"]');
+  const agileCount = await d.locator('.store-card').count();
+  log('Boutique : catégorie Agile et aria-current', agileCount >= 8 && agileCount < totalTemplates && await d.getAttribute('.store-nav [data-section="cat:Agile"]', 'aria-current') === 'true' && await d.getAttribute('.store-nav [data-section="all"]', 'aria-current') === null);
+  await d.click('.store-pill[data-tag="Scrum"]');
+  const scrumNames = await d.locator('.store-card h4').allTextContents();
+  log('Boutique : sous-filtre en pastille (aria-pressed)', scrumNames.length >= 3 && scrumNames.length < agileCount && scrumNames.includes('Backlog produit') && await d.getAttribute('.store-pill[data-tag="Scrum"]', 'aria-pressed') === 'true');
+  await d.selectOption('#store-sort', 'name');
+  const sortedNames = await d.locator('.store-card h4').allTextContents();
+  log('Boutique : tri Nom A-Z', JSON.stringify(sortedNames) === JSON.stringify([...sortedNames].sort((a, b) => a.localeCompare(b, 'fr'))) && await d.evaluate(() => document.activeElement.id) === 'store-sort');
+  await d.selectOption('#store-sort', 'recommended');
+  await d.fill('#store-search', 'wireframes');
+  log('Boutique : recherche par catégorie', await d.locator('.store-card').count() === 3);
+  await d.fill('#store-search', 'Persona');
+  log('Boutique : recherche par nom', await d.locator('.store-card').count() === 1 && await d.locator('.store-card h4').textContent() === 'Persona' && (await d.textContent('.store-count')) === '1 modèle');
+  const personaCard = d.locator('.store-card[data-template="persona"]');
+  log('Boutique : carte fidèle, auteur DWES, aperçu nommé sans micro-texte', await personaCard.locator('.store-author').textContent() === 'DWES' && (await personaCard.locator('svg').getAttribute('aria-label')).startsWith('Aperçu de Persona :') && await personaCard.locator('svg rect').count() >= 3);
+  const hoverOpacity = () => personaCard.locator('.store-hover').evaluate(el => Number(getComputedStyle(el).opacity));
+  await d.mouse.move(2, 2);
+  await d.locator('#store-search').focus();
+  await d.waitForFunction(() => Number(getComputedStyle(document.querySelector('.store-card .store-hover')).opacity) === 0);
+  await d.locator('.store-nav [data-section="formats"]').focus();
+  await d.keyboard.press('Tab');
+  let tabs = 0;
+  while (!await d.evaluate(() => !!document.activeElement.closest('.store-card')) && tabs++ < 12) await d.keyboard.press('Tab');
+  await d.waitForFunction(() => Number(getComputedStyle(document.querySelector('.store-card .store-hover')).opacity) > 0.9);
+  log('Boutique : boutons atteints et révélés au clavier, sans survol', await d.evaluate(() => document.activeElement.classList.contains('store-use')) && await hoverOpacity() > 0.9);
+  await d.locator('.store-card[data-template="persona"] .store-preview-btn').click();
+  await d.waitForSelector('.store-detail');
+  const detail = await d.textContent('.store-detail');
+  log('Boutique : aperçu avec description, nombre d’éléments et catégorie', await d.evaluate(() => document.activeElement.tagName) === 'H3' && /3 \(/.test(detail) && detail.includes('Recherche et design') && detail.includes('Décrire une personne') && await d.locator('.store-large svg').count() === 1);
+  await d.click('.store-back');
+  log('Boutique : retour à la liste et focus rendu', await d.locator('.store-grid').count() === 1 && await d.evaluate(() => document.activeElement.classList.contains('store-preview-btn')));
+  await d.locator('.store-card[data-template="persona"] .store-preview-btn').click();
+  await d.waitForSelector('.store-detail');
+  await d.keyboard.press('Escape');
+  await d.waitForFunction(() => !document.querySelector('.store-detail'));
+  log('Boutique : Échap dans l’aperçu revient à la liste sans fermer', await d.locator('dialog.template-store[open]').count() === 1);
+  await d.click('.store-card[data-template="persona"] .store-use');
   await d.waitForFunction(() => location.hash.startsWith('#/tableau/') && document.querySelector('#board-title')?.textContent.includes('Persona'));
   log('Modèle : nombre exact d’objets créés', await d.evaluate(async () => (await import('/js/state.js')).getItems().length) === 3);
   await d.click('#btn-save-template');
   await d.locator('dialog[open] input').fill('Mon persona');
   await d.locator('dialog[open] form button').first().click();
   await d.click('.btn-back'); await d.waitForSelector('#btn-template-library');
-  await d.click('#btn-template-library'); await d.selectOption('#template-category', 'Mes modèles');
-  log('Modèle personnel : enregistré', await d.locator('.library-results h3').textContent() === 'Mon persona');
-  await d.getByRole('button', { name: 'Utiliser ce modèle', exact: true }).click();
+  await d.click('#btn-template-library'); await d.click('.store-nav [data-section="mine"]');
+  log('Modèle personnel : enregistré, auteur Vous', await d.locator('.store-card h4').textContent() === 'Mon persona' && await d.locator('.store-card .store-author').textContent() === 'Vous');
+  await d.click('.store-own button[aria-pressed]');
+  await d.waitForFunction(() => document.querySelector('.store-own button[aria-pressed]')?.getAttribute('aria-pressed') === 'true');
+  await d.click('.store-nav [data-section="community"]');
+  const communityAuthors = await d.locator('.store-card .store-author').allTextContents();
+  log('Communauté : pas de faux auteur, publication annoncée, sans lien mort', communityAuthors.length > 0 && communityAuthors.every(a => ['DWES', 'Vous'].includes(a)) && communityAuthors.includes('Vous') && /arrivera avec le serveur/.test(await d.textContent('.store-notice')) && await d.locator('.store-main a').count() === 0);
+  await d.click('.store-nav [data-section="mine"]');
+  await d.locator('.store-card .store-use').first().click();
   await d.waitForFunction(() => location.hash.startsWith('#/tableau/'));
   log('Modèle personnel : réutilisé sans perte', await d.evaluate(async () => (await import('/js/state.js')).getItems().length) === 3);
+  await d.click('.btn-back'); await d.waitForSelector('#btn-template-library');
+  await d.click('#btn-template-library');
+  await d.selectOption('#store-sort', 'recent');
+  log('Boutique : tri Récents, le dernier utilisé en tête', await d.locator('.store-card h4').first().textContent() === 'Mon persona');
+  await d.fill('#store-search', '');
+  await d.keyboard.press('Escape');
+  await d.waitForFunction(() => !document.querySelector('dialog.template-store'));
+  await d.click('.dashboard-header-actions .btn-primary');
+  log('Boutique : Créer un tableau l’ouvre si la case est cochée, Tableau vierge disponible', await d.locator('dialog.template-store[open] #store-blank').count() === 1);
+  await d.click('#store-blank');
+  await d.waitForFunction(() => location.hash.startsWith('#/tableau/') && !document.querySelector('dialog.template-store'));
+  await d.evaluate(() => { location.hash = '#/'; });
+  await d.waitForSelector('#btn-template-library');
+  await d.evaluate(async () => { const b = await import('/js/store/boards.js'); const c = b.getAll().filter(x => (x.données?.items?.length || 0) >= 3); location.hash = `#/tableau/${c[c.length - 1].id}`; });
+  await d.waitForSelector('#app-board:not([hidden])');
   const downloadText = async format => {
     await d.click('#btn-export');
     const downloading = d.waitForEvent('download');
@@ -782,9 +846,9 @@ try {
     return Buffer.concat(chunks).toString('utf8');
   };
   const csvData = await downloadText('csv');
-  log('Export CSV : colonnes et contenu', csvData.includes('"étiquettes"') && csvData.includes('Contexte et habitudes') && csvData.includes('"card"'));
+  log('Export CSV : colonnes et contenu', csvData.includes('"étiquettes"') && csvData.includes('Travaille en télétravail') && csvData.includes('"card"'));
   const svgData = await downloadText('svg');
-  log('Export SVG : objets et couleurs résolues', svgData.includes('canvas-items') && svgData.includes('Contexte') && !svgData.includes('var(--'));
+  log('Export SVG : objets et couleurs résolues', svgData.includes('canvas-items') && svgData.includes('Camille') && !svgData.includes('var(--'));
   await d.focus('#btn-export'); await d.keyboard.press('ArrowDown');
   const firstExport = await d.evaluate(() => document.activeElement.id);
   await d.keyboard.press('ArrowDown');
@@ -792,10 +856,10 @@ try {
   await d.keyboard.press('Escape');
   log('Menu Exporter : flèches et Échap', firstExport === 'btn-export-json' && secondExport === 'btn-export-md' && await d.getAttribute('#btn-export', 'aria-expanded') === 'false' && await d.evaluate(() => document.activeElement.id) === 'btn-export');
   await d.click('.btn-back'); await d.waitForSelector('#btn-template-library');
-  await d.click('#btn-template-library'); await d.selectOption('#template-category', 'Mes modèles');
-  await d.getByRole('button', { name: 'Supprimer le modèle', exact: true }).click();
+  await d.click('#btn-template-library'); await d.click('.store-nav [data-section="mine"]');
+  await d.getByRole('button', { name: 'Supprimer le modèle Mon persona', exact: true }).click();
   await d.getByRole('button', { name: 'Confirmer la suppression', exact: true }).click();
-  await d.waitForFunction(() => document.querySelectorAll('.library-results article').length === 0);
+  await d.waitForFunction(() => document.querySelectorAll('.store-card').length === 0);
   log('Modèle personnel : suppression confirmée', await d.evaluate(async () => (await import('/js/store/templates.js')).getCustomTemplates().length) === 0);
   await dashContext.close();
 
@@ -826,7 +890,7 @@ try {
 
   // Open a board at 320px
   if (!await p320.locator('.board-link').count()) {
-    await p320.locator('.template-btn').first().click();
+    await p320.locator('[data-template="organigramme"]').click();
     await p320.waitForSelector('#app-board:not([hidden])');
     await p320.click('.btn-back');
   }
@@ -856,6 +920,7 @@ try {
     const tp = await p320.locator('#tools-panel').boundingBox();
     const wTools = await p320.$eval('body', el => el.scrollWidth);
     await p320.keyboard.press('Escape');
+    await p320.click('#btn-board-menu');
     await p320.click('#btn-comments');
     const cp = await p320.locator('#comments-panel').boundingBox();
     const wComments = await p320.$eval('body', el => el.scrollWidth);
@@ -871,7 +936,7 @@ try {
   const nav = await navCtx.newPage();
   await nav.addInitScript(() => { Element.prototype.requestFullscreen = undefined; });
   await nav.goto(BASE);
-  await nav.locator('.template-btn').first().click();
+  await nav.locator('[data-template="organigramme"]').click();
   await nav.waitForFunction(() => !document.getElementById('app-board').hidden);
   await nav.evaluate(async () => {
     const s = await import('/js/state.js');
@@ -1290,8 +1355,9 @@ try {
   await pp.keyboard.press('Escape');
   log('Préférences : grille masquée et animations réduites', stillOpen && await pp.locator('.canvas-grid').evaluate(el => getComputedStyle(el).display) === 'none' && await pp.evaluate(() => document.documentElement.hasAttribute('data-reduce-motion')));
   await pp.focus('#board-title');
+  const zoomBefore = await pp.textContent('#btn-zoom-reset');
   for (const k of ['n', 't', 'l', 'm', '?', '+']) await pp.keyboard.press(k);
-  const ignored = await pp.getAttribute('#btn-select', 'aria-pressed') === 'true' && await pp.getAttribute('#btn-minimap', 'aria-pressed') === 'false' && await pp.locator('dialog[open]').count() === 0 && await pp.textContent('#btn-zoom-reset') === (await pp.textContent('#btn-zoom-reset'));
+  const ignored = await pp.getAttribute('#btn-select', 'aria-pressed') === 'true' && await pp.getAttribute('#btn-minimap', 'aria-pressed') === 'false' && await pp.locator('dialog[open]').count() === 0 && await pp.textContent('#btn-zoom-reset') === zoomBefore;
   await pp.reload();
   await pp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Préférences'));
   await pp.focus('#board-title');
@@ -1315,6 +1381,39 @@ try {
   await pp.waitForFunction(() => document.querySelector('.canvas-svg').style.backgroundColor !== '');
   log('Couleur de fond : stockée dans le tableau, persistante, encre lisible sur le fond clair en thème sombre', bgState === 'mint' && bgCss === 'rgb(227, 246, 238)' && inkOnBg === '#1b1740');
   await prefCtx.close();
+
+  // 320 px : nouveautés sans débordement (1.6.0)
+  const small = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const sp = await small.newPage();
+  await sp.goto(BASE + '/#/');
+  await sp.waitForSelector('#btn-create-space', { state: 'attached' });
+  const noOverflow = () => sp.evaluate(() => document.documentElement.scrollWidth <= 320 && document.body.scrollWidth <= 320);
+  await sp.locator('#app-dashboard .btn-appearance').click();
+  const menu320 = await sp.locator('.prefs-menu').boundingBox();
+  const menuOk = menu320.x >= 0 && menu320.x + menu320.width <= 320 && await noOverflow();
+  await sp.keyboard.press('Escape');
+  await sp.locator('.dashboard-header-actions .btn-primary').click();
+  await sp.waitForSelector('dialog.template-store[open]');
+  const store320 = await noOverflow() && (await sp.locator('dialog.template-store').boundingBox()).width <= 320;
+  await sp.click('.store-nav-toggle');
+  await sp.click('.store-nav [data-section="cat:Agile"]');
+  const firstUse = sp.locator('.store-card .store-use').first();
+  const useVisible = await firstUse.isVisible() && await firstUse.evaluate(el => Number(getComputedStyle(el.closest('.store-hover')).opacity)) === 1;
+  log('320 px : menu Apparence et boutique sans débordement, boutons visibles sans survol', menuOk && store320 && useVisible && await sp.evaluate(() => document.querySelector('.store-grid').scrollWidth <= 320));
+  await firstUse.click();
+  await sp.waitForSelector('#app-board:not([hidden])');
+  await sp.evaluate(async () => { (await import('/js/state.js')).loadBoard({ name: 'P', items: [{ id: 'item-1', type: 'connector', start: { x: 10, y: 10 }, end: { x: 200, y: 200 } }] }); (await import('/js/views/canvas.js')).focusItem('item-1'); });
+  await sp.waitForSelector('.context-toolbar.is-docked:not([hidden])');
+  const bar320 = await sp.locator('.context-toolbar').boundingBox();
+  const headerH = (await sp.locator('#app-board > header').boundingBox()).height;
+  log('320 px : barre de ligne dans l’écran, en-tête compact sans débordement', bar320.x >= 0 && bar320.x + bar320.width <= 320 && headerH < 140 && await noOverflow(), `en-tête ${headerH}`);
+  await sp.click('#btn-board-menu');
+  log('320 px : actions du tableau repliables', await sp.isVisible('#btn-export') && await noOverflow());
+  await sp.click('#btn-board-menu');
+  await sp.click('#btn-minimap');
+  const map320 = await sp.locator('#minimap').boundingBox();
+  log('320 px : mini-carte masquée par défaut puis dans l’écran', map320.x >= 0 && map320.x + map320.width <= 320 && await noOverflow());
+  await small.close();
 
 } catch (err) {
   log('Exécution complète des tests', false, err.message);

@@ -21,7 +21,8 @@
         <button id="btn-present" type="button">Présenter</button>
         <div id="board-prefs" class="prefs-slot"></div>
       </div>
-      <nav aria-label="Outils du tableau" class="toolbar" role="toolbar" aria-orientation="horizontal">
+      <button id="btn-board-menu" type="button" aria-expanded="false" aria-controls="board-tools">Actions du tableau</button>
+      <nav id="board-tools" aria-label="Outils du tableau" class="toolbar" role="toolbar" aria-orientation="horizontal">
         <div class="toolbar-group creation-toolbar" role="toolbar" aria-orientation="vertical" aria-label="Créer">
           <button id="btn-select" aria-keyshortcuts="v" type="button" aria-pressed="true" aria-label="Sélection (V)">Sélection</button>
           <button id="btn-hand" aria-keyshortcuts="h" type="button" aria-pressed="false" aria-label="Main (H) : déplacer la vue">Main</button>

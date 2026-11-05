@@ -144,6 +144,12 @@ function initBoardView() {
   navigation.init(showCanvasTab);
   prefsMenu.mount(document.getElementById('board-prefs'), true);
   setupDragSources();
+  const boardMenu = document.getElementById('btn-board-menu');
+  boardMenu.addEventListener('click', () => {
+    const open = boardMenu.getAttribute('aria-expanded') !== 'true';
+    boardMenu.setAttribute('aria-expanded', String(open));
+    document.getElementById('board-tools').classList.toggle('is-open', open);
+  });
   setupShortcuts();
 }
 

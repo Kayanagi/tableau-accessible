@@ -5,6 +5,7 @@ import { TEMPLATES, getTemplate } from '../store/templates.js';
 import * as router from '../router.js';
 import { announce } from '../a11y/announcer.js';
 import * as prefsMenu from './preferences-menu.js';
+import { getPref } from '../preferences.js';
 
 let navExpanded = !matchMedia('(max-width: 640px)').matches;
 let container = null;
@@ -43,7 +44,7 @@ export function render(route) {
   const createBtn = document.createElement('button');
   createBtn.classList.add('btn-primary');
   createBtn.textContent = 'Créer un tableau';
-  createBtn.addEventListener('click', openCreateDialog);
+  createBtn.addEventListener('click', startCreation);
   actions.appendChild(createBtn);
 
   const importBtn = document.createElement('button');
@@ -142,7 +143,7 @@ export function render(route) {
       const label = document.createElement('span');
       label.textContent = tpl.nom;
       btn.appendChild(label);
-      btn.addEventListener('click', () => createFromTemplate(tpl.id));
+      btn.addEventListener('click', () => (tpl.id === 'vierge' ? startCreation() : createFromTemplate(tpl.id)));
       li.appendChild(btn);
       tplList.appendChild(li);
     }
@@ -466,6 +467,11 @@ function createFromTemplate(templateId) {
   if (router.getRoute().spaceId) boards.moveToSpace(board.id, router.getRoute().spaceId);
   announce(`Tableau créé : ${board.nom}`);
   router.navigate(`/tableau/${board.id}`);
+}
+
+function startCreation() {
+  if (getPref('storeOnCreate')) openLibrary(createFromTemplate);
+  else openCreateDialog();
 }
 
 function openCreateDialog() {
