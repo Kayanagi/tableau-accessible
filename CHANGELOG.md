@@ -10,7 +10,23 @@ Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 - Mini-carte interactive (M), synchronisée avec les objets et la vue.
 - Recherche locale (Ctrl+F dans le tableau), résultats surlignés, compteur et navigation par Entrée / Maj+Entrée.
 - Déplacement de la vue avec les flèches sur le canevas sans sélection ; Maj augmente le pas.
-- Aide, documentation et 17 tests de navigation et présentation, dont le repli sans Fullscreen API et le format 320 px.
+- Lignes comme dans Miro : ligne libre (L ou outil Ligne, glisser ou clic), extrémités libres ou accrochées (`startId`/`endId`, `start`/`end`), cercles d’extrémité déplaçables avec mise en évidence de l’objet survolé, points de pliage (`waypoints`), déplacement à la souris et aux flèches (une ligne attachée se détache), Alt+flèches sur l’extrémité active.
+- Barre d’une ligne : Début de ligne, Inverser les extrémités, Fin de ligne (`startCap`, `endCap`), Type (`lineType` : droit, angles droits, courbe), Trait (`lineStyle`), Épaisseur, Couleur, Texte sur place, Verrouiller, Plus.
+- Dialogue de ligne : Source et Cible en « Point libre » avec X/Y, points de pliage modifiables.
+- Glisser-déposer depuis les pastilles de post-it, les formes, les boutons d’outil et le panneau Plus d’outils : fantôme, seuil de 5 px, annulation par Échap ou hors du canevas, annonce, tactile. Palette des formes (rectangle, cercle, losange, triangle).
+- Sélecteur « Apparence » (menu à `menuitemradio`, aperçu et coche) et menu « Préférences » : grille, réduction des animations, raccourcis à une lettre désactivables (WCAG 2.1.4), couleur de fond stockée dans le tableau.
+- Boutique de modèles : grande fenêtre, navigation par cas d’usage et types, recherche, case « Afficher à la création d’un tableau », sous-filtres, tri, cartes avec aperçu fidèle, vue Aperçu, Communauté sans contenu inventé, 56 modèles remplis.
+- « Actions du tableau » replie les outils secondaires sur petit écran.
+- Aide, documentation et tests de lignes, glisser-déposer, thèmes, préférences, boutique et 320 px.
+
+### Modifié
+- L ouvre l’outil Ligne ; le dialogue reste accessible par le bouton « Lien… ». Entrée sur une ligne édite son texte ; le dialogue passe par Plus.
+- Supprimer un objet garde la ligne liée en point libre, sauf si ses deux objets disparaissent.
+- Anciens `lineType` `line` et `arrow` lus et convertis au chargement.
+- Thème sombre : violet DWES `#6c4bff` avec texte blanc ; contrastes AA sur les bordures, liens et boutons de danger de tous les thèmes.
+
+### Supprimé
+- Bouton qui faisait défiler les thèmes.
 
 ## [1.5.0] - 2026-11-04
 

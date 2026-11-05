@@ -281,7 +281,14 @@
       <dt><kbd>N</kbd> / <kbd>T</kbd> / <kbd>S</kbd> / <kbd>R</kbd> / <kbd>O</kbd> / <kbd>F</kbd></dt><dd>Outil post-it (avec choix de couleur) / texte / forme / rectangle / cercle / cadre : cliquer sur le canevas pose l’élément</dd>
       <dt><kbd>Entrée</kbd> avec un outil actif, ou sur un bouton d’outil</dt><dd>Créer l’élément au centre de la vue et saisir son texte</dd>
       <dt><kbd>Échap</kbd></dt><dd>Annuler l’outil, valider le texte, ou désélectionner</dd>
-      <dt><kbd>L</kbd></dt><dd>Nouveau lien (dialogue)</dd>
+      <dt><kbd>L</kbd> ou bouton Ligne</dt><dd>Outil Ligne : glisser trace une ligne libre, un clic pose une longueur par défaut, <kbd>Entrée</kbd> la crée au centre de la vue</dd>
+      <dt>Ligne sélectionnée : flèches</dt><dd>Déplacer la ligne (une ligne attachée se détache) ; <kbd>Maj</kbd> pour un grand pas</dd>
+      <dt>Ligne sélectionnée : <kbd>Alt</kbd>+flèches</dt><dd>Déplacer l’extrémité active ; dans la barre (<kbd>Alt</kbd>+<kbd>F10</kbd>), Début de ligne ou Fin de ligne la choisit</dd>
+      <dt>Ligne : cercles et points</dt><dd>Tirer un cercle d’extrémité sur un objet l’accroche, hors de l’objet le détache ; tirer un point milieu ajoute un point de pliage ; double-clic sur un point de pliage le supprime. Au clavier : Plus, « Extrémités et points de pliage… »</dd>
+      <dt><kbd>Entrée</kbd> ou double-clic sur une ligne</dt><dd>Modifier le texte sur la ligne</dd>
+      <dt>Bouton « Lien… »</dt><dd>Créer une ligne par dialogue : Source et Cible sont un objet ou un point libre (X, Y)</dd>
+      <dt>Glisser depuis une palette</dt><dd>Saisir une pastille, une forme ou un outil et le déposer sur le canevas ; <kbd>Échap</kbd> ou relâcher hors du canevas annule</dd>
+      <dt>Préférences</dt><dd>Apparence, grille, animations et raccourcis à une lettre (désactivables) ; couleur de fond du tableau</dd>
       <dt><kbd>Entrée</kbd> ou double-clic</dt><dd>Modifier le texte sur place (<kbd>Échap</kbd> ou clic à l’extérieur pour valider)</dd>
       <dt><kbd>Alt</kbd>+<kbd>F10</kbd></dt><dd>Aller à la barre de mise en forme de la sélection (Propriétés… pour le dialogue complet)</dd>
       <dt><kbd>Ctrl</kbd>+<kbd>A</kbd></dt><dd>Tout sélectionner</dd>
@@ -324,7 +331,7 @@
     </ul>
 
     <h3>Mod&egrave;le de donn&eacute;es</h3>
-    <p>Le tableau contient des &eacute;l&eacute;ments de types : post-it (texte + couleur), forme (rectangle, cercle, triangle, losange), texte libre, carte (titre + description), cadre (regroupement), lien (connecteur orient&eacute; entre deux &eacute;l&eacute;ments, avec &eacute;tiquette optionnelle), dessin &agrave; main lev&eacute;e, commentaire, carte mentale, kanban, tableau de donn&eacute;es, bloc de code et carte recto-verso. Post-its et cartes acceptent des &eacute;tiquettes ; tout objet accepte des r&eacute;actions.</p>
+    <p>Le tableau contient des &eacute;l&eacute;ments de types : post-it (texte + couleur), forme (rectangle, cercle, triangle, losange), texte libre, carte (titre + description), cadre (regroupement), ligne (extr&eacute;mit&eacute;s attach&eacute;es &agrave; un objet ou libres, points de pliage, texte), dessin &agrave; main lev&eacute;e, commentaire, carte mentale, kanban, tableau de donn&eacute;es, bloc de code et carte recto-verso. Post-its et cartes acceptent des &eacute;tiquettes ; tout objet accepte des r&eacute;actions.</p>
 
     <h3>Persistance</h3>
     <p>Les tableaux sont sauvegard&eacute;s automatiquement dans le navigateur (localStorage). Vous pouvez aussi exporter en JSON (r&eacute;importable) ou en Markdown (lisible).</p>

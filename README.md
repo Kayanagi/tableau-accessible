@@ -6,7 +6,7 @@ Application statique de tableau blanc, accessible (WCAG 2.2 AA), multi-tableaux.
 
 - **Dashboard** : page d'accueil avec navigation (Accueil, Favoris, Parcourir), modèles de création, liste/grille des tableaux, recherche, tri, actions (ouvrir, renommer, dupliquer, favori, supprimer avec confirmation).
 - **Multi-tableaux** : chaque tableau a son propre espace dans le localStorage. Migration automatique depuis l'ancien format mono-tableau.
-- **Modèles** : bibliothèque de 20 modèles intégrés, catégories, recherche, description et aperçu SVG généré localement ; modèles personnels enregistrés sur cet appareil et supprimables.
+- **Modèles** : boutique de 56 modèles intégrés, cas d’usage, sous-filtres, tri, recherche, aperçu SVG généré localement ; modèles personnels enregistrés sur cet appareil et supprimables.
 - **Trois vues synchronisées** par tableau : Canevas (SVG interactif), Plan (arborescence), Tableau (table triable).
 - **Import/export** : JSON (depuis le dashboard ou le tableau), menu Exporter dans le tableau : JSON, Markdown, CSV des éléments, SVG et PNG du canevas entier (échelle 2). Les couleurs calculées du thème sont intégrées au SVG.
 - **Accessibilité** : landmarks, lien d'évitement, annonces aria-live, focus visible, cibles ≥ 24 px, contraste AA, thème clair/sombre/contraste élevé, `prefers-reduced-motion`, responsive ≥ 320 px.
@@ -14,7 +14,7 @@ Application statique de tableau blanc, accessible (WCAG 2.2 AA), multi-tableaux.
 Les raccourcis de création et d’organisation s’appliquent au Canevas, hors champs et dialogues. Les flèches permettent de parcourir les boutons des barres d’outils avec un seul arrêt de tabulation par barre.
 
 - 16 couleurs Miro identiques dans tous les thèmes, avec nom français et migration des anciennes couleurs.
-- Liens : ligne simple, flèche (par défaut), flèche à angles droits.
+- Lignes libres ou attachées, points de pliage, types droit, angles droits et courbe (voir 1.6.0).
 - Verrouillage : déplacement, édition et suppression bloqués ; duplication, verrouillage et ordre annulables.
 - Barres de création et de zoom flottantes, adaptées aux petits écrans.
 - Thème DWES violet ; application disponible sur https://baro.dwes.fr.
@@ -81,7 +81,8 @@ Puis ouvrir `http://localhost:8080`.
 | V / H | Outil Sélection / outil Main |
 | N / T / S / R / O / F | Outil post-it / texte / forme / rectangle / cercle / cadre (clic pour poser) |
 | Entrée (outil actif ou bouton d’outil) | Créer au centre de la vue |
-| L | Nouveau lien (dialogue) |
+| L | Outil Ligne (glisser : ligne libre ; clic : longueur par défaut) |
+| Alt+flèches (ligne sélectionnée) | Déplacer l’extrémité active |
 | Entrée / double-clic | Modifier le texte sur place |
 | Échap | Valider le texte, annuler l’outil ou désélectionner |
 | Alt+F10 | Aller à la barre contextuelle |
@@ -153,7 +154,7 @@ Puis ouvrir `http://localhost:8080`.
     { "id": "item-3", "type": "text", "x": 500, "y": 100, "width": 200, "height": 30, "content": "Note" },
     { "id": "item-4", "type": "card", "x": 100, "y": 400, "width": 200, "height": 120, "title": "Titre", "content": "Description" },
     { "id": "item-5", "type": "frame", "x": 50, "y": 50, "width": 600, "height": 500, "content": "Groupe" },
-    { "id": "item-6", "type": "connector", "startId": "item-1", "endId": "item-2", "label": "relié" }
+    { "id": "item-6", "type": "connector", "startId": "item-1", "end": { "x": 900, "y": 400 }, "lineType": "straight", "startCap": "none", "endCap": "arrow_filled", "lineStyle": "solid", "strokeWidth": 2, "stroke": "auto", "waypoints": [], "label": "relié" }
   ]
 }
 ```
@@ -180,7 +181,8 @@ Mise en forme (hors liens) : `fontSize` (`"auto"` ou nombre de pixels), `bold`, 
 - Pas de collaboration en temps réel (l'état JSON est conçu pour être sérialisable).
 - Pas de mise en forme riche du texte (italique, souligné).
 - Le dessin à main levée se fait au pointeur uniquement (les tracés existants restent manipulables au clavier).
-- Pas de courbes de Bézier pour les connecteurs.
+- Pas d’insertion de forme sur une ligne ni de sauts de ligne aux croisements.
+- Communauté : publication prévue avec le serveur, seuls les modèles locaux partageables sont listés.
 - Stockage local uniquement (localStorage).
 
 ## Tests
@@ -203,3 +205,23 @@ node e2e.mjs   # sert le dossier parent du script sur le port 8765 (PORT=… pou
 M ou « Mini-carte » affiche un aperçu simplifié, masqué initialement (y compris à 320 px). Cliquer ou glisser dessus déplace la vue ; le bouton indique son état. Sur le fond du canevas, sans sélection, les flèches déplacent la vue et Maj augmente le pas.
 
 « Rechercher » ou Ctrl+F lorsque le focus est dans la vue tableau ouvre la recherche locale : textes, titres, étiquettes, tableaux, kanbans, cartes mentales et code. Les objets trouvés sont surlignés. Entrée / Maj+Entrée sélectionne le résultat suivant / précédent et l’amène à l’écran ; le compteur annonce sa position. Échap ferme et rend le focus.
+
+### Lignes (1.6.0)
+
+L ou le bouton Ligne, puis glisser dans le vide, crée une ligne libre ; un clic crée une longueur par défaut ; Entrée la crée au centre. Chaque extrémité est un objet (`startId`, `endId`) ou un point (`start`, `end` : `{ x, y }`). Sélectionnée, une ligne montre un cercle à chaque extrémité (accroché à l’objet survolé au dépôt, détaché hors de l’objet) et un point au milieu de chaque segment, qui ajoute un point de pliage (`waypoints`) ; un double-clic le supprime.
+
+Voie clavier : flèches pour déplacer (une ligne attachée se détache), Alt+flèches pour l’extrémité active, Alt+F10 pour la barre, où Début de ligne ou Fin de ligne choisit cette extrémité ; Plus, « Extrémités et points de pliage… » ouvre le dialogue avec X/Y modifiables.
+
+Champs : `startCap`, `endCap` (`none`, `arrow_open`, `arrow_filled`, `arrow_round`, `circle`, `diamond`), `lineType` (`straight`, `orthogonal`, `bezier` ; anciens `line` et `arrow` convertis au chargement), `lineStyle` (`solid`, `dashed`, `dotted`), `strokeWidth`, `stroke` (`auto`, `violet`, `red`, `blue`, `green`, `orange`, couleurs adaptées au thème), `label`.
+
+### Glisser-déposer (1.6.0)
+
+Saisir une pastille de post-it, une forme, un bouton d’outil ou une entrée du panneau Plus d’outils, puis déposer sur le canevas : l’élément est posé à cet endroit et l’édition s’ouvre. Seuil de 5 px ; Échap ou un relâchement hors du canevas annule. Un simple clic garde l’outil actif ; les voies clavier restent.
+
+### Apparence et préférences (1.6.0)
+
+« Thème : … » ouvre un menu Automatique, Clair, Sombre, Contraste élevé. « Préférences » (tableau de bord et tableau) contient aussi Afficher la grille, Réduire les animations et Raccourcis à une lettre. Stockage : `tableau-accessible-theme`, `tableau-accessible-prefs`. Le tableau ajoute la couleur de fond, stockée dans `background` ; le thème Contraste élevé l’ignore pour garantir le contraste.
+
+### Boutique de modèles (1.6.0)
+
+« Créer un tableau », le bouton + (Vierge) et « Tous les modèles » ouvrent la boutique si « Afficher à la création d’un tableau » est cochée (par défaut), sinon « Créer un tableau » et + ouvrent le dialogue simple. Colonne gauche : Tous les modèles, Communauté, Mes modèles, Cas d’usage, Types. Une catégorie propose des pastilles et un tri ; « Récents » classe d’abord les modèles utilisés sur cet appareil. Communauté n’affiche que des modèles locaux partageables. Données : `js/store/template-library.js`, aperçus : `js/views/template-preview.js`.
