@@ -2,6 +2,21 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.6.1] - 2026-11-05
+
+### Sécurité
+- Les identifiants et valeurs d'un tableau importé sont validés au chargement (injection HTML possible par un JSON piégé).
+- Le panneau des commentaires ne construit plus ses éléments avec des identifiants injectés dans du HTML.
+- Les formules sont neutralisées dans l'export CSV.
+
+### Corrigé
+- Quitter un tableau conserve le texte en cours de saisie.
+- Un objet déposé dans des cadres imbriqués rejoint le cadre du dessus, quel que soit l'ordre de présentation.
+- Le zoom est restauré correctement après une présentation en plein écran.
+- La mini-carte englobe aussi les lignes libres.
+- La copie d'une ligne seule annonce le bon nombre d'éléments.
+- La tuile « Vierge » crée directement un tableau vierge, comme dans Miro.
+
 ## [1.6.0] - 2026-11-05
 
 ### Ajouté

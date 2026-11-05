@@ -71,6 +71,16 @@ export function sizeFromWidth(w) {
   return w <= 125 ? 's' : w <= 185 ? 'm' : 'l';
 }
 
+const SAFE_ID = /^[\w-]+$/;
+const ID_REFS = ['parent', 'startId', 'endId', 'targetId', 'groupId', 'parentNode'];
+
+function sanitizeIds(items) {
+  items.forEach((item, i) => {
+    if (typeof item.id !== 'string' || !SAFE_ID.test(item.id)) item.id = `item-import-${i + 1}`;
+    for (const ref of ID_REFS) if (item[ref] != null && !SAFE_ID.test(String(item[ref]))) item[ref] = null;
+  });
+}
+
 export function normalizeItem(item) {
   if (item.type === 'sticky_note') {
     item.color = LEGACY_COLORS[item.color] || item.color || 'light_yellow';
@@ -580,6 +590,7 @@ export function loadBoard(data) {
   if (!board.items) board.items = [];
   if (!Array.isArray(board.tags)) board.tags = [];
   if (!board.name) board.name = 'Nouveau tableau';
+  sanitizeIds(board.items);
   board.items.forEach(normalizeItem);
   syncNextId();
   selected = [];

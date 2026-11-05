@@ -149,11 +149,32 @@ function thread(c) {
   const form = document.createElement('form');
   form.className = 'comment-reply';
   form.dataset.reply = c.id;
-  form.innerHTML = `<label for="reply-${c.id}">${c.messages.length ? 'Répondre' : 'Message'}</label><textarea id="reply-${c.id}" rows="2" data-draft="${c.id}"></textarea><button type="submit" class="btn-sm btn-primary" data-focus-key="send-${c.id}">Publier</button>`;
+  const label = document.createElement('label');
+  label.htmlFor = `reply-${c.id}`;
+  label.textContent = c.messages.length ? 'Répondre' : 'Message';
+  const area = document.createElement('textarea');
+  area.id = `reply-${c.id}`;
+  area.rows = 2;
+  area.dataset.draft = c.id;
+  const send = document.createElement('button');
+  send.type = 'submit';
+  send.className = 'btn-sm btn-primary';
+  send.dataset.focusKey = `send-${c.id}`;
+  send.textContent = 'Publier';
+  form.append(label, area, send);
   form.querySelector('textarea').value = drafts.get(c.id) || '';
   const actions = document.createElement('div');
   actions.className = 'comment-actions';
-  actions.innerHTML = `<button type="button" class="btn-sm" data-act="goto" data-focus-key="goto-${c.id}">Aller à l’élément</button><button type="button" class="btn-sm" data-act="resolve" data-focus-key="resolve-${c.id}" aria-pressed="${!!c.resolved}">Résolu</button><button type="button" class="btn-sm btn-danger" data-act="delete" data-focus-key="delete-${c.id}">Supprimer</button>`;
+  for (const [act, text, cls] of [['goto', 'Aller à l’élément', 'btn-sm'], ['resolve', 'Résolu', 'btn-sm'], ['delete', 'Supprimer', 'btn-sm btn-danger']]) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = cls;
+    b.dataset.act = act;
+    b.dataset.focusKey = `${act}-${c.id}`;
+    b.textContent = text;
+    if (act === 'resolve') b.setAttribute('aria-pressed', String(!!c.resolved));
+    actions.appendChild(b);
+  }
   art.append(form, actions);
   li.appendChild(art);
   return li;

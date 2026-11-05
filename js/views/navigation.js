@@ -179,7 +179,8 @@ function renderMap() {
   if (!map || map.hidden) return;
   const view = canvas.getViewport();
   const boxes = state.getNonConnectorItems().map(canvas.itemBox);
-  const all = [...boxes, view];
+  const lineBoxes = state.getConnectors().map(c => geometry(c, state.getItem)?.bbox).filter(Boolean);
+  const all = [...boxes, ...lineBoxes, view];
   const x = Math.min(...all.map(b => b.x)) - 40, y = Math.min(...all.map(b => b.y)) - 40;
   const w = Math.max(...all.map(b => b.x + b.w)) - x + 40, h = Math.max(...all.map(b => b.y + b.h)) - y + 40;
   mapBounds = fitAspect({ x, y, w, h });
@@ -238,9 +239,12 @@ function stopPresentation() {
   presenting = false; board.classList.remove('is-presenting'); player.hidden = true;
   for (const el of board.children) el.inert = false;
   canvas.getContainer().inert = false;
-  if (document.fullscreenElement === board) document.exitFullscreen()?.catch(() => {});
   byId('canvas-items').removeAttribute('clip-path');
-  if (savedView) canvas.restoreViewport(savedView);
+  const restore = () => { if (savedView) canvas.restoreViewport(savedView); };
+  if (document.fullscreenElement === board) {
+    const after = () => requestAnimationFrame(restore);
+    document.exitFullscreen().then(after, after);
+  } else restore();
   byId('btn-present').focus(); announce('Présentation terminée');
 }
 function onKey(e) {

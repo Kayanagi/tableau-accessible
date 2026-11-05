@@ -143,7 +143,7 @@ export function render(route) {
       const label = document.createElement('span');
       label.textContent = tpl.nom;
       btn.appendChild(label);
-      btn.addEventListener('click', () => (tpl.id === 'vierge' ? startCreation() : createFromTemplate(tpl.id)));
+      btn.addEventListener('click', () => createFromTemplate(tpl.id));
       li.appendChild(btn);
       tplList.appendChild(li);
     }

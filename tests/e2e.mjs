@@ -1416,6 +1416,45 @@ try {
   log('320 px : mini-carte masquée par défaut puis dans l’écran', map320.x >= 0 && map320.x + map320.width <= 320 && await noOverflow());
   await small.close();
 
+  const flushCtx = await browser.newContext();
+  const fl = await flushCtx.newPage();
+  await fl.goto(BASE + '/#/');
+  const flushId = await fl.evaluate(async () => (await import('/js/store/boards.js')).create('Saisie', { name: 'Saisie', items: [] }).id);
+  await fl.goto(BASE + '/#/tableau/' + flushId);
+  await fl.waitForFunction(() => document.getElementById('board-title')?.textContent.includes('Saisie'));
+  await fl.keyboard.press('n');
+  await fl.keyboard.press('Enter');
+  await fl.waitForSelector('.inline-editor');
+  await fl.keyboard.type('Texte non validé');
+  await fl.evaluate(() => { location.hash = '#/'; });
+  await fl.waitForFunction(() => document.getElementById('app-board').hidden);
+  const kept = await fl.evaluate(async id => (await import('/js/store/boards.js')).get(id).données.items[0]?.content, flushId);
+  log('Quitter le tableau garde le texte en cours de saisie', kept === 'Texte non validé', kept);
+  await flushCtx.close();
+
+  const secCtx = await browser.newContext();
+  const sec = await secCtx.newPage();
+  await sec.goto(BASE + '/#/');
+  await sec.locator('.template-tile, #btn-template-library').first().waitFor();
+  const evil = 'x"><meta http-equiv=refresh content="0;url=about:blank">';
+  const sanitized = await sec.evaluate(async evil => {
+    const state = await import('/js/state.js');
+    state.loadBoard({ name: 'S', items: [
+      { id: evil, type: 'comment', x: 1, y: 1, messages: [] },
+      { id: 'a', type: 'connector', start: { x: 0, y: 0 }, end: { x: 9, y: 9 }, strokeWidth: '2"><img src=x>', lineStyle: '"><b>', endCap: '<i>', parent: evil }
+    ] });
+    const [c, l] = state.getItems();
+    return { id: c.id, width: l.strokeWidth, style: l.lineStyle, cap: l.endCap, parent: l.parent };
+  }, evil);
+  log('Sécurité : valeurs importées assainies', /^[\w-]+$/.test(sanitized.id) && sanitized.width === 2 && sanitized.style === 'solid' && sanitized.cap === 'arrow_filled' && sanitized.parent === null, JSON.stringify(sanitized));
+  const csv = await sec.evaluate(async () => {
+    const state = await import('/js/state.js');
+    const io = await import('/js/io.js');
+    state.loadBoard({ name: 'S', items: [{ id: 'n', type: 'text', x: 0, y: 0, width: 100, height: 30, content: '=HYPERLINK("http://x")' }] });
+    return io.csvContent();
+  });
+  log('Sécurité : formule neutralisée dans le CSV', csv.includes(`"'=HYPERLINK`), csv.split('\r\n')[1]);
+  await secCtx.close();
 } catch (err) {
   log('Exécution complète des tests', false, err.message);
   console.error('Erreur fatale:', err);

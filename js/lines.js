@@ -12,9 +12,10 @@ export function normalizeLine(item) {
   if (item.lineType === 'line') { item.lineType = 'straight'; item.endCap ??= 'none'; }
   else if (item.lineType === 'arrow' || !item.lineType) { item.lineType = 'straight'; item.endCap ??= 'arrow_filled'; }
   else item.endCap ??= 'arrow_filled';
-  item.startCap ??= 'none';
-  item.lineStyle ??= 'solid';
-  item.strokeWidth ??= 2;
+  if (!Object.hasOwn(CAPS, item.startCap)) item.startCap = 'none';
+  if (!Object.hasOwn(CAPS, item.endCap)) item.endCap = 'arrow_filled';
+  if (!['solid', 'dashed', 'dotted'].includes(item.lineStyle)) item.lineStyle = 'solid';
+  item.strokeWidth = Math.min(20, Math.max(1, Number(item.strokeWidth) || 2));
   item.stroke ??= 'auto';
   item.label ??= '';
   item.x ??= 0;

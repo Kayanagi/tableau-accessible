@@ -133,7 +133,11 @@ function download(content, filename, mimeType) {
 
 export function csvContent() {
   const board = state.getBoard();
-  const quote = value => '"' + String(value ?? '').replace(/"/g, '""') + '"';
+  const quote = value => {
+    const text = String(value ?? '');
+    const safe = typeof value === 'string' && /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
+    return '"' + safe.replace(/"/g, '""') + '"';
+  };
   const rows = [['type', 'texte', 'couleur', 'x', 'y', 'étiquettes']];
   for (const i of board.items) if (i.type === 'connector') rows.push([i.type, state.getItemLabel(i), i.stroke || '', i.start?.x ?? '', i.start?.y ?? '', '']);
   else rows.push([i.type, [i.title, i.content, i.label, i.back, i.rows?.map(r => r.join(' | ')).join('\n'), i.columns?.map(c => `${c.name}: ${c.cards.map(v => v.text).join(', ')}`).join('\n')].filter(Boolean).join('\n'), i.color || '', i.x || 0, i.y || 0, (i.tags || []).map(id => board.tags?.find(t => t.id === id)?.name || id).join(', ')]);

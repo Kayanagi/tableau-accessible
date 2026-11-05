@@ -1375,7 +1375,7 @@ export function createAt(t, pt, useSelection = false) {
     if (target && !['connector', 'comment'].includes(target.type)) data.targetId = target.id;
   }
   if (type !== 'frame' && type !== 'comment') {
-    const frame = state.getFrames().filter(f => pt.x >= f.x && pt.x <= f.x + f.width && pt.y >= f.y && pt.y <= f.y + f.height).pop();
+    const frame = state.getItems().filter(f => f.type === 'frame' && pt.x >= f.x && pt.x <= f.x + f.width && pt.y >= f.y && pt.y <= f.y + f.height).pop();
     data.parent = frame ? frame.id : null;
   }
   const item = state.addItem(data);

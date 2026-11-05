@@ -54,7 +54,14 @@ function onRouteChange(route, oldRoute) {
   }
 }
 
+function flushEditing() {
+  if (!boardInitialized) return;
+  editor.commit(false);
+  editor.commitField(false);
+}
+
 function showDashboard(route) {
+  flushEditing();
   if (unsubAutoSave) { unsubAutoSave(); unsubAutoSave = null; }
   currentBoardId = null;
   if (boardInitialized) navigation.reset();
@@ -87,6 +94,7 @@ function showBoard(boardId) {
   const board = boards.get(boardId);
   if (!board) { router.navigate('/'); return; }
 
+  flushEditing();
   if (unsubAutoSave) { unsubAutoSave(); unsubAutoSave = null; }
   boards.touchOpened(boardId);
   currentBoardId = boardId;

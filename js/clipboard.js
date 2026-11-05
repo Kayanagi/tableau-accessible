@@ -19,7 +19,7 @@ export function copy(ids = state.getSelectedIds()) {
   try {
     navigator.clipboard?.writeText(JSON.stringify({ format: FORMAT, items })).catch(() => {});
   } catch { /* presse-papiers système indisponible */ }
-  announce(`${count(items.filter(i => i.type !== 'connector').length, '1 élément copié', 'éléments copiés')}`);
+  announce(`${count(items.filter(i => i.type !== 'connector').length || items.length, '1 élément copié', 'éléments copiés')}`);
   return true;
 }
 
