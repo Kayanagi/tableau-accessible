@@ -1,6 +1,11 @@
 const KEY = 'tableau-accessible-prefs';
 const THEME_KEY = 'tableau-accessible-theme';
-const DEFAULTS = { grid: true, reduceMotion: false, singleKey: true, storeOnCreate: true };
+const DEFAULTS = { grid: true, reduceMotion: false, singleKey: true, storeOnCreate: true, snapGrid: false, showSize: false, pointerMode: 'auto' };
+export const POINTER_MODES = {
+  mouse: { name: 'Souris', description: 'Molette : zoom sur le pointeur. Clic droit maintenu puis glisser : déplacement de la vue. Maj+molette : déplacement horizontal.' },
+  trackpad: { name: 'Pavé tactile', description: 'Glisser à deux doigts : déplacement de la vue. Pincer : zoom sur le pointeur.' },
+  auto: { name: 'Détection automatique', description: 'Reconnaît la souris ou le pavé à chaque geste. Ctrl+molette et pincement zooment toujours.' }
+};
 export const THEMES = {
   auto: { name: 'Automatique', hint: 'système', colors: ['#f7f7fb', '#12101f', '#6c4bff'] },
   light: { name: 'Clair', colors: ['#f7f7fb', '#ecebf8', '#4a2fcc'] },
@@ -27,12 +32,24 @@ function apply() {
   html.toggleAttribute('data-reduce-motion', prefs.reduceMotion);
 }
 
-export function load() {
+function readPrefs() {
   try { prefs = { ...DEFAULTS, ...JSON.parse(read(KEY) || '{}') }; } catch { prefs = { ...DEFAULTS }; }
+  if (!POINTER_MODES[prefs.pointerMode]) prefs.pointerMode = DEFAULTS.pointerMode;
+}
+
+export function load() {
+  readPrefs();
   const saved = read(THEME_KEY);
   theme = THEMES[saved] ? saved : 'auto';
   apply();
 }
+
+addEventListener('storage', e => {
+  if (e.key !== KEY) return;
+  readPrefs();
+  apply();
+  for (const fn of listeners) fn();
+});
 
 export function getPref(name) {
   return prefs[name];

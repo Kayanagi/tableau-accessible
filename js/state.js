@@ -419,19 +419,23 @@ export function setItemBox(item, box) {
 }
 
 export function frameAround(ids) {
-  const items = ids.map(getItem).filter(i => i && i.type !== 'connector');
-  if (!items.length) return null;
+  const all = ids.map(getItem).filter(Boolean);
+  const items = all.filter(i => i.type !== 'connector');
+  const boxes = items.length
+    ? items.map(i => ({ x: i.x, y: i.y, w: i.width || 100, h: i.height || 30 }))
+    : all.map(i => L.geometry(i, getItem)?.bbox).filter(Boolean);
+  if (!boxes.length) return null;
   const pad = 40;
-  const minX = Math.min(...items.map(i => i.x)) - pad, minY = Math.min(...items.map(i => i.y)) - pad;
-  const maxX = Math.max(...items.map(i => i.x + (i.width || 100))) + pad;
-  const maxY = Math.max(...items.map(i => i.y + (i.height || 30))) + pad;
+  const minX = Math.min(...boxes.map(b => b.x)) - pad, minY = Math.min(...boxes.map(b => b.y)) - pad;
+  const maxX = Math.max(...boxes.map(b => b.x + b.w)) + pad;
+  const maxY = Math.max(...boxes.map(b => b.y + b.h)) + pad;
   history.pushState(snapshot());
   const frame = normalizeItem({ id: generateId(), type: 'frame', x: minX, y: minY, width: maxX - minX, height: maxY - minY, content: 'Cadre' });
   for (const i of items) if (i.type !== 'frame' && !i.locked) i.parent = frame.id;
   board.items.unshift(frame);
   selected = [frame.id];
   notify();
-  announce(`Cadre créé autour de ${plural(items.length, '1 élément', 'éléments')}`);
+  announce(`Cadre créé autour de ${plural(boxes.length, '1 élément', 'éléments')}`);
   return frame;
 }
 

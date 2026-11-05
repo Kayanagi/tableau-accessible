@@ -1385,6 +1385,20 @@ dialog ul {
 .menu-check { width: 1em; flex-shrink: 0; visibility: hidden; font-weight: 700; }
 .prefs-menu [aria-checked="true"] .menu-check { visibility: visible; }
 .prefs-menu [aria-checked="true"] { font-weight: 600; }
+.canvas-menu { position: fixed; width: min(320px, calc(100vw - 8px)); }
+.canvas-menu:focus { outline: none; }
+.canvas-menu [role="separator"] { min-height: 1px; }
+.canvas-menu:not(:has([role="menuitemcheckbox"])) .menu-check { display: none; }
+@media (max-height: 640px) { .canvas-menu button { min-height: 28px; } .canvas-menu [role="separator"] { margin: 2px; } }
+.canvas-menu button { font-weight: 400; }
+.canvas-menu .menu-label { flex: 1 1 auto; min-width: 0; }
+.menu-shortcut { flex-shrink: 0; max-width: 55%; font-size: .8rem; text-align: right; }
+.canvas-svg.is-panning * { cursor: grabbing !important; }
+#dialog-pointer { margin: auto; }
+.pointer-modes { display: grid; gap: .6rem; margin: 0; padding: 0; border: 0; }
+.pointer-mode label { display: inline-flex; align-items: center; gap: .5rem; min-height: 24px; font-weight: 600; }
+.pointer-mode input { width: 18px; height: 18px; margin: 3px; flex-shrink: 0; }
+dialog .pointer-mode p { margin: 0 0 0 calc(18px + 6px + .5rem); font-size: .9rem; }
 .theme-preview { display: inline-flex; flex-shrink: 0; border: 1px solid var(--fg); border-radius: 5px; overflow: hidden; }
 .theme-preview span { display: block; width: 12px; height: 20px; }
 [data-no-grid] .canvas-grid { display: none; }

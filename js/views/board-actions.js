@@ -6,7 +6,19 @@ import { ask } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
 import { setBoardLabel } from '../ui/icons.js';
 
+let currentId = () => null;
+
+export function saveAsTemplate(ids = null) {
+  ask('Enregistrer comme modèle', boards.get(currentId()).nom, nom => {
+    const snapshot = state.getSnapshot();
+    if (ids) snapshot.items = state.collectForCopy(ids);
+    try { saveTemplate(nom, snapshot); announce('Modèle enregistré dans Mes modèles'); }
+    catch { announce('Impossible d’enregistrer le modèle : stockage indisponible'); }
+  });
+}
+
 export function init(getId) {
+  currentId = getId;
   const title = document.getElementById('board-title');
   const rename = () => {
     if (title.querySelector('input')) return;
@@ -32,10 +44,7 @@ export function init(getId) {
   title.title = 'Renommer le tableau (Entrée)';
   title.onclick = rename;
   title.onkeydown = e => { if (e.target === title && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); rename(); } };
-  document.getElementById('btn-save-template').onclick = () => ask('Enregistrer comme modèle', boards.get(getId()).nom, nom => {
-    try { saveTemplate(nom, state.getSnapshot()); announce('Modèle enregistré dans Mes modèles'); }
-    catch { announce('Impossible d’enregistrer le modèle : stockage indisponible'); }
-  });
+  document.getElementById('btn-save-template').onclick = () => saveAsTemplate();
   const button = document.getElementById('btn-export');
   const menu = document.getElementById('export-menu');
   const entries = [...menu.querySelectorAll('button')];

@@ -2,6 +2,7 @@ import * as prefs from '../preferences.js';
 import * as state from '../state.js';
 import { BOARD_BACKGROUNDS } from '../objects.js';
 import { announce } from '../a11y/announcer.js';
+import * as pointerSettings from './pointer-settings.js';
 
 let nextId = 0;
 let openMenu = null;
@@ -19,8 +20,25 @@ function themeEntries() {
   }));
 }
 
-function checkEntry(pref, label, on, off) {
-  return { role: 'menuitemcheckbox', pref, label, checked: prefs.getPref(pref), keep: true, run: () => { const v = !prefs.getPref(pref); prefs.setPref(pref, v); announce(v ? on : off); return v; } };
+const TOGGLES = {
+  grid: ['Afficher la grille', 'Grille affichée', 'Grille masquée'],
+  snapGrid: ['Aligner sur la grille', 'Alignement sur la grille activé', 'Alignement sur la grille désactivé'],
+  showSize: ['Afficher la taille des objets', 'Taille des objets affichée', 'Taille des objets masquée'],
+  reduceMotion: ['Réduire les animations', 'Animations réduites', 'Animations rétablies'],
+  singleKey: ['Raccourcis à une lettre', 'Raccourcis à une lettre activés', 'Raccourcis à une lettre désactivés']
+};
+
+export function togglePref(pref) {
+  const v = !prefs.getPref(pref);
+  prefs.setPref(pref, v);
+  announce(TOGGLES[pref][v ? 1 : 2]);
+  return v;
+}
+
+export const toggleLabel = pref => TOGGLES[pref][0];
+
+function checkEntry(pref) {
+  return { role: 'menuitemcheckbox', pref, label: toggleLabel(pref), checked: prefs.getPref(pref), keep: true, run: () => togglePref(pref) };
 }
 
 function backgroundEntries() {
@@ -35,9 +53,12 @@ function prefsSections(board) {
   return [
     { title: 'Apparence', entries: themeEntries() },
     { title: 'Affichage et clavier', entries: [
-      checkEntry('grid', 'Afficher la grille', 'Grille affichée', 'Grille masquée'),
-      checkEntry('reduceMotion', 'Réduire les animations', 'Animations réduites', 'Animations rétablies'),
-      checkEntry('singleKey', 'Raccourcis à une lettre', 'Raccourcis à une lettre activés', 'Raccourcis à une lettre désactivés')
+      checkEntry('grid'),
+      checkEntry('snapGrid'),
+      checkEntry('showSize'),
+      checkEntry('reduceMotion'),
+      checkEntry('singleKey'),
+      { role: 'menuitem', label: 'Souris ou pavé tactile…', dialog: true, run: pointerSettings.open }
     ] },
     ...(board ? [{ title: 'Couleur de fond du tableau', entries: backgroundEntries() }] : [])
   ];
@@ -48,13 +69,14 @@ function renderEntry(entry, close) {
   b.type = 'button';
   b.tabIndex = -1;
   b.setAttribute('role', entry.role);
-  b.setAttribute('aria-checked', String(entry.checked));
+  if (entry.checked !== undefined) b.setAttribute('aria-checked', String(entry.checked));
   if (entry.theme) b.dataset.themeChoice = entry.theme;
   if (entry.pref) b.dataset.pref = entry.pref;
   if (entry.background) b.dataset.background = entry.background;
   b.innerHTML = `<span class="menu-check" aria-hidden="true">✓</span>${entry.icon || ''}<span class="menu-label"></span>`;
   b.querySelector('.menu-label').textContent = entry.label;
   b.addEventListener('click', () => {
+    if (entry.dialog) { close(true); entry.run(); return; }
     const value = entry.run();
     if (entry.keep) b.setAttribute('aria-checked', String(value));
     else close(true);
@@ -140,7 +162,10 @@ function menuButton(className, text, name, sections) {
 }
 
 export function init() {
-  prefs.subscribe(() => document.querySelectorAll('.btn-appearance').forEach(b => { b.textContent = themeLabel(); }));
+  prefs.subscribe(() => {
+    document.querySelectorAll('.btn-appearance').forEach(b => { b.textContent = themeLabel(); });
+    openMenu?.menu.querySelectorAll('[data-pref]').forEach(b => b.setAttribute('aria-checked', String(prefs.getPref(b.dataset.pref))));
+  });
   document.addEventListener('pointerdown', e => {
     if (openMenu && !openMenu.menu.contains(e.target) && !openMenu.button.contains(e.target)) closeCurrent(false);
   });

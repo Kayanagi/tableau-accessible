@@ -73,7 +73,7 @@
           <button id="btn-zoom-reset" type="button" aria-keyshortcuts="0" aria-describedby="zoom-reset-hint">100 %</button>
           <span id="zoom-reset-hint" hidden>R&eacute;initialiser le zoom &agrave; 100 % (0)</span>
           <button id="btn-zoom-in" type="button" aria-label="+ Zoom avant">+</button>
-          <button id="btn-zoom-fit" type="button" aria-keyshortcuts="Shift+1" title="Tout afficher (Maj+1)">Tout afficher</button>
+          <button id="btn-zoom-fit" type="button" aria-keyshortcuts="Alt+1 Shift+1" title="Tout afficher (Alt+1 ou Maj+1)">Tout afficher</button>
           <button id="btn-help" type="button" aria-label="Aide (?) et raccourcis">Aide (?)</button>
         </div>
         <div class="toolbar-group" role="group" aria-label="Fichiers">
@@ -267,6 +267,18 @@
     </form>
   </dialog>
 
+  <dialog id="dialog-pointer" aria-labelledby="dialog-pointer-title">
+    <h2 class="dialog-title" id="dialog-pointer-title">Souris ou pavé tactile</h2>
+    <form method="dialog">
+      <fieldset class="pointer-modes">
+        <legend class="sr-only">Mode de navigation sur le canevas</legend>
+      </fieldset>
+      <div class="dialog-actions">
+        <button type="submit" class="btn-primary">Fermer</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="dialog-help" aria-labelledby="dialog-help-title">
     <h2 class="dialog-title" id="dialog-help-title" tabindex="-1" autofocus>Aide et raccourcis clavier</h2>
 
@@ -288,13 +300,18 @@
       <dt><kbd>Entrée</kbd> ou double-clic sur une ligne</dt><dd>Modifier le texte sur la ligne</dd>
       <dt>Bouton « Lien… »</dt><dd>Créer une ligne par dialogue : Source et Cible sont un objet ou un point libre (X, Y)</dd>
       <dt>Glisser depuis une palette</dt><dd>Saisir une pastille, une forme ou un outil et le déposer sur le canevas ; <kbd>Échap</kbd> ou relâcher hors du canevas annule</dd>
-      <dt>Préférences</dt><dd>Apparence, grille, animations et raccourcis à une lettre (désactivables) ; couleur de fond du tableau</dd>
+      <dt>Préférences</dt><dd>Apparence, grille, alignement sur la grille (pas de 50), taille des objets, animations, raccourcis à une lettre (désactivables), souris ou pavé tactile ; couleur de fond du tableau</dd>
       <dt><kbd>Entrée</kbd> ou double-clic</dt><dd>Modifier le texte sur place (<kbd>Échap</kbd> ou clic à l’extérieur pour valider)</dd>
       <dt><kbd>Alt</kbd>+<kbd>F10</kbd></dt><dd>Aller à la barre de mise en forme de la sélection (Propriétés… pour le dialogue complet)</dd>
       <dt><kbd>Ctrl</kbd>+<kbd>A</kbd></dt><dd>Tout sélectionner</dd>
       <dt><kbd>Maj</kbd>+clic, <kbd>Ctrl</kbd>+clic, glisser sur le fond</dt><dd>Ajouter ou retirer de la sélection, sélection rectangulaire</dd>
-      <dt><kbd>Espace</kbd> maintenu + glisser, molette</dt><dd>Déplacer la vue</dd>
-      <dt><kbd>Ctrl</kbd>+molette</dt><dd>Zoomer sur le pointeur</dd>
+      <dt>Clic droit maintenu puis glisser, <kbd>Espace</kbd> maintenu + glisser</dt><dd>Déplacer la vue, y compris au-dessus d’un objet, sans changer la sélection</dd>
+      <dt>Clic droit, <kbd>Maj</kbd>+<kbd>F10</kbd>, touche Menu</dt><dd>Ouvrir le menu contextuel de la sélection, ou du fond ; flèches, <kbd>Début</kbd>, <kbd>Fin</kbd>, <kbd>Entrée</kbd>, <kbd>Échap</kbd></dd>
+      <dt>Molette, mode Souris</dt><dd>Zoomer sur le pointeur ; <kbd>Maj</kbd>+molette : déplacement horizontal</dd>
+      <dt>Deux doigts, mode Pavé tactile</dt><dd>Déplacer la vue ; pincer : zoomer sur le pointeur</dd>
+      <dt><kbd>Ctrl</kbd>+molette</dt><dd>Zoomer sur le pointeur, dans tous les modes</dd>
+      <dt>Souris ou pavé tactile…</dt><dd>Depuis le menu du fond ou les Préférences : Souris, Pavé tactile ou Détection automatique (par défaut)</dd>
+      <dt><kbd>G</kbd></dt><dd>Afficher ou masquer la grille</dd>
       <dt><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>X</kbd> / <kbd>V</kbd></dt><dd>Copier / couper / coller (les liens entre éléments copiés sont conservés)</dd>
       <dt><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd> / <kbd>V</kbd></dt><dd>Copier / coller le style</dd>
       <dt><kbd>Ctrl</kbd>+<kbd>Retour arrière</kbd></dt><dd>Effacer le contenu</dd>
@@ -308,7 +325,7 @@
       <dt><kbd>?</kbd></dt><dd>Ouvrir cette aide</dd>
       <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Maj</kbd>+<kbd>Z</kbd></dt><dd>Annuler / rétablir</dd>
       <dt><kbd>+</kbd> / <kbd>-</kbd> / <kbd>0</kbd></dt><dd>Zoom avant / arrière / 100 %</dd>
-      <dt><kbd>Maj</kbd>+<kbd>1</kbd></dt><dd>Tout afficher (ajuster la vue au contenu)</dd>
+      <dt><kbd>Alt</kbd>+<kbd>1</kbd> / <kbd>Maj</kbd>+<kbd>1</kbd></dt><dd>Tout afficher (ajuster la vue au contenu)</dd>
       <dt><kbd>Tab</kbd> / <kbd>Maj</kbd>+<kbd>Tab</kbd></dt><dd>Naviguer entre les éléments du canevas</dd>
       <dt>Flèches / <kbd>Maj</kbd>+flèches</dt><dd>Déplacer la sélection de 10 px / 50 px</dd>
       <dt><kbd>Suppr</kbd></dt><dd>Supprimer la sélection</dd>

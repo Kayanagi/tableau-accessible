@@ -5,6 +5,7 @@ import * as O from '../objects.js';
 import * as obj from './canvas-objects.js';
 import * as L from '../lines.js';
 import { iconSvg } from '../ui/icons.js';
+import { getPref, subscribe as subscribePrefs } from '../preferences.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const BASE_W = 2000;
@@ -14,6 +15,8 @@ const LARGE_STEP = 50;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 5;
 const LINK_BLUE = '#3859ff';
+const GRID = 50;
+const RIGHT_DRAG = 5;
 const TOOL_SIZES = {
   sticky_note: [150, 150], text: [200, 30], 'shape:rectangle': [120, 80], 'shape:circle': [100, 100], 'shape:diamond': [120, 100], 'shape:triangle': [120, 100], line: [200, 20], card: [200, 120], frame: [400, 300],
   comment: [28, 28], mindmap: [170, 56], kanban: [548, 116], datatable: [360, 118], code: [320, 180], flipcard: [220, 140]
@@ -31,6 +34,10 @@ let zoom = 1;
 let panX = 0;
 let panY = 0;
 let panState = null;
+let rightPress = null;
+let rightEndedAt = -Infinity;
+let wheelMouse = false;
+let wheelAt = -Infinity;
 let focusedIndex = -1;
 let dragState = null;
 let resizeState = null;
@@ -57,13 +64,14 @@ let container = null;
 let fontFamily = 'sans-serif';
 const viewListeners = new Set();
 const toolListeners = new Set();
+const contextListeners = new Set();
 const measureCtx = document.createElement('canvas').getContext('2d');
 
 export function init(el) {
   container = el;
   svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('role', 'application');
-  svg.setAttribute('aria-label', 'Canevas du tableau blanc. Utilisez Tab pour naviguer entre les éléments, flèches pour déplacer les éléments ou la vue sans sélection, Maj pour un plus grand pas, Entrée pour modifier le texte, Suppr pour supprimer.');
+  svg.setAttribute('aria-label', 'Canevas du tableau blanc. Utilisez Tab pour naviguer entre les éléments, flèches pour déplacer les éléments ou la vue sans sélection, Maj pour un plus grand pas, Entrée pour modifier le texte, Suppr pour supprimer, Maj+F10 pour le menu contextuel.');
   svg.setAttribute('tabindex', '0');
   svg.classList.add('canvas-svg');
   svg.dataset.tool = 'select';
@@ -98,6 +106,11 @@ export function init(el) {
   svg.addEventListener('pointermove', onPointerMove);
   svg.addEventListener('pointerup', onPointerUp);
   svg.addEventListener('pointercancel', onPointerUp);
+  svg.addEventListener('lostpointercapture', onPointerUp);
+  svg.addEventListener('mousedown', e => { if (e.button === 2) e.preventDefault(); });
+  document.addEventListener('contextmenu', e => {
+    if (svg.contains(e.target) || e.timeStamp - rightEndedAt < 500) e.preventDefault();
+  }, true);
   svg.addEventListener('dblclick', onDoubleClick);
   svg.addEventListener('keydown', onKeyDown);
   svg.addEventListener('wheel', onWheel, { passive: false });
@@ -107,6 +120,19 @@ export function init(el) {
   new ResizeObserver(() => updateViewBox()).observe(svg);
 
   state.subscribe(() => render());
+  subscribePrefs(renderOverlay);
+}
+
+export function onContextRequest(fn) {
+  contextListeners.add(fn);
+}
+
+function snapValue(v) {
+  return getPref('snapGrid') ? Math.round(v / GRID) * GRID : Math.round(v);
+}
+
+function snapPoint(p) {
+  return getPref('snapGrid') ? { x: snapValue(p.x), y: snapValue(p.y) } : p;
 }
 
 export function onView(fn) {
@@ -709,6 +735,16 @@ function unionBox(items) {
   return { x, y, w: Math.max(...boxes.map(b => b.x + b.w)) - x, h: Math.max(...boxes.map(b => b.y + b.h)) - y };
 }
 
+function renderSizeLabel(b, u) {
+  const text = `${Math.round(b.w)} × ${Math.round(b.h)}`;
+  const w = measure(text, 12, false) + 14, h = 20;
+  const x = b.x + b.w / 2 + 10 * u, y = b.y + b.h + 8 * u;
+  overlay.append(
+    svgEl('rect', { x, y, width: w * u, height: h * u, rx: 4 * u, fill: LINK_BLUE, class: 'size-label-bg', 'pointer-events': 'none' }),
+    Object.assign(svgEl('text', { x: x + w * u / 2, y: y + 14 * u, 'text-anchor': 'middle', fill: '#ffffff', 'font-size': 12 * u, class: 'size-label', 'pointer-events': 'none' }), { textContent: text })
+  );
+}
+
 function renderOverlay() {
   if (!overlay) return;
   overlay.replaceChildren();
@@ -734,6 +770,7 @@ function renderOverlay() {
       );
     }
   }
+  if (items.length && getPref('showSize')) renderSizeLabel(unionBox(items), u);
   const line = selectedLine();
   if (line && !line.locked && line.id !== editingId && !dragState?.moved) renderLineHandles(line);
   if (lineDrag) renderSnapTarget(lineDrag.hover);
@@ -812,6 +849,10 @@ function onKeyDown(e) {
       if (e.key === 'ArrowDown') dy = step;
       if (e.key === 'ArrowLeft') dx = -step;
       if (e.key === 'ArrowRight') dx = step;
+      if (getPref('snapGrid')) {
+        if (dx) dx = snapValue((item.x || 0) + Math.sign(dx) * GRID) - (item.x || 0);
+        if (dy) dy = snapValue((item.y || 0) + Math.sign(dy) * GRID) - (item.y || 0);
+      }
       state.moveItems(targetIds(id), dx, dy);
       itemsGroup.querySelector(`[data-id="${id}"]`)?.focus();
       break;
@@ -997,7 +1038,36 @@ function focusGroup(id) {
   current.focus({ preventScroll: true });
 }
 
+function contextTargetId(el) {
+  const g = el.closest('.canvas-item');
+  if (g) return g.getAttribute('data-id');
+  return el.closest('#canvas-overlay') ? state.getSelectedId() : null;
+}
+
+/* Sélectionne l'objet visé, sauf s'il fait déjà partie de la sélection, et y place le focus. */
+export function prepareContext(id) {
+  if (!id) { svg.focus({ preventScroll: true }); return; }
+  if (!state.isSelected(id)) selectItem(id);
+  focusGroup(id);
+}
+
+/* Point d'ancrage du menu ouvert au clavier : la sélection, sinon le centre de la vue. */
+export function contextAnchor() {
+  const svgRect = svg.getBoundingClientRect();
+  const id = state.getSelectedIds()[0] || null;
+  const rect = id ? getSelectionRect() : null;
+  const origin = container.getBoundingClientRect();
+  const clientX = rect ? origin.left + (rect.left + rect.right) / 2 : svgRect.left + svgRect.width / 2;
+  const clientY = rect ? origin.top + (rect.top + rect.bottom) / 2 : svgRect.top + svgRect.height / 2;
+  return { id, clientX, clientY, point: screenToSvg(clientX, clientY), keyboard: true };
+}
+
 function onPointerDown(e) {
+  if (e.button === 2) {
+    rightPress = { x: e.clientX, y: e.clientY, panX, panY, id: contextTargetId(e.target), moved: false };
+    svg.setPointerCapture(e.pointerId);
+    return;
+  }
   if (e.button === 1 || tool === 'hand' || spaceDown) { e.preventDefault(); startPan(e); return; }
   if (e.button !== 0) return;
   const pt = screenToSvg(e.clientX, e.clientY);
@@ -1115,14 +1185,25 @@ function finishPen() {
   announce('Tracé ajouté : Dessin à main levée');
 }
 
+/* En détection automatique, tout un geste garde le verdict de son premier événement. */
+function wheelIsMouse(e) {
+  const mode = getPref('pointerMode');
+  if (mode !== 'auto') return mode === 'mouse';
+  if (e.timeStamp - wheelAt > 200) wheelMouse = e.deltaMode !== 0 || (!e.deltaX && Number.isInteger(e.deltaY) && Math.abs(e.deltaY) >= 50);
+  wheelAt = e.timeStamp;
+  return wheelMouse;
+}
+
 function onWheel(e) {
   e.preventDefault();
-  if (e.ctrlKey || e.metaKey) {
+  const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? svg.clientHeight : 1;
+  const dx = e.deltaX * unit, dy = e.deltaY * unit;
+  const pinch = e.ctrlKey || e.metaKey;
+  if (pinch || (wheelIsMouse(e) && !e.shiftKey)) {
     const pt = screenToSvg(e.clientX, e.clientY);
-    zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, pt.x, pt.y);
-  } else {
-    panBy(e.shiftKey ? e.deltaY : e.deltaX, e.shiftKey ? 0 : e.deltaY);
-  }
+    zoomAt(1.1 ** (-Math.max(-10, Math.min(10, dy)) / 10), pt.x, pt.y);
+  } else if (e.shiftKey) panBy(dy || dx, 0);
+  else panBy(dx, dy);
 }
 
 function resizedBox(r, pt, keepRatio) {
@@ -1140,6 +1221,16 @@ function resizedBox(r, pt, keepRatio) {
 }
 
 function onPointerMove(e) {
+  if (rightPress) {
+    const dx = e.clientX - rightPress.x, dy = e.clientY - rightPress.y;
+    if (!rightPress.moved && Math.hypot(dx, dy) < RIGHT_DRAG) return;
+    rightPress.moved = true;
+    svg.classList.add('is-panning');
+    panX = rightPress.panX - dx / zoom;
+    panY = rightPress.panY - dy / zoom;
+    updateViewBox();
+    return;
+  }
   if (panState) {
     panX = panState.panX - (e.clientX - panState.x) / zoom;
     panY = panState.panY - (e.clientY - panState.y) / zoom;
@@ -1191,10 +1282,15 @@ function onPointerMove(e) {
     return;
   }
   if (!dragState) return;
-  const dx = pt.x - dragState.start.x;
-  const dy = pt.y - dragState.start.y;
+  let dx = pt.x - dragState.start.x;
+  let dy = pt.y - dragState.start.y;
   if (!dragState.moved && Math.abs(dx) * zoom <= 3 && Math.abs(dy) * zoom <= 3) return;
   if (!dragState.moved) { history.pushState(state.getSnapshot()); dragState.moved = true; }
+  if (getPref('snapGrid')) {
+    const anchor = dragState.starts.values().next().value || { x: 0, y: 0 };
+    dx = snapValue(anchor.x + dx) - anchor.x;
+    dy = snapValue(anchor.y + dy) - anchor.y;
+  }
   for (const [id, original] of dragState.lines) {
     const item = state.getItem(id);
     if (!item) continue;
@@ -1217,17 +1313,18 @@ function moveLineDrag(pt) {
   const d = lineDrag;
   const item = state.getItem(d.id);
   if (!item) return;
+  const at = snapPoint(pt);
   if (!d.moved) {
     if (Math.hypot(pt.x - d.start.x, pt.y - d.start.y) * zoom < 3) return;
     history.pushState(state.getSnapshot());
     d.moved = true;
-    if (d.isNew) { item.waypoints.splice(d.index, 0, { x: Math.round(pt.x), y: Math.round(pt.y) }); d.isNew = false; d.added = true; }
+    if (d.isNew) { item.waypoints.splice(d.index, 0, { x: Math.round(at.x), y: Math.round(at.y) }); d.isNew = false; d.added = true; }
   }
   if (d.end) {
-    L.setEnd(item, d.end, pt);
+    L.setEnd(item, d.end, at);
     const other = item[`${d.end === 'start' ? 'end' : 'start'}Id`];
     d.hover = hitItem(pt, other) || null;
-  } else item.waypoints[d.index] = { x: Math.round(pt.x), y: Math.round(pt.y) };
+  } else item.waypoints[d.index] = { x: Math.round(at.x), y: Math.round(at.y) };
   render();
 }
 
@@ -1247,8 +1344,8 @@ function finishLineDrag() {
 
 function createLine(start, end) {
   const data = { type: 'connector', x: 0, y: 0, label: '', lineType: 'straight', startCap: 'none', endCap: 'arrow_filled' };
-  L.setEnd(data, 'start', start);
-  L.setEnd(data, 'end', end);
+  L.setEnd(data, 'start', start.id ? start : snapPoint(start));
+  L.setEnd(data, 'end', end.id ? end : snapPoint(end));
   activeEnd = 'end';
   const item = state.addItem(data);
   setTool('select');
@@ -1258,6 +1355,20 @@ function createLine(start, end) {
 }
 
 function onPointerUp(e) {
+  if (rightPress) {
+    const press = rightPress;
+    rightPress = null;
+    rightEndedAt = e.timeStamp;
+    if (svg.hasPointerCapture?.(e.pointerId)) svg.releasePointerCapture(e.pointerId);
+    svg.classList.remove('is-panning');
+    if (press.moved) announce('Vue déplacée');
+    else if (e.type === 'pointerup') {
+      const request = { id: press.id, clientX: e.clientX, clientY: e.clientY, point: screenToSvg(e.clientX, e.clientY) };
+      for (const fn of contextListeners) fn(request);
+    }
+    return;
+  }
+  if (e.type === 'lostpointercapture') return;
   if (svg.hasPointerCapture?.(e.pointerId)) svg.releasePointerCapture(e.pointerId);
   if (panState) {
     panState = null;
@@ -1382,7 +1493,7 @@ export function createAt(t, pt, useSelection = false) {
   if (t === 'line') return createLine({ x: pt.x - 100, y: pt.y }, { x: pt.x + 100, y: pt.y });
   const [type, shape] = t.split(':');
   const [w, h] = TOOL_SIZES[t] || [150, 150];
-  const data = { type, x: Math.round(pt.x - w / 2), y: Math.round(pt.y - h / 2), width: w, height: h, content: '', ...O.defaults(type) };
+  const data = { type, x: snapValue(pt.x - w / 2), y: snapValue(pt.y - h / 2), width: w, height: h, content: '', ...O.defaults(type) };
   if (type === 'sticky_note') data.color = stickyColor;
   if (type === 'shape') data.shape = shape || 'rectangle';
   if (type === 'card') data.title = '';  if (type === 'comment') {

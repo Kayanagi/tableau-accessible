@@ -1,11 +1,11 @@
 import * as state from '../state.js';
 import * as canvas from './canvas.js';
-import * as clipboard from '../clipboard.js';
 import { announce } from '../a11y/announcer.js';
 import * as O from '../objects.js';
 import * as obj from './canvas-objects.js';
 import * as L from '../lines.js';
 import { iconSvg } from '../ui/icons.js';
+import { ACTIONS } from './selection-actions.js';
 
 const TEXT_TYPES = ['sticky_note', 'shape', 'text', 'card', 'flipcard', 'mindmap'];
 const ALIGN_ICONS = {
@@ -132,7 +132,7 @@ function build(items) {
   const locked = items.every(i => i.locked);
   list.push(
     { key: 'lock', label: locked ? 'Déverrouiller' : 'Verrouiller', html: iconSvg('lock'), pressed: locked, run: () => state.toggleLockedMany(ids) },
-    { key: 'duplicate', label: 'Dupliquer', text: '⧉', run: () => { const copies = state.duplicateItems(ids); if (copies[0]) canvas.focusItem(copies[0].id); } },
+    { key: 'duplicate', label: 'Dupliquer', text: '⧉', run: () => ACTIONS.duplicate.run(ids) },
     { key: 'delete', label: 'Supprimer', html: iconSvg('delete'), run: () => state.removeItems(ids) }
   );
   list.push(...typeControls(items));
@@ -268,32 +268,25 @@ function menuEntries(kind) {
   if (kind === 'line-width') return L.LINE_WIDTHS.map(w => ({ label: `${w} px`, html: withIcon(widthIcon(Math.min(w, 8)), `${w} px`), checked: links.every(i => i.strokeWidth === w), run: () => state.updateItems(lineIds, { strokeWidth: w }, `Épaisseur : ${w}`) }));
   if (kind === 'line-color') return L.LINE_COLORS.map(([id, name, css]) => ({ label: name, html: withIcon(`<span class="swatch" style="background:${css}" aria-hidden="true"></span>`, name), checked: links.every(i => i.stroke === id), run: () => state.updateItems(lineIds, { stroke: id }, `Couleur de ligne : ${name}`) }));
   const ids = idsOf(items);
+  const entry = (action, label = `${action.label} (${action.shortcut})`) => ({ label, run: () => action.run(ids) });
+  const shared = [ACTIONS.copy, ACTIONS.cut, ACTIONS.paste, ACTIONS.copyStyle, ACTIONS.pasteStyle].map(a => entry(a));
+  const order = [ACTIONS.front, ACTIONS.back].map(a => entry(a));
   if (items.every(i => i.type === 'connector')) {
     return [
-      { label: 'Dupliquer (Ctrl+D)', run: () => { const copies = state.duplicateItems(ids); if (copies[0]) canvas.focusItem(copies[0].id); } },
-      { label: 'Supprimer (Suppr)', run: () => state.removeItems(ids) },
+      entry(ACTIONS.duplicate),
+      entry(ACTIONS.remove),
       ...(items.length === 1 ? [{ label: 'Extrémités et points de pliage…', run: () => onProperties(items[0].id) }] : []),
-      { label: 'Copier (Ctrl+C)', run: () => clipboard.copy(ids) },
-      { label: 'Couper (Ctrl+X)', run: () => clipboard.cut(ids) },
-      { label: 'Coller (Ctrl+V)', run: () => clipboard.paste() },
-      { label: 'Copier le style (Ctrl+Alt+C)', run: () => clipboard.copyStyle() },
-      { label: 'Coller le style (Ctrl+Alt+V)', run: () => clipboard.pasteStyle(ids) },
-      { label: 'Premier plan (Page précédente)', run: () => state.reorderItems(ids, true) },
-      { label: 'Arrière-plan (Page suivante)', run: () => state.reorderItems(ids, false) }
+      ...shared,
+      ...order
     ];
   }
   return [
-    { label: 'Copier (Ctrl+C)', run: () => clipboard.copy(ids) },
-    { label: 'Couper (Ctrl+X)', run: () => clipboard.cut(ids) },
-    { label: 'Coller (Ctrl+V)', run: () => clipboard.paste() },
-    { label: 'Copier le style (Ctrl+Alt+C)', run: () => clipboard.copyStyle() },
-    { label: 'Coller le style (Ctrl+Alt+V)', run: () => clipboard.pasteStyle(ids) },
-    { label: 'Effacer le contenu (Ctrl+Retour arrière)', run: () => clipboard.clearContent(ids) },
-    { label: 'Premier plan (Page précédente)', run: () => state.reorderItems(ids, true) },
-    { label: 'Arrière-plan (Page suivante)', run: () => state.reorderItems(ids, false) },
-    { label: 'Créer un cadre autour', run: () => state.frameAround(ids) },
-    { label: 'Grouper (Ctrl+G)', run: () => state.groupItems(ids) },
-    { label: 'Dégrouper (Ctrl+Maj+G)', run: () => state.ungroupItems(ids) }
+    ...shared,
+    entry(ACTIONS.clear),
+    ...order,
+    entry(ACTIONS.frame, 'Créer un cadre autour'),
+    entry(ACTIONS.group),
+    entry(ACTIONS.ungroup)
   ];
 }
 

@@ -21,6 +21,8 @@ import * as L from './lines.js';
 import * as paletteDrag from './views/palette-drag.js';
 import * as prefs from './preferences.js';
 import * as prefsMenu from './views/preferences-menu.js';
+import * as canvasMenu from './views/canvas-menu.js';
+import { duplicate } from './views/selection-actions.js';
 
 const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-line': 'line', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
 const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', l: 'line', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
@@ -144,6 +146,7 @@ function initBoardView() {
   const appBoard = document.getElementById('app-board');
   toolsPanel.init(appBoard, document.getElementById('btn-more-tools'), chooseTool);
   commentsPanel.init(appBoard, document.getElementById('btn-comments'), gotoItem);
+  canvasMenu.init({ onProperties: openEditDialog });
   outline.init(document.getElementById('view-outline'));
   table.init(document.getElementById('view-table'));
   boardActions.init(() => currentBoardId);
@@ -418,12 +421,6 @@ function createAtCenter(tool) {
   canvas.createAtCenter(tool);
 }
 
-function duplicate(ids) {
-  const copies = state.duplicateItems(ids);
-  if (copies[0]) canvas.focusItem(copies[0].id);
-  if (copies.length > 1) state.setSelection(copies.map(c => c.id));
-}
-
 function setupDialogs() {
   const dialogItem = document.getElementById('dialog-item');
   const dialogLink = document.getElementById('dialog-link');
@@ -526,9 +523,12 @@ function setupShortcuts() {
       if (ctrl && !e.altKey && !e.shiftKey && key === 'v') { e.preventDefault(); clipboard.paste(); return; }
       if (ctrl && !e.altKey && e.key === 'Backspace') { e.preventDefault(); clipboard.clearContent(ids); return; }
       if (e.altKey && !ctrl && e.key === 'F10') { e.preventDefault(); contextToolbar.focus(); return; }
+      if (e.altKey && !ctrl && !e.shiftKey && e.code === 'Digit1') { e.preventDefault(); canvas.zoomToFit(); return; }
+      if ((e.key === 'ContextMenu' || (e.shiftKey && e.key === 'F10')) && !ctrl && !e.altKey && (e.target === document.body || e.target.closest('.canvas-svg, .context-toolbar'))) { e.preventDefault(); canvasMenu.openFromKeyboard(); return; }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) {
         if (['PageUp', 'PageDown'].includes(e.key)) { e.preventDefault(); state.reorderItems(ids, e.key === 'PageUp'); return; }
         if (singleKey && e.shiftKey && key === 'c') { e.preventDefault(); commentsPanel.toggle(); return; }
+        if (singleKey && !e.shiftKey && key === 'g') { e.preventDefault(); prefsMenu.togglePref('grid'); return; }
         if (singleKey && TOOL_KEYS[key] && !e.shiftKey) { e.preventDefault(); activateTool(TOOL_KEYS[key], true); return; }
         if (e.key === 'Escape') {
           if (canvas.cancelTool()) { e.preventDefault(); return; }

@@ -131,7 +131,7 @@ function download(content, filename, mimeType) {
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 100);
 }
 
-export function csvContent() {
+export function csvContent(ids = null) {
   const board = state.getBoard();
   const quote = value => {
     const text = String(value ?? '');
@@ -139,12 +139,13 @@ export function csvContent() {
     return '"' + safe.replace(/"/g, '""') + '"';
   };
   const rows = [['type', 'texte', 'couleur', 'x', 'y', 'étiquettes']];
-  for (const i of board.items) if (i.type === 'connector') rows.push([i.type, state.getItemLabel(i), i.stroke || '', i.start?.x ?? '', i.start?.y ?? '', '']);
+  const items = ids ? board.items.filter(i => ids.includes(i.id)) : board.items;
+  for (const i of items) if (i.type === 'connector') rows.push([i.type, state.getItemLabel(i), i.stroke || '', i.start?.x ?? '', i.start?.y ?? '', '']);
   else rows.push([i.type, [i.title, i.content, i.label, i.back, i.rows?.map(r => r.join(' | ')).join('\n'), i.columns?.map(c => `${c.name}: ${c.cards.map(v => v.text).join(', ')}`).join('\n')].filter(Boolean).join('\n'), i.color || '', i.x || 0, i.y || 0, (i.tags || []).map(id => board.tags?.find(t => t.id === id)?.name || id).join(', ')]);
   return rows.map(r => r.map(quote).join(',')).join('\r\n');
 }
-export function exportCSV() {
-  download('\uFEFF' + csvContent(), `${state.getBoard().name}.csv`, 'text/csv;charset=utf-8');
+export function exportCSV(ids = null) {
+  download('\uFEFF' + csvContent(ids), `${state.getBoard().name}.csv`, 'text/csv;charset=utf-8');
   announce('Éléments exportés en CSV');
 }
 export function svgContent() {
