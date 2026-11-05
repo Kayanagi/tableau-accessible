@@ -1312,3 +1312,26 @@ dialog ul {
 @media (max-width: 320px) { .field-grid { grid-template-columns: 1fr; } }
 .context-menu:not(.menu-color) [role="menuitemradio"]::before { content: ""; display: inline-block; width: 1em; flex-shrink: 0; }
 .context-menu:not(.menu-color) [role="menuitemradio"][aria-checked="true"]::before { content: "✓"; }
+
+/* Glisser-déposer depuis les palettes */
+.drag-ghost {
+  position: fixed; left: 0; top: 0; z-index: 200; pointer-events: none;
+  background: var(--shape-fill); border: 2px solid var(--primary); border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(34,36,40,.3); opacity: .9;
+}
+.ghost-sticky_note { background: #fff79e; border-color: var(--note-border); }
+.ghost-shape-circle { border-radius: 50%; }
+.ghost-shape-diamond { clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%); background: var(--primary); }
+.ghost-shape-triangle { clip-path: polygon(50% 0, 100% 100%, 0 100%); background: var(--primary); }
+.ghost-line { border: 0; height: 4px; background: var(--connector-stroke); box-shadow: none; }
+.ghost-frame { background: transparent; border-style: dashed; }
+.ghost-text { background: transparent; border-style: dotted; }
+.is-palette-dragging, .is-palette-dragging * { cursor: grabbing !important; user-select: none; }
+.tools-panel.is-drag-source { opacity: .35; pointer-events: none; }
+#app-board .creation-toolbar button, #sticky-palette .tool-color, #shape-palette button { touch-action: none; }
+.tools-list button { touch-action: pan-y; }
+.shape-buttons { display: grid; grid-template-columns: repeat(2, 40px); gap: 4px; clear: both; }
+.shape-buttons button { display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; padding: 0; }
+.shape-buttons svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 1.8; }
+.shape-buttons [aria-pressed="true"] { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+@media (max-width: 640px) { .shape-buttons { grid-template-columns: repeat(4, 40px); justify-content: center; } }

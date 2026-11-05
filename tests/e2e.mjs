@@ -1140,6 +1140,93 @@ try {
   log('Lignes : pas d’erreurs console', lineErrors.length === 0, lineErrors.join('; '));
   await lineCtx.close();
 
+  // Glisser-déposer depuis les palettes (1.6.0)
+  const dropCtx = await browser.newContext({ viewport: { width: 1400, height: 900 }, hasTouch: true });
+  const dp = await dropCtx.newPage();
+  await dp.goto(BASE + '/#/');
+  await dp.waitForSelector('#btn-create-space');
+  const dropBoard = await dp.evaluate(async () => (await import('/js/store/boards.js')).create('Glisser', { name: 'Glisser', items: [] }).id);
+  await dp.evaluate(id => { location.hash = `#/tableau/${id}`; }, dropBoard);
+  await dp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Glisser'));
+  const dItems = () => dp.evaluate(async () => (await import('/js/state.js')).getSnapshot().items);
+  const dReset = () => dp.evaluate(async () => { (await import('/js/state.js')).loadBoard({ name: 'Glisser', items: [] }); (await import('/js/views/canvas.js')).zoomReset(); });
+  const dCentre = async sel => { const b = await dp.locator(sel).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+  const dAnn = re => dp.waitForFunction(src => new RegExp(src).test(document.getElementById('announcer').textContent), re.source);
+  const dDrag = async (sel, to) => { const a = await dCentre(sel); await dp.mouse.move(a.x, a.y); await dp.mouse.down(); await dp.mouse.move(a.x + 8, a.y + 8); await dp.mouse.move(to.x, to.y, { steps: 5 }); };
+
+  await dReset();
+  await dp.click('#btn-sticky');
+  await dp.waitForSelector('#sticky-palette:not([hidden])');
+  const svgB = await dp.locator('.canvas-svg').boundingBox();
+  const dropAt = { x: svgB.x + 700, y: svgB.y + 300 };
+  await dDrag('#sticky-palette .tool-color:nth-child(4)', dropAt);
+  await dp.waitForSelector('.drag-ghost');
+  const ghostFollows = await dp.locator('.drag-ghost').boundingBox();
+  await dp.mouse.up();
+  await dAnn(/Créé : post-it rouge\. Édition\./);
+  let placedNote = (await dItems())[0];
+  const placedBox = await dp.locator(`#canvas-items [data-id="${placedNote.id}"] > :first-child`).boundingBox();
+  log('Palette post-it : glisser une pastille pose le post-it à cet endroit, dans cette couleur', placedNote.color === 'red' && Math.abs(placedBox.x + placedBox.width / 2 - dropAt.x) <= 2 && Math.abs(placedBox.y + placedBox.height / 2 - dropAt.y) <= 2 && Math.abs(ghostFollows.x + ghostFollows.width / 2 - dropAt.x) <= 2);
+  log('Palette post-it : édition ouverte, fantôme retiré, outil Sélection', await dp.evaluate(() => document.activeElement.classList.contains('inline-editor')) && await dp.locator('.drag-ghost').count() === 0 && await dp.getAttribute('#btn-select', 'aria-pressed') === 'true');
+  await dp.keyboard.press('Escape');
+
+  await dReset();
+  await dDrag('#btn-text', dropAt);
+  await dp.mouse.up();
+  await dAnn(/Créé : texte\. Édition\./);
+  log('Outil : glisser le bouton Texte crée sur le canevas', (await dItems())[0]?.type === 'text' && await dp.evaluate(() => document.activeElement.classList.contains('inline-editor')));
+  await dp.keyboard.press('Escape');
+
+  await dReset();
+  await dp.click('#btn-more-tools');
+  await dp.waitForSelector('#tools-panel:not([hidden])');
+  await dp.locator('#tools-panel [data-tool="kanban"]').scrollIntoViewIfNeeded();
+  await dDrag('#tools-panel [data-tool="kanban"]', dropAt);
+  await dp.mouse.up();
+  await dAnn(/Créé : kanban\./);
+  log('Plus d’outils : glisser crée l’objet et referme le panneau', (await dItems())[0]?.type === 'kanban' && await dp.isHidden('#tools-panel'));
+
+  await dReset();
+  await dp.click('#btn-shape');
+  await dp.waitForSelector('#shape-palette:not([hidden])');
+  await dDrag('#shape-palette [data-shape="shape:diamond"]', dropAt);
+  await dp.mouse.up();
+  await dAnn(/Créé : losange\. Édition\./);
+  log('Formes : glisser un losange depuis la palette', (await dItems())[0]?.shape === 'diamond');
+  await dp.keyboard.press('Escape');
+
+  await dReset();
+  await dDrag('#btn-card', dropAt);
+  await dp.waitForSelector('.drag-ghost');
+  await dp.keyboard.press('Escape');
+  await dAnn(/Glisser annulé/);
+  await dp.mouse.up();
+  log('Annulation : Échap retire le fantôme et ne crée rien', (await dItems()).length === 0 && await dp.locator('.drag-ghost').count() === 0 && await dp.getAttribute('#btn-card', 'aria-pressed') === 'false');
+  const head = await dCentre('#board-title');
+  await dDrag('#btn-card', head);
+  await dp.mouse.up();
+  await dAnn(/relâché hors du canevas/);
+  log('Annulation : relâcher hors du canevas ne crée rien', (await dItems()).length === 0);
+  const nearby = await dCentre('#btn-frame');
+  await dp.mouse.move(nearby.x, nearby.y);
+  await dp.mouse.down();
+  await dp.mouse.move(nearby.x + 2, nearby.y + 2);
+  await dp.mouse.up();
+  log('Seuil de 5 px : un simple clic garde l’outil actif', await dp.getAttribute('#btn-frame', 'aria-pressed') === 'true' && (await dItems()).length === 0);
+  await dp.keyboard.press('Escape');
+
+  const cdp = await dropCtx.newCDPSession(dp);
+  const touchFrom = await dCentre('#btn-sticky');
+  const touch = (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+  await touch('touchStart', [touchFrom]);
+  await touch('touchMove', [{ x: touchFrom.x + 20, y: touchFrom.y + 10 }]);
+  await touch('touchMove', [dropAt]);
+  await dp.waitForSelector('.drag-ghost');
+  await touch('touchEnd', []);
+  await dAnn(/Créé : post-it .*\. Édition\./);
+  log('Tactile : glisser au doigt crée le post-it', (await dItems())[0]?.type === 'sticky_note');
+  await dropCtx.close();
+
 } catch (err) {
   log('Exécution complète des tests', false, err.message);
   console.error('Erreur fatale:', err);

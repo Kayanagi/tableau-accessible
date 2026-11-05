@@ -1346,6 +1346,15 @@ function hitItem(pt, exclude) {
   });
 }
 
+export function dropAt(t, clientX, clientY, color) {
+  const pt = screenToSvg(clientX, clientY);
+  const before = stickyColor;
+  if (color) stickyColor = color;
+  const item = createAt(t, pt);
+  stickyColor = before;
+  return item;
+}
+
 export function createAt(t, pt, useSelection = false) {
   if (t === 'line') return createLine({ x: pt.x - 100, y: pt.y }, { x: pt.x + 100, y: pt.y });
   const [type, shape] = t.split(':');

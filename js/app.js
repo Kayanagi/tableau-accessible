@@ -17,6 +17,7 @@ import * as commentsPanel from './views/comments-panel.js';
 import * as objects from './views/canvas-objects.js';
 import * as O from './objects.js';
 import * as L from './lines.js';
+import * as paletteDrag from './views/palette-drag.js';
 
 const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-line': 'line', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
 const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', l: 'line', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
@@ -141,6 +142,7 @@ function initBoardView() {
   setupToolbar();
   setupDialogs();
   navigation.init(showCanvasTab);
+  setupDragSources();
   setupShortcuts();
 }
 
@@ -185,6 +187,7 @@ function setupToolbar() {
     colors.append(label);
   });
   setupToolPalette();
+  setupShapePalette();
   setupPenPalette();
   const selected = () => state.getSelectedIds();
   document.getElementById('btn-duplicate').onclick = () => duplicate(selected());
@@ -220,9 +223,10 @@ function setupToolbar() {
     more.classList.toggle('has-tool', MORE_TOOLS.includes(tool));
     more.setAttribute('aria-label', MORE_TOOLS.includes(tool) ? `Plus d’outils (actif : ${canvas.TOOL_NAMES[tool]})` : 'Plus d’outils');
     const creation = document.querySelector('#app-board .creation-toolbar').getBoundingClientRect();
-    for (const [paletteId, t] of [['sticky-palette', 'sticky_note'], ['pen-palette', 'pen']]) {
+    document.querySelectorAll('#shape-palette [data-shape]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.shape === tool)));
+    for (const [paletteId, t] of [['sticky-palette', 'sticky_note'], ['shape-palette', 'shape'], ['pen-palette', 'pen']]) {
       const palette = document.getElementById(paletteId);
-      palette.hidden = tool !== t;
+      palette.hidden = tool.split(':')[0] !== t;
       palette.style.bottom = matchMedia('(max-width: 640px)').matches ? `${innerHeight - creation.top + 6}px` : '';
     }
   });
@@ -268,6 +272,36 @@ function setupToolPalette() {
   palette.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); createAtCenter('sticky_note'); }
     if (e.key === 'Escape') { e.preventDefault(); canvas.cancelTool(); document.getElementById('btn-sticky').focus(); }
+  });
+}
+
+function setupShapePalette() {
+  const palette = document.getElementById('shape-palette');
+  palette.addEventListener('click', e => {
+    const button = e.target.closest('[data-shape]');
+    if (!button) return;
+    if (e.detail === 0) createAtCenter(button.dataset.shape);
+    else activateTool(button.dataset.shape, false);
+  });
+  palette.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); canvas.cancelTool(); document.getElementById('btn-shape').focus(); }
+  });
+}
+
+function setupDragSources() {
+  const buttons = { 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-line': 'line', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
+  for (const [id, tool] of Object.entries(buttons)) {
+    paletteDrag.attach(document.getElementById(id), () => ({ tool, color: tool === 'sticky_note' ? canvas.getStickyColor() : null }));
+  }
+  document.querySelectorAll('#sticky-palette .tool-color').forEach(label => {
+    paletteDrag.attach(label, () => ({ tool: 'sticky_note', color: label.querySelector('input').value }));
+  });
+  document.querySelectorAll('#shape-palette [data-shape]').forEach(button => {
+    paletteDrag.attach(button, () => ({ tool: button.dataset.shape }));
+  });
+  document.querySelectorAll('#tools-panel [data-tool]').forEach(button => {
+    if (!canvas.isCreationTool(button.dataset.tool)) return;
+    paletteDrag.attach(button, () => ({ tool: button.dataset.tool, color: button.dataset.tool === 'sticky_note' ? canvas.getStickyColor() : null, panel: document.getElementById('tools-panel'), done: () => toolsPanel.close(false) }));
   });
 }
 
