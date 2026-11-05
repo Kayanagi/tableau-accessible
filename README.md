@@ -102,10 +102,15 @@ Puis ouvrir `http://localhost:8080`.
 | Ctrl+Maj+Z | Rétablir |
 | +/- | Zoom avant/arrière |
 | 0 | Réinitialiser le zoom |
-| Maj+1 | Tout afficher (ajuster la vue au contenu) |
-| Glisser le fond (outil Main ou Espace maintenu) / molette | Déplacer la vue |
+| Alt+1 / Maj+1 | Tout afficher (ajuster la vue au contenu) |
+| G | Afficher ou masquer la grille |
+| Clic droit maintenu puis glisser | Déplacer la vue, y compris au-dessus d’un objet |
+| Clic droit, Maj+F10, touche Menu | Menu contextuel de la sélection ou du fond |
+| Glisser le fond (outil Main ou Espace maintenu) | Déplacer la vue |
 | Glisser le fond (outil Sélection) | Rectangle de sélection |
-| Ctrl+molette | Zoomer sur le pointeur |
+| Molette | Zoomer sur le pointeur (souris) ou déplacer la vue (pavé tactile), selon le réglage |
+| Maj+molette | Déplacement horizontal |
+| Ctrl+molette, pincement | Zoomer sur le pointeur |
 | Tab / Maj+Tab | Naviguer entre les éléments |
 | Flèches | Déplacer la sélection (10 px) |
 | Maj+Flèches | Déplacer en grand pas (50 px) |
@@ -220,7 +225,13 @@ Saisir une pastille de post-it, une forme, un bouton d’outil ou une entrée du
 
 ### Apparence et préférences (1.6.0)
 
-« Thème : … » ouvre un menu Automatique, Clair, Sombre, Contraste élevé. « Préférences » (tableau de bord et tableau) contient aussi Afficher la grille, Réduire les animations et Raccourcis à une lettre. Stockage : `tableau-accessible-theme`, `tableau-accessible-prefs`. Le tableau ajoute la couleur de fond, stockée dans `background` ; le thème Contraste élevé l’ignore pour garantir le contraste.
+« Thème : … » ouvre un menu Automatique, Clair, Sombre, Contraste élevé. « Préférences » (tableau de bord et tableau) contient aussi Afficher la grille, Aligner sur la grille, Afficher la taille des objets, Réduire les animations, Raccourcis à une lettre et Souris ou pavé tactile. Stockage : `tableau-accessible-theme`, `tableau-accessible-prefs`. Le tableau ajoute la couleur de fond, stockée dans `background` ; le thème Contraste élevé l’ignore pour garantir le contraste.
+
+### Clic droit et souris (1.8.0)
+
+Clic droit maintenu puis glissé (seuil de 5 px) : déplace la vue sans changer la sélection ni ouvrir de menu. Relâché sous le seuil, il ouvre un menu à l’emplacement du pointeur : fond, objet ou ligne. `Maj+F10` et la touche Menu l’ouvrent sur la sélection, ou au centre de la vue. Flèches, Début, Fin, Entrée, Échap ; le focus revient à son point de départ.
+
+« Souris ou pavé tactile… » (menu du fond et Préférences) propose Souris, Pavé tactile et Détection automatique (par défaut), stockés dans `pointerMode` de `tableau-accessible-prefs`, comme `snapGrid` (aligner sur la grille de 50) et `showSize` (largeur × hauteur de la sélection).
 
 ### Boutique de modèles (1.6.0)
 

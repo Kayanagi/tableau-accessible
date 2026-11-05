@@ -2,6 +2,21 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.8.0] - 2026-11-05
+
+### Ajouté
+- Clic droit maintenu puis glissé (seuil de 5 px) : déplace la vue, y compris au-dessus d’un objet, sans changer la sélection. Le menu natif du navigateur est bloqué sur le canevas.
+- Clic droit sans glisser : menu contextuel à l’emplacement du pointeur, différent sur le fond, sur un objet et sur une ligne, avec le raccourci de chaque entrée. Au clavier : `Maj+F10` ou la touche Menu, sur la sélection ou au centre de la vue.
+- Réglage « Souris ou pavé tactile » : Souris, Pavé tactile ou Détection automatique (par défaut), persistant, depuis le menu du fond et le menu Préférences.
+- « Aligner sur la grille » (déplacements et créations, pas de 50) et « Afficher la taille des objets », dans le menu du fond et le menu Préférences.
+- Touche `G` : affiche ou masque la grille. `Alt+1` : Tout afficher, en plus de `Maj+1`.
+
+### Modifié
+- En mode Souris, ou reconnue comme telle en détection automatique, la molette zoome sur le pointeur au lieu de déplacer la vue ; `Maj+molette` déplace à l’horizontale. `Ctrl+molette` et le pincement zooment dans tous les modes, et le pincement suit l’amplitude du geste.
+- « Créer un cadre » fonctionne aussi sur une ligne seule.
+- L’export CSV et l’enregistrement comme modèle acceptent une sélection, utilisée par le menu contextuel.
+- Le bouton Dupliquer de la barre contextuelle garde toute la sélection dupliquée, comme `Ctrl+D`.
+
 ## [1.7.1] - 2026-11-05
 
 ### Accessibilité
