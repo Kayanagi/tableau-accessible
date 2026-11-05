@@ -1,0 +1,72 @@
+import { HttpError, tooMany } from '../http.js';
+import { publicUser } from '../auth.js';
+import { isValidPassword, normalizeDisplayName, normalizePassword } from '../validate.js';
+import { readBoard } from './boards.js';
+
+const MIN = 60 * 1000;
+
+export function registerMeRoutes(router, app) {
+  const { db, passwords, sessions, limiter } = app;
+  const userById = db.prepare('SELECT * FROM users WHERE id = ?');
+  const rename = db.prepare('UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?');
+  const setHash = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?');
+  const ownedBoards = db.prepare("SELECT board_id AS id FROM board_members WHERE user_id = ? AND role = 'owner'");
+  const otherMemberships = db.prepare("SELECT board_id AS boardId, role FROM board_members WHERE user_id = ? AND role <> 'owner'");
+  const deleteBoard = db.prepare('DELETE FROM boards WHERE id = ?');
+  const deleteUser = db.prepare('DELETE FROM users WHERE id = ?');
+
+  /* Réponse 403 et non 401 : une erreur de saisie ne doit pas faire croire à une session perdue. */
+  async function requirePassword(ctx, value) {
+    const wait = limiter.hit('password-check', ctx.session.userId, 5, 15 * MIN);
+    if (wait) throw tooMany(wait);
+    const password = normalizePassword(value);
+    const user = userById.get(ctx.session.userId);
+    if (!isValidPassword(password) || !(await passwords.verify(password, user.password_hash))) {
+      throw new HttpError(403, 'wrong_password', 'Mot de passe incorrect.');
+    }
+  }
+
+  router.add('GET', '/api/me', ctx => {
+    const s = ctx.session;
+    if (s.guest) return { body: { guest: true, boardId: s.boardId, role: s.role, guestName: s.guestName } };
+    return { body: { guest: false, user: s.user } };
+  }, { auth: 'session' });
+
+  router.add('PATCH', '/api/me', ctx => {
+    const name = normalizeDisplayName(ctx.body.displayName);
+    if (!name) throw new HttpError(400, 'invalid_display_name', 'Le nom affiché doit contenir de 1 à 50 caractères.');
+    rename.run(name, Date.now(), ctx.session.userId);
+    return { body: { guest: false, user: publicUser(userById.get(ctx.session.userId)) } };
+  }, { auth: 'account' });
+
+  router.add('POST', '/api/me/password', async ctx => {
+    const next = normalizePassword(ctx.body.newPassword);
+    if (!isValidPassword(next)) throw new HttpError(400, 'invalid_password', 'Le mot de passe doit contenir de 12 à 128 caractères.');
+    await requirePassword(ctx, ctx.body.oldPassword);
+    const hash = await passwords.hash(next);
+    const token = db.transaction(() => {
+      setHash.run(hash, Date.now(), ctx.session.userId);
+      sessions.destroyAll(ctx.session.userId);
+      return sessions.create(ctx.session.userId);
+    })();
+    return { status: 204, headers: { 'Set-Cookie': sessions.setCookie(token) } };
+  }, { auth: 'account' });
+
+  router.add('DELETE', '/api/me', async ctx => {
+    await requirePassword(ctx, ctx.body.password);
+    db.transaction(() => {
+      for (const { id } of ownedBoards.all(ctx.session.userId)) deleteBoard.run(id);
+      deleteUser.run(ctx.session.userId);
+    })();
+    return { status: 204, headers: { 'Set-Cookie': sessions.clearCookie() } };
+  }, { auth: 'account' });
+
+  router.add('GET', '/api/me/export', ctx => {
+    const userId = ctx.session.userId;
+    const boards = ownedBoards.all(userId).map(({ id }) => readBoard(db, id));
+    return {
+      headers: { 'Content-Disposition': 'attachment; filename="baro-export.json"' },
+      body: { exportedAt: new Date().toISOString(), user: publicUser(userById.get(userId)), boards, memberships: otherMemberships.all(userId) }
+    };
+  }, { auth: 'account' });
+}
