@@ -62,12 +62,8 @@ export function exportMarkdown() {
     lines.push('## Liens');
     lines.push('');
     for (const c of connectors) {
-      const from = state.getItem(c.startId);
-      const to = state.getItem(c.endId);
-      const fl = from ? state.getItemLabel(from) : '?';
-      const tl = to ? state.getItemLabel(to) : '?';
       const lb = c.label ? ` (${c.label})` : '';
-      lines.push(`- ${state.LINE_TYPES[c.lineType] || state.LINE_TYPES.arrow} : ${fl} → ${tl}${lb}`);
+      lines.push(`- ${c.startId || c.endId ? 'Ligne' : 'Ligne libre'} (${(state.LINE_TYPES[c.lineType] || state.LINE_TYPES.straight).toLowerCase()}) : ${state.getEndLabel(c, 'start')} → ${state.getEndLabel(c, 'end')}${lb}`);
     }
     lines.push('');
   }
@@ -139,7 +135,8 @@ export function csvContent() {
   const board = state.getBoard();
   const quote = value => '"' + String(value ?? '').replace(/"/g, '""') + '"';
   const rows = [['type', 'texte', 'couleur', 'x', 'y', 'étiquettes']];
-  for (const i of board.items) rows.push([i.type, [i.title, i.content, i.label, i.back, i.rows?.map(r => r.join(' | ')).join('\n'), i.columns?.map(c => `${c.name}: ${c.cards.map(v => v.text).join(', ')}`).join('\n')].filter(Boolean).join('\n'), i.color || '', i.x || 0, i.y || 0, (i.tags || []).map(id => board.tags?.find(t => t.id === id)?.name || id).join(', ')]);
+  for (const i of board.items) if (i.type === 'connector') rows.push([i.type, state.getItemLabel(i), i.stroke || '', i.start?.x ?? '', i.start?.y ?? '', '']);
+  else rows.push([i.type, [i.title, i.content, i.label, i.back, i.rows?.map(r => r.join(' | ')).join('\n'), i.columns?.map(c => `${c.name}: ${c.cards.map(v => v.text).join(', ')}`).join('\n')].filter(Boolean).join('\n'), i.color || '', i.x || 0, i.y || 0, (i.tags || []).map(id => board.tags?.find(t => t.id === id)?.name || id).join(', ')]);
   return rows.map(r => r.map(quote).join(',')).join('\r\n');
 }
 export function exportCSV() {
@@ -173,7 +170,7 @@ export function svgContent() {
     copy.style.width = `${width}px`; copy.style.height = `${height}px`;
     copy.style.background = getComputedStyle(source).backgroundColor;
     copy.querySelectorAll(':scope > :not(defs):not(#canvas-items)').forEach(el => el.remove());
-    copy.querySelectorAll('.resize-handle, .connector-handle, .selection-outline').forEach(el => el.remove());
+    copy.querySelectorAll('.resize-handle, .connector-handle, .selection-outline, .line-halo').forEach(el => el.remove());
     return { text: new XMLSerializer().serializeToString(copy), width, height };
   } finally { panel.hidden = wasHidden; }
 }
@@ -191,7 +188,7 @@ export async function exportPNG() {
     const canvas = document.createElement('canvas');
     canvas.width = Math.ceil(width * 2); canvas.height = Math.ceil(height * 2);
     const context = canvas.getContext('2d');
-    context.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#f7f7fb';
+    context.fillStyle = document.querySelector('.canvas-svg').style.backgroundColor || getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || '#f7f7fb';
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(image, 0, 0, canvas.width, canvas.height);
     const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));

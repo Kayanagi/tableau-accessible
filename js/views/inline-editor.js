@@ -84,6 +84,18 @@ function position() {
   else s.background = '';
 }
 
+export function openLineLabel(id) {
+  const item = state.getItem(id);
+  const box = item && canvas.lineLabelBox(id);
+  if (!box || state.isLocked(id)) return false;
+  canvas.setEditing(id);
+  return openField({
+    id, box, value: item.label || '', label: 'Texte sur la ligne', singleLine: true,
+    onDone: () => canvas.setEditing(null),
+    onCommit: v => state.updateItem(id, { label: v }) && announce(v ? `Texte sur la ligne : ${v}` : 'Texte de la ligne effacé')
+  });
+}
+
 export function commit(refocus) {
   if (!ed) return;
   const { id, el, isNew, key } = ed;
@@ -146,6 +158,7 @@ export function commitField(refocus) {
   field = null;
   const value = f.el.value;
   f.el.remove();
+  f.onDone?.();
   if (value !== (f.value || '')) f.onCommit(value);
   if (refocus) {
     if (f.sub && state.getItem(f.id)) canvas.focusSub(f.id, f.sub);

@@ -83,7 +83,7 @@ export function render() {
     sepLi.setAttribute('role', 'treeitem');
     sepLi.classList.add('outline-separator');
     const span = document.createElement('span');
-    span.textContent = `Liens (${connectors.length})`;
+    span.textContent = `Lignes (${connectors.length})`;
     span.classList.add('outline-group-label');
     sepLi.appendChild(span);
 
@@ -156,11 +156,9 @@ function createItemNode(item, selectedId, connectors) {
     linkInfo.classList.add('outline-links');
     linkInfo.setAttribute('aria-label', 'Liens');
     for (const c of links) {
-      const otherId = c.startId === item.id ? c.endId : c.startId;
-      const other = state.getItem(otherId);
       const dir = c.startId === item.id ? 'vers' : 'depuis';
       const linkLi = document.createElement('li');
-      linkLi.textContent = `Relie ${dir} ${other ? state.getItemLabel(other) : '?'}${c.label ? ' (' + c.label + ')' : ''}`;
+      linkLi.textContent = `Relie ${dir} ${state.getEndLabel(c, c.startId === item.id ? 'end' : 'start')}${c.label ? ' (' + c.label + ')' : ''}`;
       linkInfo.appendChild(linkLi);
     }
     li.appendChild(linkInfo);

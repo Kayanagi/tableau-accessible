@@ -1,5 +1,6 @@
 import * as state from '../state.js';
 import { announce } from '../a11y/announcer.js';
+import { LINE_COLORS } from '../lines.js';
 
 let container = null;
 let tagFilter = '';
@@ -144,10 +145,11 @@ export function render() {
     tr.appendChild(createTd(getContentDisplay(item)));
     tr.appendChild(createTd(getColorDisplay(item)));
     tr.appendChild(createTd(getTagsDisplay(item)));
-    tr.appendChild(createTd(item.x != null ? item.x : '-'));
-    tr.appendChild(createTd(item.y != null ? item.y : '-'));
-    tr.appendChild(createTd(item.width || '-'));
-    tr.appendChild(createTd(item.height || '-'));
+    const line = item.type === 'connector';
+    tr.appendChild(createTd(line ? (item.start?.x ?? '-') : item.x != null ? item.x : '-'));
+    tr.appendChild(createTd(line ? (item.start?.y ?? '-') : item.y != null ? item.y : '-'));
+    tr.appendChild(createTd(!line && item.width || '-'));
+    tr.appendChild(createTd(!line && item.height || '-'));
 
     const actTd = document.createElement('td');
     const editBtn = document.createElement('button');
@@ -188,10 +190,10 @@ function getCellValue(item, col) {
     case 'content': return getContentDisplay(item);
     case 'color': return getColorDisplay(item);
     case 'tags': return getTagsDisplay(item);
-    case 'x': return item.x != null ? item.x : -Infinity;
-    case 'y': return item.y != null ? item.y : -Infinity;
-    case 'width': return item.width || 0;
-    case 'height': return item.height || 0;
+    case 'x': return item.type === 'connector' ? (item.start?.x ?? -Infinity) : item.x != null ? item.x : -Infinity;
+    case 'y': return item.type === 'connector' ? (item.start?.y ?? -Infinity) : item.y != null ? item.y : -Infinity;
+    case 'width': return item.type === 'connector' ? 0 : item.width || 0;
+    case 'height': return item.type === 'connector' ? 0 : item.height || 0;
     default: return '';
   }
 }
@@ -231,6 +233,7 @@ function renderDataTables(list) {
 }
 
 function getColorDisplay(item) {
+  if (item.type === 'connector') return LINE_COLORS.find(c => c[0] === item.stroke)?.[1] || '-';
   if (item.type === 'sticky_note') {
     return state.COLORS[item.color] || '-';
   }

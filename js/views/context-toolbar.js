@@ -4,6 +4,7 @@ import * as clipboard from '../clipboard.js';
 import { announce } from '../a11y/announcer.js';
 import * as O from '../objects.js';
 import * as obj from './canvas-objects.js';
+import * as L from '../lines.js';
 
 const TEXT_TYPES = ['sticky_note', 'shape', 'text', 'card', 'flipcard', 'mindmap'];
 const ALIGN_ICONS = {
@@ -33,7 +34,11 @@ export function init(el, options) {
   bar.hidden = true;
   el.appendChild(bar);
   bar.addEventListener('keydown', onKey);
-  bar.addEventListener('focusin', e => { const k = e.target.dataset.key; if (k) activeKey = k; });
+  bar.addEventListener('focusin', e => {
+    const k = e.target.dataset.key;
+    if (k) activeKey = k;
+    if (k === 'start-cap' || k === 'end-cap') canvas.setActiveEnd(k === 'start-cap' ? 'start' : 'end');
+  });
   bar.addEventListener('focusout', e => { if (menu && !bar.contains(e.relatedTarget)) closeMenu(false); });
   document.addEventListener('pointerdown', e => { if (menu && !bar.contains(e.target)) closeMenu(false); });
   state.subscribe(update);
@@ -55,18 +60,51 @@ function idsOf(items, types) {
   return items.filter(i => !types || types.includes(i.type)).map(i => i.id);
 }
 
+function capIcon(cap, reverse) {
+  const shape = L.capShape(cap, { x: reverse ? 4 : 28, y: 8 }, { x: reverse ? -1 : 1, y: 0 }, 9);
+  let mark = '';
+  if (shape) {
+    const attrs = Object.entries(shape.attrs).map(([k, v]) => `${k}="${v}"`).join(' ');
+    mark = `<${shape.tag} ${attrs} fill="${shape.filled ? 'currentColor' : 'none'}"/>`;
+  }
+  const line = reverse ? `M${shape?.filled ? 10 : 4} 8H30` : `M2 8H${shape?.filled ? 22 : 28}`;
+  return `<svg class="line-icon" viewBox="0 0 32 16" aria-hidden="true"><path d="${line}"/>${mark}</svg>`;
+}
+
+const TYPE_ICONS = { straight: 'M3 13L29 3', orthogonal: 'M3 13H16V3H29', bezier: 'M3 13C14 13 18 3 29 3' };
+const typeIcon = t => `<svg class="line-icon" viewBox="0 0 32 16" aria-hidden="true"><path d="${TYPE_ICONS[t] || TYPE_ICONS.straight}"/></svg>`;
+const styleIcon = s => `<svg class="line-icon" viewBox="0 0 32 16" aria-hidden="true"><path d="M2 8H30" ${s === 'dashed' ? 'stroke-dasharray="6 4"' : s === 'dotted' ? 'stroke-dasharray="0 4" stroke-linecap="round" style="stroke-width:2.4"' : ''}/></svg>`;
+const widthIcon = w => `<svg class="line-icon" viewBox="0 0 32 16" aria-hidden="true"><path d="M2 8H30" style="stroke-width:${w}"/></svg>`;
+
+function lineControls(links) {
+  const ids = idsOf(links), first = links[0];
+  const color = L.LINE_COLORS.find(c => c[0] === first.stroke) || L.LINE_COLORS[0];
+  const locked = links.every(i => i.locked);
+  return [
+    { key: 'start-cap', label: `Début de ligne : ${L.CAPS[first.startCap]}. Extrémité active : Alt+flèches la déplace`, html: capIcon(first.startCap, true), menu: 'start-cap' },
+    { key: 'reverse', label: 'Inverser les extrémités', html: '<span aria-hidden="true">⇄</span>', run: () => state.reverseLines(ids) },
+    { key: 'end-cap', label: `Fin de ligne : ${L.CAPS[first.endCap]}. Extrémité active : Alt+flèches la déplace`, html: capIcon(first.endCap, false), menu: 'end-cap' },
+    { key: 'line-type', label: `Type : ${L.LINE_TYPES[first.lineType]}`, html: typeIcon(first.lineType), menu: 'line-type' },
+    { key: 'line-style', label: `Trait : ${L.LINE_STYLES[first.lineStyle]}`, html: styleIcon(first.lineStyle), menu: 'line-style' },
+    { key: 'line-width', label: `Épaisseur : ${first.strokeWidth}`, html: widthIcon(first.strokeWidth), menu: 'line-width' },
+    { key: 'line-color', label: `Couleur : ${color[1]}`, html: `<span class="swatch" style="background:${color[2]}" aria-hidden="true"></span>`, menu: 'line-color' },
+    { key: 'line-text', label: 'Texte sur la ligne', text: 'T', run: () => canvas.edit(first.id) },
+    { key: 'lock', label: locked ? 'Déverrouiller' : 'Verrouiller', text: '🔒', pressed: locked, run: () => state.toggleLockedMany(ids) },
+    { key: 'more', label: 'Plus d’actions', text: '⋯', menu: 'more' }
+  ];
+}
+
 function build(items) {
+  if (items.every(i => i.type === 'connector')) return lineControls(items);
   const list = [];
   const notes = items.filter(i => i.type === 'sticky_note');
   const shapes = items.filter(i => i.type === 'shape');
-  const links = items.filter(i => i.type === 'connector');
   const texts = items.filter(i => TEXT_TYPES.includes(i.type));
   if (notes.length) {
     const c = state.PALETTE.find(p => p[0] === notes[0].color) || state.PALETTE[0];
     list.push({ key: 'color', label: `Couleur : ${c[1]}`, html: `<span class="swatch" style="background:${c[2]}" aria-hidden="true"></span>`, menu: 'color' });
   }
   if (shapes.length) list.push({ key: 'shape', label: `Type de forme : ${state.SHAPES[shapes[0].shape] || 'Rectangle'}`, text: 'Forme', menu: 'shape' });
-  if (links.length) list.push({ key: 'line', label: `Type de ligne : ${state.LINE_TYPES[links[0].lineType] || state.LINE_TYPES.arrow}`, text: 'Ligne', menu: 'line' });
   if (texts.length) {
     const ids = idsOf(texts);
     list.push(
@@ -201,11 +239,32 @@ function menuEntries(kind) {
       return { role: 'menuitemcheckbox', label: `${emoji} ${name}${n ? ` (${n})` : ''}`, checked: targets.every(i => i.reactions?.[emoji]?.includes(me)), run: () => state.toggleReaction(idsOf(targets), emoji) };
     });
   }
-  if (kind === 'line') {
-    const links = items.filter(i => i.type === 'connector');
-    return Object.entries(state.LINE_TYPES).map(([id, name]) => ({ label: name, text: name, checked: links.every(i => (i.lineType || 'arrow') === id), run: () => state.updateItems(idsOf(links), { lineType: id }, `Ligne : ${name}`) }));
+  const links = items.filter(i => i.type === 'connector');
+  const lineIds = idsOf(links);
+  const withIcon = (icon, name) => `${icon}<span>${name}</span>`;
+  if (kind === 'start-cap' || kind === 'end-cap') {
+    const field = kind === 'start-cap' ? 'startCap' : 'endCap', word = kind === 'start-cap' ? 'Début' : 'Fin';
+    return Object.entries(L.CAPS).map(([id, name]) => ({ label: name, html: withIcon(capIcon(id, kind === 'start-cap'), name), checked: links.every(i => i[field] === id), run: () => state.updateItems(lineIds, { [field]: id }, `${word} de ligne : ${name}`) }));
   }
+  if (kind === 'line-type') return Object.entries(L.LINE_TYPES).map(([id, name]) => ({ label: name, html: withIcon(typeIcon(id), name), checked: links.every(i => i.lineType === id), run: () => state.updateItems(lineIds, { lineType: id }, `Type de ligne : ${name}`) }));
+  if (kind === 'line-style') return Object.entries(L.LINE_STYLES).map(([id, name]) => ({ label: name, html: withIcon(styleIcon(id), name), checked: links.every(i => i.lineStyle === id), run: () => state.updateItems(lineIds, { lineStyle: id }, `Trait : ${name}`) }));
+  if (kind === 'line-width') return L.LINE_WIDTHS.map(w => ({ label: `${w} px`, html: withIcon(widthIcon(Math.min(w, 8)), `${w} px`), checked: links.every(i => i.strokeWidth === w), run: () => state.updateItems(lineIds, { strokeWidth: w }, `Épaisseur : ${w}`) }));
+  if (kind === 'line-color') return L.LINE_COLORS.map(([id, name, css]) => ({ label: name, html: withIcon(`<span class="swatch" style="background:${css}" aria-hidden="true"></span>`, name), checked: links.every(i => i.stroke === id), run: () => state.updateItems(lineIds, { stroke: id }, `Couleur de ligne : ${name}`) }));
   const ids = idsOf(items);
+  if (items.every(i => i.type === 'connector')) {
+    return [
+      { label: 'Dupliquer (Ctrl+D)', run: () => { const copies = state.duplicateItems(ids); if (copies[0]) canvas.focusItem(copies[0].id); } },
+      { label: 'Supprimer (Suppr)', run: () => state.removeItems(ids) },
+      ...(items.length === 1 ? [{ label: 'Extrémités et points de pliage…', run: () => onProperties(items[0].id) }] : []),
+      { label: 'Copier (Ctrl+C)', run: () => clipboard.copy(ids) },
+      { label: 'Couper (Ctrl+X)', run: () => clipboard.cut(ids) },
+      { label: 'Coller (Ctrl+V)', run: () => clipboard.paste() },
+      { label: 'Copier le style (Ctrl+Alt+C)', run: () => clipboard.copyStyle() },
+      { label: 'Coller le style (Ctrl+Alt+V)', run: () => clipboard.pasteStyle(ids) },
+      { label: 'Premier plan (Page précédente)', run: () => state.reorderItems(ids, true) },
+      { label: 'Arrière-plan (Page suivante)', run: () => state.reorderItems(ids, false) }
+    ];
+  }
   return [
     { label: 'Copier (Ctrl+C)', run: () => clipboard.copy(ids) },
     { label: 'Couper (Ctrl+X)', run: () => clipboard.cut(ids) },
@@ -290,6 +349,7 @@ function closeMenu(refocus) {
 }
 
 function onKey(e) {
+  if (canvas.lineEndKey(e)) return;
   if (menu && menu.contains(e.target)) {
     const all = [...menu.children];
     const i = all.indexOf(e.target);

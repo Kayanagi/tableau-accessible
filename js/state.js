@@ -14,7 +14,7 @@ export const PALETTE = [
   ['miro_gray', 'Gris', '#f3f5f7'], ['black', 'Noir', '#151515']
 ];
 const COLORS = Object.fromEntries(PALETTE.map(([id, name]) => [id, name]));
-export const LINE_TYPES = { line: 'Ligne simple', arrow: 'Flèche', orthogonal: 'Flèche à angles droits' };
+export const LINE_TYPES = L.LINE_TYPES;
 const LEGACY_COLORS = { yellow: 'miro_yellow', blue: 'miro_blue', green: 'miro_green', pink: 'miro_pink', orange: 'miro_orange', purple: 'violet', gray: 'miro_gray' };
 
 const SHAPES = {
@@ -30,7 +30,7 @@ const TYPES = {
   text: 'Texte',
   card: 'Carte',
   frame: 'Cadre',
-  connector: 'Lien',
+  connector: 'Ligne',
   drawing: 'Dessin à main levée',
   comment: 'Commentaire',
   mindmap: 'Carte mentale',
@@ -76,7 +76,7 @@ export function normalizeItem(item) {
     item.color = LEGACY_COLORS[item.color] || item.color || 'light_yellow';
     item.size = item.size || sizeFromWidth(item.width || 150);
   }
-  if (item.type === 'connector') item.lineType = item.lineType || 'arrow';
+  if (item.type === 'connector') L.normalizeLine(item);
   else {
     if (item.fontSize === undefined) item.fontSize = item.type === 'sticky_note' ? 'auto' : (DEFAULT_FONT[item.type] || 14);
     if (item.bold === undefined) item.bold = false;
@@ -175,12 +175,11 @@ function itemLabel(item) {
     return `${shapeName} : ${item.content || '(vide)'}`;
   }
   if (item.type === 'connector') {
-    const startItem = getItem(item.startId);
-    const endItem = getItem(item.endId);
-    const startLabel = startItem ? itemLabel(startItem) : '?';
-    const endLabel = endItem ? itemLabel(endItem) : '?';
     const labelPart = item.label ? ` (${item.label})` : '';
-    return `${LINE_TYPES[item.lineType] || LINE_TYPES.arrow} de ${startLabel} vers ${endLabel}${labelPart}`;
+    if (L.isFree(item)) return `Ligne libre de ${getEndLabel(item, 'start')} à ${getEndLabel(item, 'end')}${labelPart}`;
+    const kind = item.endCap && item.endCap !== 'none' && item.endCap.startsWith('arrow') ? 'Flèche' : 'Ligne';
+    const shape = item.lineType === 'orthogonal' ? ' à angles droits' : item.lineType === 'bezier' ? ' courbe' : '';
+    return `${kind}${shape} de ${getEndLabel(item, 'start')} vers ${getEndLabel(item, 'end')}${labelPart}`;
   }
   if (item.type === 'card') {
     return `${typeName} : ${item.title || '(sans titre)'}`;
@@ -219,6 +218,25 @@ function itemLabel(item) {
   return `${typeName} : ${item.content || '(vide)'}`;
 }
 
+export function getEndLabel(item, end) {
+  const target = getItem(item[`${end}Id`]);
+  if (target) return itemLabel(target);
+  const p = item[end];
+  return p ? `(${p.x}, ${p.y})` : '?';
+}
+
+function lineDetails(item) {
+  const parts = [];
+  if (L.isFree(item) && item.lineType !== 'straight') parts.push(`type ${L.LINE_TYPES[item.lineType].toLowerCase()}`);
+  if (item.startCap !== 'none') parts.push(`début : ${L.CAPS[item.startCap]?.toLowerCase()}`);
+  if (item.endCap !== 'none') parts.push(`fin : ${L.CAPS[item.endCap]?.toLowerCase()}`);
+  if (item.lineStyle !== 'solid') parts.push(`trait : ${L.LINE_STYLES[item.lineStyle]?.toLowerCase()}`);
+  if (item.strokeWidth !== 2) parts.push(`épaisseur ${item.strokeWidth}`);
+  if (item.stroke !== 'auto') parts.push(`couleur : ${L.LINE_COLORS.find(c => c[0] === item.stroke)?.[1].toLowerCase()}`);
+  if (item.waypoints?.length) parts.push(plural(item.waypoints.length, '1 point de pliage', 'points de pliage'));
+  return parts;
+}
+
 function decorations(item) {
   let out = '';
   const tags = (item.tags || []).map(getTag).filter(Boolean);
@@ -253,8 +271,8 @@ export function duplicateItem(id) {
 
 export function duplicateItems(ids) {
   const sources = collectForCopy(ids);
-  if (!sources.some(i => i.type !== 'connector')) return [];
-  const copies = pasteItems(sources, 20, false).filter(c => c.type !== 'connector');
+  if (!sources.length) return [];
+  const copies = pasteItems(sources, 20, false).filter(isSelectableCopy);
   announce(copies.length === 1 ? 'Élément dupliqué' : `${copies.length} éléments dupliqués`);
   return copies;
 }
@@ -283,24 +301,44 @@ export function pasteItems(source, offset, speak = true) {
     }
   }
   for (const original of source) {
-    if (original.type !== 'connector' || !map.has(original.startId) || !map.has(original.endId)) continue;
-    const link = JSON.parse(JSON.stringify(original));
-    Object.assign(link, { id: generateId(), startId: map.get(original.startId), endId: map.get(original.endId), locked: false });
+    if (original.type !== 'connector') continue;
+    if ((original.startId && !map.has(original.startId)) || (original.endId && !map.has(original.endId))) continue;
+    const link = L.normalizeLine(JSON.parse(JSON.stringify(original)));
+    link.id = generateId();
+    link.locked = false;
+    for (const end of ['start', 'end']) {
+      if (link[`${end}Id`]) link[`${end}Id`] = map.get(link[`${end}Id`]);
+      else if (link[end]) link[end] = { x: link[end].x + offset, y: link[end].y + offset };
+    }
+    link.waypoints = link.waypoints.map(w => ({ x: w.x + offset, y: w.y + offset }));
     copies.push(link);
   }
   board.items.push(...copies);
   for (const copy of copies) if (copy.type === 'mindmap' && !copy.parentNode) layoutMind(copy.id);
-  selected = copies.filter(c => c.type !== 'connector').map(c => c.id);
+  selected = copies.filter(isSelectableCopy).map(c => c.id);
   notify();
   if (speak) announce(`${plural(selected.length, '1 élément collé', 'éléments collés')}`);
   return copies;
 }
 
+function isSelectableCopy(c) {
+  return c.type !== 'connector' || !(c.startId && c.endId);
+}
+
 export function collectForCopy(ids) {
+  const explicit = new Set(ids);
   const set = new Set(withMindTrees(ids, false).filter(id => getItem(id)?.type !== 'connector'));
   return board.items
-    .filter(i => set.has(i.id) || (i.type === 'connector' && set.has(i.startId) && set.has(i.endId)))
-    .map(i => JSON.parse(JSON.stringify(i)));
+    .filter(i => set.has(i.id) || (i.type === 'connector' && (explicit.has(i.id) || (set.has(i.startId) && set.has(i.endId)))))
+    .map(i => {
+      const copy = JSON.parse(JSON.stringify(i));
+      if (i.type === 'connector') {
+        for (const end of ['start', 'end']) {
+          if (copy[`${end}Id`] && !set.has(copy[`${end}Id`])) L.setEnd(copy, end, L.anchorOf(i, end, getItem) || { x: 0, y: 0 });
+        }
+      }
+      return copy;
+    });
 }
 
 function editable(ids) {
@@ -391,7 +429,8 @@ export function getItemAriaLabel(item) {
   if (!item) return '';
   const base = getItemLabel(item);
   const parts = [base];
-  if (item.type !== 'connector') {
+  if (item.type === 'connector') parts.push(...lineDetails(item));
+  else {
     parts.push(`position ${item.x}, ${item.y}`);
     if (item.width && item.height) {
       parts.push(`taille ${item.width} par ${item.height}`);
@@ -401,11 +440,7 @@ export function getItemAriaLabel(item) {
     c => c.type === 'connector' && (c.startId === item.id || c.endId === item.id)
   );
   for (const c of connectors) {
-    const otherId = c.startId === item.id ? c.endId : c.startId;
-    const other = getItem(otherId);
-    if (other) {
-      parts.push(`relie a ${getItemLabel(other)}`);
-    }
+    parts.push(`relié à ${getEndLabel(c, c.startId === item.id ? 'end' : 'start')}`);
   }
   if (item.parent) {
     const parent = getItem(item.parent);
@@ -448,12 +483,26 @@ export function moveItems(ids, dx, dy) {
   const items = editable(withMindTrees(ids, true)).filter(isMovable);
   if (!items.length) return;
   history.pushState(snapshot());
-  for (const item of items) {
+  const objects = items.filter(i => i.type !== 'connector');
+  const moving = new Set(objects.map(i => i.id));
+  let detached = false;
+  for (const line of items.filter(i => i.type === 'connector')) detached = L.shiftLine(line, dx, dy, moving, getItem) || detached;
+  shiftFollowers(moving, new Set(items.map(i => i.id)), dx, dy);
+  for (const item of objects) {
     item.x = Math.round(item.x + dx);
     item.y = Math.round(item.y + dy);
   }
   notify();
-  announce(items.length === 1 ? `Déplacé en ${items[0].x}, ${items[0].y}` : `${items.length} éléments déplacés`);
+  if (items.length > 1) announce(`${items.length} éléments déplacés`);
+  else if (objects.length) announce(`Déplacé en ${items[0].x}, ${items[0].y}`);
+  else announce(`Ligne ${detached ? 'détachée et ' : ''}déplacée : ${getItemLabel(items[0])}`);
+}
+
+function shiftFollowers(moving, skip, dx, dy) {
+  for (const c of getConnectors()) {
+    if (skip.has(c.id) || !c.waypoints?.length || !moving.has(c.startId) || !moving.has(c.endId)) continue;
+    c.waypoints = c.waypoints.map(w => ({ x: Math.round(w.x + dx), y: Math.round(w.y + dy) }));
+  }
 }
 
 export function removeItem(id) {
@@ -470,7 +519,13 @@ export function removeItems(ids) {
   const gone = new Set(withMindTrees(items.map(i => i.id), false));
   const label = items.length === 1 ? getItemLabel(items[0]) : `${items.length} éléments`;
   history.pushState(snapshot());
-  board.items = board.items.filter(i => !gone.has(i.id) && !(i.type === 'connector' && (gone.has(i.startId) || gone.has(i.endId))));
+  for (const c of getConnectors()) {
+    if (gone.has(c.id)) continue;
+    const ends = ['start', 'end'].filter(end => gone.has(c[`${end}Id`]));
+    if (ends.length === 2) { gone.add(c.id); continue; }
+    if (ends.length) L.setEnd(c, ends[0], L.anchorOf(c, ends[0], getItem) || { x: 0, y: 0 });
+  }
+  board.items = board.items.filter(i => !gone.has(i.id));
   for (const i of board.items) {
     if (gone.has(i.parent)) i.parent = null;
     if (gone.has(i.targetId)) i.targetId = null;
@@ -570,11 +625,12 @@ const HINTS = {
   datatable: 'Entrée pour parcourir les cellules',
   mindmap: 'flèches pour parcourir la carte, F2 pour modifier',
   flipcard: 'Espace pour retourner',
-  drawing: 'Entrée pour modifier l’étiquette'
+  drawing: 'Entrée pour modifier l’étiquette',
+  connector: 'flèches pour déplacer, Alt+flèches pour déplacer l’extrémité active, Entrée pour le texte, Alt+F10 pour la barre de mise en forme'
 };
 
 export function isMovable(i) {
-  return i && i.type !== 'connector' && !(i.type === 'comment' && i.targetId && getItem(i.targetId));
+  return i && !(i.type === 'comment' && i.targetId && getItem(i.targetId));
 }
 
 export function movableIds(ids) {
@@ -767,6 +823,36 @@ export function postMessage(id, text) {
 
 export function setResolved(id, resolved) {
   return transact(() => { getItem(id).resolved = resolved; }, resolved ? 'Commentaire résolu' : 'Commentaire rouvert');
+}
+
+/* Lignes */
+const END_WORDS = { start: ['Début', ''], end: ['Fin', 'e'] };
+
+export function reverseLines(ids) {
+  const lines = editable(ids).filter(i => i.type === 'connector');
+  if (lines.length) transact(() => lines.forEach(L.reverseLine), 'Extrémités inversées');
+}
+
+export function moveLineEnd(id, end, dx, dy) {
+  const item = getItem(id);
+  if (!item || isLocked(id)) return;
+  const at = L.anchorOf(item, end, getItem);
+  if (!at) return;
+  const was = L.isAttached(item, end);
+  const [word, e] = END_WORDS[end];
+  transact(() => L.setEnd(item, end, { x: at.x + dx, y: at.y + dy }), `${word} ${was ? `détaché${e} et ` : ''}déplacé${e} en (${at.x + dx}, ${at.y + dy})`);
+}
+
+export function endChangeMessage(item, end, wasAttached) {
+  const [word, e] = END_WORDS[end];
+  if (item[`${end}Id`]) return `${word} accroché${e} à ${getEndLabel(item, end)}`;
+  return `${word} ${wasAttached ? 'détaché' : 'déplacé'}${e} en ${getEndLabel(item, end)}`;
+}
+
+export function removeWaypoint(id, index) {
+  const item = getItem(id);
+  if (!item?.waypoints?.[index] || isLocked(id)) return;
+  transact(() => { item.waypoints.splice(index, 1); }, 'Point de pliage supprimé');
 }
 
 export function getContentSummary(item) {

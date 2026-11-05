@@ -26,11 +26,12 @@
           <button id="btn-hand" aria-keyshortcuts="h" type="button" aria-pressed="false" aria-label="Main (H) : déplacer la vue">Main</button>
           <button id="btn-sticky" aria-keyshortcuts="n" type="button" aria-pressed="false" aria-label="Post-it (N)">Post-it</button>
           <button id="btn-shape" aria-keyshortcuts="s r o" type="button" aria-pressed="false" aria-label="Forme (S, R, O)">Forme</button>
+          <button id="btn-line" aria-keyshortcuts="l" type="button" aria-pressed="false" aria-label="Ligne (L) : glisser sur le canevas">Ligne</button>
           <button id="btn-text" aria-keyshortcuts="t" type="button" aria-pressed="false" aria-label="Texte (T)">Texte</button>
           <button id="btn-card" type="button" aria-pressed="false" aria-label="Carte">Carte</button>
           <button id="btn-frame" aria-keyshortcuts="f" type="button" aria-pressed="false" aria-label="Cadre (F)">Cadre</button>
           <button id="btn-more-tools" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tools-panel" aria-label="Plus d’outils">Plus…</button>
-          <button id="btn-link" aria-keyshortcuts="l" type="button" aria-label="Nouveau lien entre &eacute;l&eacute;ments">Lien</button>
+          <button id="btn-link" type="button" aria-label="Nouvelle ligne par dialogue : objets ou points libres">Lien…</button>
         </div>
         <fieldset id="sticky-palette" class="tool-palette" aria-describedby="sticky-palette-hint" hidden>
           <legend>Couleur du post-it</legend>
@@ -171,30 +172,63 @@
 
   <dialog id="dialog-link" aria-labelledby="dialog-link-title">
     <form>
-      <h2 class="dialog-title" id="dialog-link-title">Nouveau lien</h2>
+      <h2 class="dialog-title" id="dialog-link-title">Nouvelle ligne</h2>
 
       <div class="field">
-        <label for="field-link-start">&Eacute;l&eacute;ment source</label>
+        <label for="field-link-start">Source</label>
         <select id="field-link-start" name="link-start" required></select>
+        <div class="field-row link-free" data-free="start" hidden>
+          <label>X du début <input type="number" name="link-start-x" value="100" step="10"></label>
+          <label>Y du début <input type="number" name="link-start-y" value="100" step="10"></label>
+        </div>
       </div>
 
       <div class="field">
-        <label for="field-link-end">&Eacute;l&eacute;ment cible</label>
+        <label for="field-link-end">Cible</label>
         <select id="field-link-end" name="link-end" required></select>
+        <div class="field-row link-free" data-free="end" hidden>
+          <label>X de la fin <input type="number" name="link-end-x" value="300" step="10"></label>
+          <label>Y de la fin <input type="number" name="link-end-y" value="100" step="10"></label>
+        </div>
       </div>
 
-      <div class="field">
-        <label for="field-link-type">Type de ligne</label>
-        <select id="field-link-type" name="link-type">
-          <option value="line">Ligne simple</option>
-          <option value="arrow" selected>Flèche</option>
-          <option value="orthogonal">Flèche à angles droits</option>
-        </select>
+      <fieldset class="field link-waypoints">
+        <legend>Points de pliage</legend>
+        <ol class="waypoints-list"></ol>
+        <button type="button" class="waypoint-add">Ajouter un point de pliage</button>
+      </fieldset>
+
+      <div class="field-grid">
+        <div class="field">
+          <label for="field-link-start-cap">Début de ligne</label>
+          <select id="field-link-start-cap" name="link-start-cap"></select>
+        </div>
+        <div class="field">
+          <label for="field-link-end-cap">Fin de ligne</label>
+          <select id="field-link-end-cap" name="link-end-cap"></select>
+        </div>
+        <div class="field">
+          <label for="field-link-type">Type</label>
+          <select id="field-link-type" name="link-type"></select>
+        </div>
+        <div class="field">
+          <label for="field-link-style">Trait</label>
+          <select id="field-link-style" name="link-style"></select>
+        </div>
+        <div class="field">
+          <label for="field-link-width">Épaisseur</label>
+          <select id="field-link-width" name="link-width"></select>
+        </div>
+        <div class="field">
+          <label for="field-link-color">Couleur</label>
+          <select id="field-link-color" name="link-color"></select>
+        </div>
       </div>
       <div class="field">
-        <label for="field-link-label">&Eacute;tiquette (optionnel)</label>
+        <label for="field-link-label">Texte sur la ligne (optionnel)</label>
         <input type="text" id="field-link-label" name="link-label" autocomplete="off">
       </div>
+      <p class="dialog-error" role="alert" hidden></p>
 
       <div class="dialog-actions">
         <button type="submit" class="dialog-submit btn-primary">Cr&eacute;er</button>

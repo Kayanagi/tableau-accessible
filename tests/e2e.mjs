@@ -256,7 +256,7 @@ try {
   }, items);
   const focus = async id => page.evaluate(async id => (await import('/js/views/canvas.js')).focusItem(id), id);
   const snapshot = () => page.evaluate(async () => (await import('/js/state.js')).getSnapshot());
-  for (const [key, button] of [['n', 'btn-sticky'], ['t', 'btn-text'], ['r', 'btn-shape'], ['l', null]]) {
+  for (const [key, button] of [['n', 'btn-sticky'], ['t', 'btn-text'], ['r', 'btn-shape'], ['l', 'btn-line']]) {
     await page.focus('#board-title');
     await page.keyboard.press(key);
     if (button) log(`Raccourci ${key.toUpperCase()} : outil actif`, await page.getAttribute(`#${button}`, 'aria-pressed') === 'true' && await page.locator('.canvas-svg').getAttribute('data-tool') !== 'select');
@@ -399,7 +399,7 @@ try {
   await page.mouse.click(...Object.values(mid(await box('item-1'))));
   const dot = mid(await page.locator('.link-dot').nth(1).boundingBox());
   await drag(dot, { x: dot.x, y: dot.y + 200 });
-  log('Point bleu : tirer vers un objet crée une flèche, relâcher dans le vide ne crée rien', decorative && link?.startId === 'item-1' && link.endId === 'item-2' && link.lineType === 'arrow' && (await snapshot()).items.length === 4);
+  log('Point bleu : tirer vers un objet crée une flèche, relâcher dans le vide ne crée rien', decorative && link?.startId === 'item-1' && link.endId === 'item-2' && link.lineType === 'straight' && link.endCap === 'arrow_filled' && (await snapshot()).items.length === 4);
 
   const b1 = await box('item-1'), b2 = await box('item-2');
   await page.keyboard.press('Escape');
@@ -950,6 +950,195 @@ try {
   await nav.click('#btn-frames');
   log('Présentation sans cadre et navigation à 320 px sans débordement', emptyPresentation && await nav.evaluate(() => document.body.scrollWidth <= 320));
   await navCtx.close();
+
+  // Lignes (1.6.0)
+  const lineCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const lp = await lineCtx.newPage();
+  const lineErrors = [];
+  lp.on('pageerror', e => lineErrors.push(e.message));
+  lp.on('console', m => { if (m.type() === 'error') lineErrors.push(m.text()); });
+  await lp.goto(BASE + '/#/');
+  await lp.waitForSelector('#btn-create-space');
+  const lineBoard = await lp.evaluate(async () => (await import('/js/store/boards.js')).create('Lignes', { name: 'Lignes', items: [] }).id);
+  await lp.evaluate(id => { location.hash = `#/tableau/${id}`; }, lineBoard);
+  await lp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Lignes'));
+  const lState = (fn, ...args) => lp.evaluate(async ({ fn, args }) => (await import('/js/state.js'))[fn](...args), { fn, args });
+  const lLoad = async items => { await lp.evaluate(async items => { (await import('/js/state.js')).loadBoard({ name: 'Lignes', items }); (await import('/js/views/canvas.js')).zoomReset(); }, items); };
+  const lItems = () => lp.evaluate(async () => (await import('/js/state.js')).getSnapshot().items);
+  const lLine = async () => (await lItems()).find(i => i.type === 'connector');
+  const lDrag = async (from, to) => { await lp.mouse.move(from.x, from.y); await lp.mouse.down(); await lp.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 4 }); await lp.mouse.move(to.x, to.y, { steps: 4 }); await lp.mouse.up(); };
+  const lToScreen = (x, y) => lp.evaluate(async ([x, y]) => { const c = await import('/js/views/canvas.js'); const p = c.toContainer(x, y); const r = c.getContainer().getBoundingClientRect(); return { x: p.x + r.left, y: p.y + r.top }; }, [x, y]);
+  const lHandle = async sel => { const b = await lp.locator(sel).first().boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
+  const lAnn = re => lp.waitForFunction(src => new RegExp(src).test(document.getElementById('announcer').textContent), re.source);
+  const lNote = (id, x, y, content) => ({ id, type: 'sticky_note', x, y, width: 150, height: 150, content, color: 'red' });
+
+  await lLoad([]);
+  await lp.focus('#board-title');
+  await lp.keyboard.press('l');
+  const lineTool = await lp.getAttribute('#btn-line', 'aria-pressed') === 'true';
+  await lDrag(await lToScreen(300, 200), await lToScreen(600, 350));
+  await lAnn(/Créé : Ligne libre/);
+  let ln = await lLine();
+  log('Ligne : L puis glisser dans le vide crée une ligne libre', lineTool && ln && !ln.startId && !ln.endId && ln.start.x === 300 && ln.start.y === 200 && ln.end.x === 600 && ln.end.y === 350 && await lp.getAttribute('#btn-select', 'aria-pressed') === 'true', JSON.stringify(ln));
+  const lineLabel = await lp.locator(`#canvas-items [data-id="${ln.id}"]`).getAttribute('aria-label');
+  log('Ligne libre : nom accessible avec coordonnées', lineLabel.startsWith('Ligne libre de (300, 200) à (600, 350)'), lineLabel);
+
+  await lLoad([]);
+  await lp.click('#btn-line');
+  const dflt = await lToScreen(500, 300);
+  await lp.mouse.click(dflt.x, dflt.y);
+  await lAnn(/Créé : Ligne libre/);
+  ln = await lLine();
+  log('Ligne : clic sans glisser crée une longueur par défaut', ln.end.x - ln.start.x === 200 && ln.start.y === 300 && ln.end.y === 300);
+
+  await lp.keyboard.press('Control+z');
+  await lp.focus('#btn-line');
+  await lp.keyboard.press('Enter');
+  await lAnn(/Créé : Ligne libre/);
+  log('Ligne : voie clavier sur le bouton, créée au centre et sélectionnée', (await lState('getSelectedIds')).length === 1 && !!(await lLine())?.start);
+
+  await lLoad([{ id: 'item-1', type: 'connector', start: { x: 300, y: 200 }, end: { x: 600, y: 200 } }]);
+  await lp.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('item-1'));
+  await lp.keyboard.press('ArrowRight');
+  ln = await lLine();
+  log('Ligne libre : flèches déplacent', ln.start.x === 310 && ln.end.x === 610);
+  const lineMid = await lToScreen(400, 200);
+  await lDrag(lineMid, { x: lineMid.x + 40, y: lineMid.y + 30 });
+  ln = await lLine();
+  log('Ligne libre : glisser déplace, annulable', ln.start.x === 350 && ln.start.y === 230 && ln.end.x === 650);
+
+  await lLoad([lNote('item-1', 100, 100, 'Post-it A'), lNote('item-2', 500, 100, 'Post-it B'), { id: 'item-3', type: 'connector', start: { x: 300, y: 500 }, end: { x: 600, y: 500 } }]);
+  await lp.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('item-3'));
+  const endHandle = await lHandle('[data-end="end"]');
+  const overB = await lToScreen(575, 175);
+  await lp.mouse.move(endHandle.x, endHandle.y);
+  await lp.mouse.down();
+  await lp.mouse.move(overB.x, overB.y, { steps: 6 });
+  await lp.waitForSelector('.snap-target');
+  const snapShown = await lp.locator('.snap-target').count() === 1;
+  await lp.mouse.up();
+  await lAnn(/Fin accrochée à Post-it Rouge : Post-it B/);
+  ln = await lLine();
+  log('Extrémité : déposée sur un objet, mise en évidence et accrochée', snapShown && ln.endId === 'item-2' && !ln.end);
+  await lDrag(await lHandle('[data-end="end"]'), await lToScreen(700, 500));
+  await lAnn(/Fin détachée en \(700, 500\)/);
+  ln = await lLine();
+  log('Extrémité : tirée hors de l’objet, détachée et annoncée', !ln.endId && ln.end.x === 700 && ln.end.y === 500);
+
+  await lLoad([{ id: 'item-1', type: 'connector', start: { x: 300, y: 300 }, end: { x: 700, y: 300 } }]);
+  await lp.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('item-1'));
+  await lDrag(await lHandle('[data-mid="0"]'), await lToScreen(500, 500));
+  await lAnn(/Point de pliage ajouté en \(500, 500\)/);
+  ln = await lLine();
+  const midsAfter = await lp.locator('[data-mid]').count();
+  log('Point de pliage : le point milieu ajoute un pli et deux nouveaux milieux', ln.waypoints.length === 1 && ln.waypoints[0].x === 500 && ln.waypoints[0].y === 500 && midsAfter === 2);
+  const wp = await lHandle('[data-wp="0"]');
+  await lp.mouse.dblclick(wp.x, wp.y);
+  await lAnn(/Point de pliage supprimé/);
+  log('Point de pliage : double-clic le supprime', (await lLine()).waypoints.length === 0);
+
+  await lp.locator('.context-toolbar [data-key="end-cap"]').click();
+  await lp.getByRole('menuitemradio', { name: 'Losange' }).click();
+  await lp.locator('.context-toolbar [data-key="start-cap"]').click();
+  await lp.getByRole('menuitemradio', { name: 'Cercle' }).click();
+  await lp.locator('.context-toolbar [data-key="line-type"]').click();
+  await lp.getByRole('menuitemradio', { name: 'Courbe' }).click();
+  await lp.locator('.context-toolbar [data-key="line-style"]').click();
+  await lp.getByRole('menuitemradio', { name: 'Tirets' }).click();
+  await lp.locator('.context-toolbar [data-key="line-width"]').click();
+  await lp.getByRole('menuitemradio', { name: '6 px' }).click();
+  await lp.locator('.context-toolbar [data-key="line-color"]').click();
+  await lp.getByRole('menuitemradio', { name: 'Vert' }).click();
+  ln = await lLine();
+  const bodyPath = lp.locator('#canvas-items .line-body');
+  log('Barre de ligne : extrémités, type, trait, épaisseur et couleur appliqués', ln.endCap === 'diamond' && ln.startCap === 'circle' && ln.lineType === 'bezier' && ln.lineStyle === 'dashed' && ln.strokeWidth === 6 && ln.stroke === 'green' && / C /.test(await bodyPath.getAttribute('d')) && !!(await bodyPath.getAttribute('stroke-dasharray')) && await lp.locator('.line-cap[data-cap="diamond"]').count() === 1);
+  await lp.locator('.context-toolbar [data-key="reverse"]').click();
+  await lAnn(/Extrémités inversées/);
+  ln = await lLine();
+  log('Barre de ligne : inverser les extrémités', ln.start.x === 700 && ln.end.x === 300);
+  await lp.keyboard.press('Control+z');
+  await lp.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('item-1'));
+  await lp.keyboard.press('Alt+F10');
+  await lp.keyboard.press('Home');
+  const onStartCap = await lp.evaluate(() => document.activeElement.dataset.key);
+  await lp.keyboard.press('Alt+ArrowDown');
+  await lAnn(/Début déplacé en \(300, 310\)/);
+  log('Clavier : barre pour choisir Début, Alt+flèche déplace l’extrémité active', onStartCap === 'start-cap' && (await lLine()).start.y === 310);
+  await lp.keyboard.press('Escape');
+  await lp.keyboard.press('Enter');
+  await lp.waitForSelector('.field-editor');
+  await lp.keyboard.type('Étape');
+  await lp.keyboard.press('Enter');
+  await lp.waitForFunction(() => document.querySelector('#canvas-items .line-label')?.textContent === 'Étape');
+  log('Texte sur la ligne : édition sur place, au milieu', (await lLine()).label === 'Étape');
+
+  await lp.locator('.context-toolbar [data-key="more"]').click();
+  await lp.getByRole('menuitem', { name: 'Extrémités et points de pliage…' }).click();
+  await lp.waitForSelector('#dialog-link[open]');
+  const startIsFree = await lp.inputValue('[name="link-start"]') === '__libre__';
+  await lp.fill('[name="link-end-x"]', '800');
+  await lp.click('.waypoint-add');
+  await lp.locator('.waypoints-list input').nth(0).fill('450');
+  await lp.locator('.waypoints-list input').nth(1).fill('120');
+  await lp.click('#dialog-link .dialog-submit');
+  await lp.waitForFunction(() => !document.querySelector('#dialog-link[open]'));
+  ln = await lLine();
+  log('Dialogue : extrémités et points de pliage modifiables en X/Y', startIsFree && ln.end.x === 800 && ln.waypoints[0].x === 450 && ln.waypoints[0].y === 120);
+
+  await lLoad([lNote('item-1', 100, 100, 'Post-it A')]);
+  await lp.click('#btn-link');
+  await lp.selectOption('[name="link-start"]', 'item-1');
+  await lp.selectOption('[name="link-end"]', '__libre__');
+  await lp.fill('[name="link-end-x"]', '900');
+  await lp.fill('[name="link-end-y"]', '400');
+  await lp.click('#dialog-link .dialog-submit');
+  await lp.waitForFunction(() => !document.querySelector('#dialog-link[open]'));
+  ln = await lLine();
+  const halfLabel = await lp.locator(`#canvas-items [data-id="${ln.id}"]`).getAttribute('aria-label');
+  log('Dialogue : source objet, cible point libre, nom accessible', ln.startId === 'item-1' && ln.end.x === 900 && halfLabel.startsWith('Flèche de Post-it Rouge : Post-it A vers (900, 400)'), halfLabel);
+
+  await lLoad([lNote('item-1', 100, 100, 'A'), lNote('item-2', 500, 100, 'B'), { id: 'item-3', type: 'connector', startId: 'item-1', endId: 'item-2', lineType: 'line', label: 'ancien', x: 0, y: 0 }, { id: 'item-4', type: 'connector', startId: 'item-1', endId: 'item-2', lineType: 'arrow', x: 0, y: 0 }, { id: 'item-5', type: 'connector', startId: 'item-1', endId: 'item-2', lineType: 'orthogonal', x: 0, y: 0 }]);
+  let legacy = (await lItems()).filter(i => i.type === 'connector');
+  log('Ancien lien : toujours valide et migré', legacy[0].lineType === 'straight' && legacy[0].endCap === 'none' && legacy[1].endCap === 'arrow_filled' && legacy[2].lineType === 'orthogonal' && legacy[2].endCap === 'arrow_filled' && await lp.locator('#canvas-items .line-body').count() === 3);
+  const oldEdge = await lp.locator('#canvas-items [data-id="item-3"] .line-body').getAttribute('d');
+  await lState('moveItems', ['item-2'], 0, 100);
+  log('Objet déplacé : l’extrémité suit et reste au bord', await lp.locator('#canvas-items [data-id="item-3"] .line-body').getAttribute('d') !== oldEdge && (await lItems()).find(i => i.id === 'item-3').endId === 'item-2');
+  await lp.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('item-3'));
+  await lp.keyboard.press('ArrowDown');
+  await lAnn(/Ligne détachée et déplacée/);
+  ln = (await lItems()).find(i => i.id === 'item-3');
+  log('Ligne attachée des deux côtés : déplacée, elle se détache', !ln.startId && !ln.endId && !!ln.start && !!ln.end);
+
+  await lLoad([{ id: 'item-1', type: 'connector', start: { x: 100, y: 100 }, end: { x: 300, y: 100 }, waypoints: [{ x: 200, y: 200 }], label: 'trouvaille' }, lNote('item-2', 500, 100, 'A'), { id: 'item-3', type: 'connector', startId: 'item-2', end: { x: 900, y: 100 } }]);
+  await lp.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('item-1'));
+  await lp.keyboard.press('Control+d');
+  let lineItems = (await lItems()).filter(i => i.type === 'connector');
+  const dup = lineItems.find(i => !['item-1', 'item-3'].includes(i.id));
+  log('Ligne libre : duplication décalée', lineItems.length === 3 && dup.start.x === 120 && dup.waypoints[0].x === 220);
+  await lp.keyboard.press('Control+z');
+  await lp.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('item-3'));
+  await lp.keyboard.press('Control+c');
+  await lp.keyboard.press('Control+v');
+  lineItems = (await lItems()).filter(i => i.type === 'connector');
+  const pastedLine = lineItems.find(i => !['item-1', 'item-3'].includes(i.id));
+  log('Copier-coller : extrémité d’un objet non copié devenue point libre', !pastedLine.startId && !!pastedLine.start && pastedLine.end.x === 920);
+  await lp.keyboard.press('Control+z');
+  await lState('removeItems', ['item-2']);
+  ln = (await lItems()).find(i => i.id === 'item-3');
+  log('Suppression d’un objet : la ligne garde un point libre', !!ln && !ln.startId && !!ln.start);
+  await lp.click('#tab-outline');
+  const outlineLines = await lp.locator('#view-outline').textContent();
+  await lp.click('#tab-table');
+  const tableLines = await lp.locator('#view-table').textContent();
+  await lp.click('#tab-canvas');
+  const csvLines = await lp.evaluate(async () => (await import('/js/io.js')).csvContent());
+  await lp.click('#btn-search');
+  await lp.fill('#board-search-input', 'trouvaille');
+  await lp.waitForFunction(() => document.querySelector('#board-search [role=status]').textContent === '1 résultat');
+  await lp.keyboard.press('Escape');
+  log('Plan, Tableau, CSV et recherche connaissent les lignes libres', /Ligne libre de \(100, 100\) à \(300, 100\)/.test(outlineLines) && /Ligne libre de \(100, 100\)/.test(tableLines) && csvLines.includes('Ligne libre de (100, 100)'));
+  log('Lignes : pas d’erreurs console', lineErrors.length === 0, lineErrors.join('; '));
+  await lineCtx.close();
 
 } catch (err) {
   log('Exécution complète des tests', false, err.message);

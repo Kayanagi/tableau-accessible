@@ -3,6 +3,7 @@ import * as history from '../store/history.js';
 import { announce } from '../a11y/announcer.js';
 import * as O from '../objects.js';
 import * as obj from './canvas-objects.js';
+import * as L from '../lines.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const BASE_W = 2000;
@@ -13,11 +14,11 @@ const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 5;
 const LINK_BLUE = '#3859ff';
 const TOOL_SIZES = {
-  sticky_note: [150, 150], text: [200, 30], 'shape:rectangle': [120, 80], 'shape:circle': [100, 100], card: [200, 120], frame: [400, 300],
+  sticky_note: [150, 150], text: [200, 30], 'shape:rectangle': [120, 80], 'shape:circle': [100, 100], 'shape:diamond': [120, 100], 'shape:triangle': [120, 100], line: [200, 20], card: [200, 120], frame: [400, 300],
   comment: [28, 28], mindmap: [170, 56], kanban: [548, 116], datatable: [360, 118], code: [320, 180], flipcard: [220, 140]
 };
 export const TOOL_NAMES = {
-  select: 'Sélection', hand: 'Main', sticky_note: 'Post-it', text: 'Texte', 'shape:rectangle': 'Rectangle', 'shape:circle': 'Cercle', card: 'Carte', frame: 'Cadre',
+  select: 'Sélection', hand: 'Main', sticky_note: 'Post-it', text: 'Texte', 'shape:rectangle': 'Rectangle', 'shape:circle': 'Cercle', 'shape:diamond': 'Losange', 'shape:triangle': 'Triangle', line: 'Ligne', card: 'Carte', frame: 'Cadre',
   pen: 'Stylo', eraser: 'Gomme', comment: 'Commentaire', mindmap: 'Carte mentale', kanban: 'Kanban', datatable: 'Tableau de données', code: 'Bloc de code', flipcard: 'Carte recto-verso'
 };
 const DRAW_TOOLS = ['pen', 'eraser'];
@@ -33,6 +34,9 @@ let focusedIndex = -1;
 let dragState = null;
 let resizeState = null;
 let linkState = null;
+let lineDraft = null;
+let lineDrag = null;
+let activeEnd = 'end';
 let marquee = null;
 let pendingCreate = null;
 let lastDownId = null;
@@ -191,12 +195,12 @@ export function panBy(dx, dy) {
 }
 
 export function zoomToFit() {
-  const items = state.getItems().filter(i => i.type !== 'connector');
-  if (!svg || !items.length || !svg.clientWidth) { zoomReset(); return; }
-  const minX = Math.min(...items.map(i => i.x));
-  const minY = Math.min(...items.map(i => i.y));
-  const maxX = Math.max(...items.map(i => i.x + (i.width || 100)));
-  const maxY = Math.max(...items.map(i => i.y + (i.height || 100)));
+  const boxes = state.getItems().map(itemBox).filter(b => b.w || b.h);
+  if (!svg || !boxes.length || !svg.clientWidth) { zoomReset(); return; }
+  const minX = Math.min(...boxes.map(b => b.x));
+  const minY = Math.min(...boxes.map(b => b.y));
+  const maxX = Math.max(...boxes.map(b => b.x + b.w));
+  const maxY = Math.max(...boxes.map(b => b.y + b.h));
   const pad = 40;
   const z = Math.min(svg.clientWidth / (maxX - minX + pad * 2), svg.clientHeight / (maxY - minY + pad * 2));
   zoom = Math.min(1.5, Math.max(MIN_ZOOM, z));
@@ -291,8 +295,9 @@ function renderItem(item, index) {
 
   if (item.locked) {
     const badge = document.createElementNS(SVG_NS, 'text');
-    badge.setAttribute('x', item.x || 0);
-    badge.setAttribute('y', (item.y || 0) + (item.type === 'connector' ? 30 : itemBox(item).h) + 18);
+    const lockBox = itemBox(item);
+    badge.setAttribute('x', lockBox.x);
+    badge.setAttribute('y', lockBox.y + lockBox.h + 18);
     badge.setAttribute('fill', 'var(--fg)');
     badge.setAttribute('font-size', '14');
     badge.textContent = '🔒 Verrouillé';
@@ -428,6 +433,7 @@ export function inkFor(item) {
 }
 
 export function itemBox(item) {
+  if (item.type === 'connector') return L.geometry(item, state.getItem)?.bbox || { x: 0, y: 0, w: 0, h: 0 };
   const w = item.width || 100;
   let h = item.height || 30;
   if (item.type === 'text') {
@@ -559,92 +565,100 @@ function renderFrame(g, item) {
   }
 }
 
-function center(i) {
-  return { x: i.x + (i.width || 100) / 2, y: i.y + (i.height || 100) / 2 };
-}
-
-function edgePoint(i, toward) {
-  const c = center(i);
-  const hw = (i.width || 100) / 2;
-  const hh = (i.height || 100) / 2;
-  const dx = toward.x - c.x;
-  const dy = toward.y - c.y;
-  if (!dx && !dy) return c;
-  let t;
-  if (i.type === 'shape' && i.shape === 'circle') t = 1 / Math.hypot(dx / hw, dy / hh);
-  else if (i.type === 'shape' && i.shape === 'diamond') t = 1 / (Math.abs(dx) / hw + Math.abs(dy) / hh);
-  else t = Math.min(dx ? hw / Math.abs(dx) : Infinity, dy ? hh / Math.abs(dy) : Infinity);
-  return { x: c.x + dx * t, y: c.y + dy * t };
-}
-
-function sideAnchor(i, toward, horizontal) {
-  const c = center(i);
-  const hw = (i.width || 100) / 2;
-  const hh = (i.height || 100) / 2;
-  return horizontal
-    ? { x: c.x + Math.sign(toward.x - c.x || 1) * hw, y: c.y }
-    : { x: c.x, y: c.y + Math.sign(toward.y - c.y || 1) * hh };
-}
-
-export function connectorMidpoint(item) {
-  const a = state.getItem(item.startId), b = state.getItem(item.endId);
-  if (!a || !b) return null;
-  const s = edgePoint(a, center(b)), e = edgePoint(b, center(a));
-  return { x: (s.x + e.x) / 2, y: (s.y + e.y) / 2 };
-}
-
 function renderConnector(g, item) {
-  const startItem = state.getItem(item.startId);
-  const endItem = state.getItem(item.endId);
-  if (!startItem || !endItem) return;
-
-  const a = center(startItem);
-  const b = center(endItem);
-  let d, mx, my;
-  if (item.lineType === 'orthogonal') {
-    const horizontal = Math.abs(b.x - a.x) > Math.abs(b.y - a.y);
-    const s = sideAnchor(startItem, b, horizontal);
-    const e = sideAnchor(endItem, a, horizontal);
-    mx = (s.x + e.x) / 2; my = (s.y + e.y) / 2;
-    d = horizontal ? `M ${s.x} ${s.y} H ${mx} V ${e.y} H ${e.x}` : `M ${s.x} ${s.y} V ${my} H ${e.x} V ${e.y}`;
-  } else {
-    const s = edgePoint(startItem, b);
-    const e = edgePoint(endItem, a);
-    mx = (s.x + e.x) / 2; my = (s.y + e.y) / 2;
-    d = `M ${s.x} ${s.y} L ${e.x} ${e.y}`;
+  const G = L.geometry(item, state.getItem);
+  if (!G) return;
+  const sw = item.strokeWidth || 2, color = L.strokeOf(item), dash = L.dashOf(item);
+  g.append(
+    svgEl('path', { d: G.d, fill: 'none', stroke: 'transparent', 'stroke-width': Math.max(16, sw + 12), class: 'line-hit' }),
+    svgEl('path', { d: G.d, fill: 'none', stroke: 'var(--primary)', 'stroke-width': sw + 6, 'stroke-opacity': 0.4, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'pointer-events': 'none', class: 'line-halo' })
+  );
+  const body = svgEl('path', { d: G.body, fill: 'none', stroke: color, 'stroke-width': sw, 'stroke-linejoin': 'round', 'stroke-linecap': item.lineStyle === 'dotted' ? 'round' : 'butt', 'pointer-events': 'none', class: 'line-body' });
+  if (dash) body.setAttribute('stroke-dasharray', dash);
+  g.appendChild(body);
+  const size = L.capSize(sw);
+  for (const [cap, p, dir, end] of [[item.startCap, G.start, G.startDir, 'start'], [item.endCap, G.end, G.endDir, 'end']]) {
+    const shape = L.capShape(cap, p, dir, size);
+    if (!shape) continue;
+    g.appendChild(svgEl(shape.tag, { ...shape.attrs, fill: shape.filled ? color : 'none', stroke: color, 'stroke-width': shape.filled ? 1 : sw, 'stroke-linejoin': 'round', 'stroke-linecap': 'round', 'pointer-events': 'none', class: `line-cap line-cap-${end}`, 'data-cap': cap }));
   }
-  for (const hit of [true, false]) {
-    const path = document.createElementNS(SVG_NS, 'path');
-    path.setAttribute('d', d);
-    path.setAttribute('fill', 'none');
-    path.setAttribute('stroke', hit ? 'transparent' : 'var(--connector-stroke)');
-    path.setAttribute('stroke-width', hit ? '16' : '2');
-    if (!hit && item.lineType !== 'line') path.setAttribute('marker-end', 'url(#arrowhead)');
-    g.appendChild(path);
+  if (item.label && item.id !== editingId) {
+    const { x, y } = G.labelAt;
+    const w = measure(item.label, 13, false) + 14;
+    g.append(
+      svgEl('rect', { x: x - w / 2, y: y - 11, width: w, height: 22, rx: 4, fill: 'var(--bg)', stroke: color, 'stroke-width': 0.5, class: 'line-label-bg' }),
+      Object.assign(svgEl('text', { x, y: y + 4.5, 'text-anchor': 'middle', fill: 'var(--fg)', 'font-size': 13, 'aria-hidden': 'true', class: 'line-label' }), { textContent: item.label })
+    );
   }
+}
 
-  if (item.label) {
-    const bg = document.createElementNS(SVG_NS, 'rect');
-    const textLen = item.label.length * 7 + 12;
-    bg.setAttribute('x', mx - textLen / 2);
-    bg.setAttribute('y', my - 10);
-    bg.setAttribute('width', textLen);
-    bg.setAttribute('height', 20);
-    bg.setAttribute('rx', '3');
-    bg.setAttribute('fill', 'var(--bg)');
-    bg.setAttribute('stroke', 'var(--connector-stroke)');
-    bg.setAttribute('stroke-width', '0.5');
-    g.appendChild(bg);
+export function selectedLine() {
+  const ids = state.getSelectedIds();
+  const item = ids.length === 1 ? state.getItem(ids[0]) : null;
+  return item?.type === 'connector' ? item : null;
+}
 
-    const txt = document.createElementNS(SVG_NS, 'text');
-    txt.setAttribute('x', mx);
-    txt.setAttribute('y', my + 4);
-    txt.setAttribute('text-anchor', 'middle');
-    txt.setAttribute('fill', 'var(--fg)');
-    txt.setAttribute('font-size', '12');
-    txt.textContent = item.label;
-    g.appendChild(txt);
+export function getActiveEnd() {
+  return activeEnd;
+}
+
+export function setActiveEnd(end) {
+  if (activeEnd === end) return;
+  activeEnd = end;
+  renderOverlay();
+}
+
+/* Alt+flèches : déplace l'extrémité active de la ligne sélectionnée. */
+export function lineEndKey(e) {
+  if (!e.altKey || e.ctrlKey || e.metaKey || !e.key.startsWith('Arrow')) return false;
+  const line = selectedLine();
+  if (!line) return false;
+  e.preventDefault();
+  const step = e.shiftKey ? LARGE_STEP : SMALL_STEP;
+  state.moveLineEnd(line.id, activeEnd, e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0, e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0);
+  return true;
+}
+
+export function lineLabelBox(id) {
+  const item = state.getItem(id);
+  const G = item && L.geometry(item, state.getItem);
+  if (!G) return null;
+  const w = Math.max(160, measure(item.label || '', 13, false) + 40);
+  return { x: G.labelAt.x - w / 2, y: G.labelAt.y - 14, w, h: 28 };
+}
+
+function renderLineHandles(line) {
+  const G = L.geometry(line, state.getItem);
+  if (!G) return;
+  const u = 1 / zoom;
+  G.mids.forEach((m, i) => {
+    const a = G.points[i], b = G.points[i + 1];
+    if (Math.hypot(b.x - a.x, b.y - a.y) * zoom < 72) return;
+    overlay.append(
+      svgEl('circle', { cx: m.x, cy: m.y, r: 12 * u, fill: 'transparent', 'data-mid': i, class: 'line-handle line-mid' }),
+      svgEl('circle', { cx: m.x, cy: m.y, r: 5 * u, fill: '#ffffff', stroke: LINK_BLUE, 'stroke-width': 1.5 * u, 'pointer-events': 'none' })
+    );
+  });
+  (line.waypoints || []).forEach((w, i) => {
+    overlay.append(
+      svgEl('circle', { cx: w.x, cy: w.y, r: 12 * u, fill: 'transparent', 'data-wp': i, class: 'line-handle line-wp' }),
+      svgEl('circle', { cx: w.x, cy: w.y, r: 6 * u, fill: LINK_BLUE, stroke: '#ffffff', 'stroke-width': 1.5 * u, 'pointer-events': 'none' })
+    );
+  });
+  for (const end of ['start', 'end']) {
+    const p = G[end];
+    if (end === activeEnd) overlay.appendChild(svgEl('circle', { cx: p.x, cy: p.y, r: 12 * u, fill: 'none', stroke: LINK_BLUE, 'stroke-width': 1.5 * u, 'stroke-dasharray': `${3 * u} ${2 * u}`, 'pointer-events': 'none', class: 'line-active-end' }));
+    overlay.append(
+      svgEl('circle', { cx: p.x, cy: p.y, r: 12 * u, fill: 'transparent', 'data-end': end, class: 'line-handle line-end' }),
+      svgEl('circle', { cx: p.x, cy: p.y, r: 7 * u, fill: L.isAttached(line, end) ? LINK_BLUE : '#ffffff', stroke: LINK_BLUE, 'stroke-width': 2 * u, 'pointer-events': 'none' })
+    );
   }
+}
+
+function renderSnapTarget(item) {
+  if (!item) return;
+  const b = itemBox(item), u = 1 / zoom;
+  overlay.appendChild(svgEl('rect', { x: b.x - 4 * u, y: b.y - 4 * u, width: b.w + 8 * u, height: b.h + 8 * u, rx: 6 * u, fill: 'rgba(56,89,255,0.12)', stroke: LINK_BLUE, 'stroke-width': 2.5 * u, 'pointer-events': 'none', class: 'snap-target' }));
 }
 
 function createRect(x, y, w, h, rx) {
@@ -698,6 +712,14 @@ function renderOverlay() {
       );
     }
   }
+  const line = selectedLine();
+  if (line && !line.locked && line.id !== editingId && !dragState?.moved) renderLineHandles(line);
+  if (lineDrag) renderSnapTarget(lineDrag.hover);
+  if (lineDraft) {
+    overlay.appendChild(svgEl('line', { x1: lineDraft.from.x, y1: lineDraft.from.y, x2: lineDraft.cur.x, y2: lineDraft.cur.y, stroke: LINK_BLUE, 'stroke-width': 2 * u, 'stroke-dasharray': `${6 * u} ${4 * u}`, class: 'line-draft', 'pointer-events': 'none' }));
+    renderSnapTarget(lineDraft.hover);
+    renderSnapTarget(lineDraft.fromItem);
+  }
   if (marquee?.moved) {
     const x = Math.min(marquee.start.x, marquee.cur.x), y = Math.min(marquee.start.y, marquee.cur.y);
     overlay.appendChild(svgEl('rect', { x, y, width: Math.abs(marquee.cur.x - marquee.start.x), height: Math.abs(marquee.cur.y - marquee.start.y), fill: 'rgba(56,89,255,0.08)', stroke: LINK_BLUE, 'stroke-width': u, class: 'marquee', 'pointer-events': 'none' }));
@@ -725,7 +747,7 @@ function targetIds(id) {
 }
 
 function onKeyDown(e) {
-  if (e.defaultPrevented) return;
+  if (e.defaultPrevented || lineEndKey(e)) return;
   if (e.target === svg && !state.getSelectedIds().length && !e.ctrlKey && !e.metaKey && !e.altKey && e.key.startsWith('Arrow')) {
     e.preventDefault();
     const step = e.shiftKey ? 200 : 50;
@@ -760,7 +782,7 @@ function onKeyDown(e) {
     case 'ArrowDown':
     case 'ArrowLeft':
     case 'ArrowRight': {
-      if (!item || item.type === 'connector') return;
+      if (!item) return;
       e.preventDefault();
       const step = e.shiftKey ? LARGE_STEP : SMALL_STEP;
       let dx = 0, dy = 0;
@@ -931,9 +953,8 @@ export function getSelectionRect() {
   if (items.length) b = unionBox(items);
   else {
     const c = state.getItem(state.getSelectedId());
-    const m = c?.type === 'connector' && connectorMidpoint(c);
-    if (!m) return null;
-    b = { x: m.x - 10, y: m.y - 10, w: 20, h: 20 };
+    if (c?.type !== 'connector' || !L.geometry(c, state.getItem)) return null;
+    b = itemBox(c);
   }
   const a = toContainer(b.x, b.y), z = toContainer(b.x + b.w, b.y + b.h);
   return { left: a.x, top: a.y, right: z.x, bottom: z.y };
@@ -959,7 +980,24 @@ function onPointerDown(e) {
   const pt = screenToSvg(e.clientX, e.clientY);
   if (tool === 'pen') { e.preventDefault(); penState = { points: [pt] }; svg.setPointerCapture(e.pointerId); return; }
   if (tool === 'eraser') { e.preventDefault(); eraseState = { ids: new Set() }; eraseAt(e); svg.setPointerCapture(e.pointerId); return; }
+  if (tool === 'line') {
+    e.preventDefault();
+    lineDraft = { from: pt, cur: pt, fromItem: hitItem(pt), hover: null, moved: false };
+    svg.setPointerCapture(e.pointerId);
+    return;
+  }
   if (isCreationTool()) { e.preventDefault(); pendingCreate = pt; return; }
+
+  const line = selectedLine();
+  const lineHandle = line && !line.locked ? e.target.closest('[data-end], [data-wp], [data-mid]') : null;
+  if (lineHandle) {
+    e.preventDefault();
+    const { end, wp, mid: segment } = lineHandle.dataset;
+    if (end) setActiveEnd(end);
+    lineDrag = { id: line.id, end, index: Number(end ? 0 : wp ?? segment), isNew: !end && !wp, start: pt, moved: false, hover: null, wasAttached: end ? L.isAttached(line, end) : false };
+    svg.setPointerCapture(e.pointerId);
+    return;
+  }
 
   const handle = e.target.closest('[data-handle]');
   const dot = e.target.closest('[data-link]');
@@ -972,8 +1010,8 @@ function onPointerDown(e) {
   }
   if (dot && sel) {
     e.preventDefault();
-    const c = center(sel);
-    linkState = { fromId: sel.id, from: c, to: pt };
+    const b = itemBox(sel);
+    linkState = { fromId: sel.id, from: { x: b.x + b.w / 2, y: b.y + b.h / 2 }, to: pt };
     svg.setPointerCapture(e.pointerId);
     renderOverlay();
     return;
@@ -1001,9 +1039,18 @@ function onPointerDown(e) {
       svg.setPointerCapture(e.pointerId);
       return;
     }
-    if (!item || item.type === 'connector' || state.isLocked(id)) return;
+    if (!item || state.isLocked(id)) return;
     const ids = state.movableIds(state.getSelectedIds());
-    dragState = { ids, starts: new Map(ids.map(sid => [sid, { x: state.getItem(sid).x, y: state.getItem(sid).y }])), start: pt, moved: false };
+    const objects = ids.filter(sid => state.getItem(sid).type !== 'connector');
+    const moving = new Set(objects);
+    const lines = ids.filter(sid => !moving.has(sid));
+    const followers = state.getConnectors().filter(c => !lines.includes(c.id) && c.waypoints?.length && moving.has(c.startId) && moving.has(c.endId));
+    dragState = {
+      ids, moving, starts: new Map(objects.map(sid => [sid, { x: state.getItem(sid).x, y: state.getItem(sid).y }])),
+      lines: new Map(lines.map(sid => [sid, JSON.parse(JSON.stringify(state.getItem(sid)))])),
+      followers: new Map(followers.map(c => [c.id, c.waypoints.map(w => ({ ...w }))])),
+      detached: false, start: pt, moved: false
+    };
     svg.setPointerCapture(e.pointerId);
     return;
   }
@@ -1105,6 +1152,15 @@ function onPointerMove(e) {
     renderOverlay();
     return;
   }
+  if (lineDraft) {
+    lineDraft.cur = pt;
+    if (Math.hypot(pt.x - lineDraft.from.x, pt.y - lineDraft.from.y) * zoom >= 5) lineDraft.moved = true;
+    const over = hitItem(pt);
+    lineDraft.hover = lineDraft.moved && over && over !== lineDraft.fromItem ? over : null;
+    renderOverlay();
+    return;
+  }
+  if (lineDrag) { moveLineDrag(pt); return; }
   if (marquee) {
     marquee.cur = pt;
     if (Math.abs(pt.x - marquee.start.x) * zoom > 3 || Math.abs(pt.y - marquee.start.y) * zoom > 3) marquee.moved = true;
@@ -1116,11 +1172,66 @@ function onPointerMove(e) {
   const dy = pt.y - dragState.start.y;
   if (!dragState.moved && Math.abs(dx) * zoom <= 3 && Math.abs(dy) * zoom <= 3) return;
   if (!dragState.moved) { history.pushState(state.getSnapshot()); dragState.moved = true; }
+  for (const [id, original] of dragState.lines) {
+    const item = state.getItem(id);
+    if (!item) continue;
+    for (const key of ['startId', 'endId', 'start', 'end']) delete item[key];
+    Object.assign(item, JSON.parse(JSON.stringify(original)));
+    if (L.shiftLine(item, dx, dy, dragState.moving, state.getItem)) dragState.detached = true;
+  }
+  for (const [id, wps] of dragState.followers) {
+    const item = state.getItem(id);
+    if (item) item.waypoints = wps.map(w => ({ x: Math.round(w.x + dx), y: Math.round(w.y + dy) }));
+  }
   for (const [id, s] of dragState.starts) {
     const item = state.getItem(id);
     if (item) { item.x = Math.round(s.x + dx); item.y = Math.round(s.y + dy); }
   }
   render();
+}
+
+function moveLineDrag(pt) {
+  const d = lineDrag;
+  const item = state.getItem(d.id);
+  if (!item) return;
+  if (!d.moved) {
+    if (Math.hypot(pt.x - d.start.x, pt.y - d.start.y) * zoom < 3) return;
+    history.pushState(state.getSnapshot());
+    d.moved = true;
+    if (d.isNew) { item.waypoints.splice(d.index, 0, { x: Math.round(pt.x), y: Math.round(pt.y) }); d.isNew = false; d.added = true; }
+  }
+  if (d.end) {
+    L.setEnd(item, d.end, pt);
+    const other = item[`${d.end === 'start' ? 'end' : 'start'}Id`];
+    d.hover = hitItem(pt, other) || null;
+  } else item.waypoints[d.index] = { x: Math.round(pt.x), y: Math.round(pt.y) };
+  render();
+}
+
+function finishLineDrag() {
+  const d = lineDrag;
+  lineDrag = null;
+  const item = state.getItem(d.id);
+  if (!d.moved || !item) return;
+  if (d.end && d.hover) L.setEnd(item, d.end, { id: d.hover.id });
+  state.touch();
+  if (d.end) announce(state.endChangeMessage(item, d.end, d.wasAttached));
+  else {
+    const w = item.waypoints[d.index];
+    announce(`Point de pliage ${d.added ? 'ajouté' : 'déplacé'} en (${w.x}, ${w.y})`);
+  }
+}
+
+function createLine(start, end) {
+  const data = { type: 'connector', x: 0, y: 0, label: '', lineType: 'straight', startCap: 'none', endCap: 'arrow_filled' };
+  L.setEnd(data, 'start', start);
+  L.setEnd(data, 'end', end);
+  activeEnd = 'end';
+  const item = state.addItem(data);
+  setTool('select');
+  focusGroup(item.id);
+  announce(`Créé : ${state.getItemLabel(item)}`);
+  return item;
 }
 
 function onPointerUp(e) {
@@ -1160,6 +1271,15 @@ function onPointerUp(e) {
     }
     return;
   }
+  if (lineDraft) {
+    const l = lineDraft;
+    lineDraft = null;
+    if (e.type !== 'pointerup') { renderOverlay(); return; }
+    if (!l.moved) { createAt('line', l.from); return; }
+    createLine(l.fromItem ? { id: l.fromItem.id } : l.from, l.hover ? { id: l.hover.id } : l.cur);
+    return;
+  }
+  if (lineDrag) { finishLineDrag(); return; }
   if (linkState) {
     const l = linkState;
     linkState = null;
@@ -1167,7 +1287,7 @@ function onPointerUp(e) {
     const endId = target?.getAttribute('data-id');
     const end = state.getItem(endId);
     if (end && end.type !== 'connector' && endId !== l.fromId) {
-      state.addItem({ type: 'connector', startId: l.fromId, endId, label: '', lineType: 'arrow', x: 0, y: 0 });
+      state.addItem({ type: 'connector', startId: l.fromId, endId, label: '', lineType: 'straight', endCap: 'arrow_filled', x: 0, y: 0 });
       state.setSelectedId(l.fromId);
       announce(`Lien créé entre ${state.getItemLabel(state.getItem(l.fromId))} et ${state.getItemLabel(end)}`);
     } else {
@@ -1183,7 +1303,7 @@ function onPointerUp(e) {
     const x1 = Math.min(m.start.x, m.cur.x), x2 = Math.max(m.start.x, m.cur.x);
     const y1 = Math.min(m.start.y, m.cur.y), y2 = Math.max(m.start.y, m.cur.y);
     const inside = state.getItems().filter(i => {
-      if (i.type === 'connector') return false;
+      if (i.type === 'connector' && (i.startId || i.endId)) return false;
       const b = itemBox(i);
       return b.x >= x1 && b.y >= y1 && b.x + b.w <= x2 && b.y + b.h <= y2;
     }).map(i => i.id);
@@ -1196,12 +1316,19 @@ function onPointerUp(e) {
     if (d.moved) {
       state.touch();
       const first = state.getItem(d.ids[0]);
-      announce(d.ids.length === 1 && first ? `Déplacé en ${first.x}, ${first.y}` : `${d.ids.length} éléments déplacés`);
+      if (first?.type === 'connector' && d.ids.length === 1) announce(`Ligne ${d.detached ? 'détachée et ' : ''}déplacée : ${state.getItemLabel(first)}`);
+      else announce(d.ids.length === 1 && first ? `Déplacé en ${first.x}, ${first.y}` : `${d.ids.length} éléments déplacés`);
     } else renderOverlay();
   }
 }
 
 function onDoubleClick(e) {
+  const line = selectedLine();
+  if (tool === 'select' && line && !line.locked) {
+    const pt = screenToSvg(e.clientX, e.clientY);
+    const hit = (line.waypoints || []).findIndex(w => Math.hypot(w.x - pt.x, w.y - pt.y) * zoom <= 14);
+    if (hit >= 0) { state.removeWaypoint(line.id, hit); focusGroup(line.id); return; }
+  }
   if (tool !== 'select' || !lastDownId || e.shiftKey || e.ctrlKey || e.metaKey) return;
   const item = state.getItem(lastDownId);
   if (item?.groupId && enteredGroup !== item.groupId) { enterGroup(item.id); return; }
@@ -1211,15 +1338,16 @@ function onDoubleClick(e) {
   edit(lastDownId);
 }
 
-function hitItem(pt) {
+function hitItem(pt, exclude) {
   return [...state.getItems()].reverse().find(i => {
-    if (['connector', 'comment'].includes(i.type) || (i.type === 'mindmap' && state.isMindHidden(i))) return false;
+    if (i.id === exclude || ['connector', 'comment'].includes(i.type) || (i.type === 'mindmap' && state.isMindHidden(i))) return false;
     const b = itemBox(i);
     return pt.x >= b.x && pt.x <= b.x + b.w && pt.y >= b.y && pt.y <= b.y + b.h;
   });
 }
 
 export function createAt(t, pt, useSelection = false) {
+  if (t === 'line') return createLine({ x: pt.x - 100, y: pt.y }, { x: pt.x + 100, y: pt.y });
   const [type, shape] = t.split(':');
   const [w, h] = TOOL_SIZES[t] || [150, 150];
   const data = { type, x: Math.round(pt.x - w / 2), y: Math.round(pt.y - h / 2), width: w, height: h, content: '', ...O.defaults(type) };

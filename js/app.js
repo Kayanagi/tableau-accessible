@@ -16,9 +16,10 @@ import * as toolsPanel from './views/tools-panel.js';
 import * as commentsPanel from './views/comments-panel.js';
 import * as objects from './views/canvas-objects.js';
 import * as O from './objects.js';
+import * as L from './lines.js';
 
-const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
-const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
+const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-line': 'line', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
+const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', l: 'line', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
 const MORE_TOOLS = ['pen', 'eraser', 'comment', 'mindmap', 'kanban', 'datatable', 'code', 'flipcard'];
 
 let currentView = 'canvas';
@@ -350,6 +351,7 @@ function activateTool(tool, fromKey) {
   const name = canvas.TOOL_NAMES[tool];
   if (tool === 'pen' || tool === 'eraser') { activateDrawTool(tool, fromKey); return; }
   if (!canvas.isCreationTool(tool)) { announcer.announce(`Outil ${name} actif`); return; }
+  if (tool === 'line') { announcer.announce('Outil Ligne actif : glissez sur le canevas pour tracer une ligne libre, cliquez pour une ligne de longueur par défaut, ou Entrée pour la créer au centre de la vue. Échap pour annuler.'); return; }
   announcer.announce(`Outil ${name} actif : cliquez sur le canevas pour poser l’élément, ou Entrée pour le créer au centre de la vue. Échap pour annuler.`);
   if (tool === 'sticky_note' && fromKey) document.querySelector('#sticky-palette input:checked')?.focus();
 }
@@ -415,12 +417,13 @@ function setupDialogs() {
 
   canvas.getSvgElement().addEventListener('item-edit', (e) => {
     const item = state.getItem(e.detail.id);
-    if (item?.type === 'connector') openEditDialog(item.id);
+    if (item?.type === 'connector') editor.openLineLabel(item.id);
     else if (item?.type === 'comment') commentsPanel.open(item.id, true);
     else if (item && !objects.enterSub(item)) editor.open(item.id, e.detail.isNew);
   });
   canvas.getSvgElement().addEventListener('comment-open', (e) => commentsPanel.open(e.detail.id, e.detail.focus));
   setupTagDialog();
+  setupLinkDialog();
   document.addEventListener('table-edit', (e) => openEditDialog(e.detail.id));
   document.addEventListener('outline-focus', (e) => { if (currentView === 'canvas') canvas.focusItem(e.detail.id); });
 }
@@ -498,7 +501,6 @@ function setupShortcuts() {
         if (['PageUp', 'PageDown'].includes(e.key)) { e.preventDefault(); state.reorderItems(ids, e.key === 'PageUp'); return; }
         if (e.shiftKey && key === 'c') { e.preventDefault(); commentsPanel.toggle(); return; }
         if (TOOL_KEYS[key] && !e.shiftKey) { e.preventDefault(); activateTool(TOOL_KEYS[key], true); return; }
-        if (key === 'l') { e.preventDefault(); openLinkDialog(); return; }
         if (e.key === 'Escape') {
           if (canvas.cancelTool()) { e.preventDefault(); return; }
           if (state.getSelectedIds().length) { e.preventDefault(); state.setSelection([], true); canvas.getSvgElement().focus({ preventScroll: true }); return; }
@@ -591,14 +593,84 @@ function submitItemForm() {
   dialog.close();
 }
 
+const FREE_END = '__libre__';
+
+function setupLinkDialog() {
+  const dialog = document.getElementById('dialog-link');
+  const fill = (name, entries, value) => {
+    const select = dialog.querySelector(`[name="${name}"]`);
+    for (const [v, label] of entries) select.add(new Option(label, v, v === value, v === value));
+  };
+  fill('link-start-cap', Object.entries(L.CAPS), 'none');
+  fill('link-end-cap', Object.entries(L.CAPS), 'arrow_filled');
+  fill('link-type', Object.entries(L.LINE_TYPES), 'straight');
+  fill('link-style', Object.entries(L.LINE_STYLES), 'solid');
+  fill('link-width', L.LINE_WIDTHS.map(w => [String(w), `${w} px`]), '2');
+  fill('link-color', L.LINE_COLORS.map(c => [c[0], c[1]]), 'auto');
+  for (const end of ['start', 'end']) dialog.querySelector(`[name="link-${end}"]`).addEventListener('change', syncLinkFree);
+  dialog.querySelector('.waypoint-add').addEventListener('click', () => {
+    addWaypointRow(canvas.getViewCenter());
+    dialog.querySelector('.waypoints-list li:last-child input').focus();
+  });
+}
+
+function syncLinkFree() {
+  const dialog = document.getElementById('dialog-link');
+  for (const end of ['start', 'end']) {
+    dialog.querySelector(`[data-free="${end}"]`).hidden = dialog.querySelector(`[name="link-${end}"]`).value !== FREE_END;
+  }
+}
+
+function addWaypointRow(point) {
+  const list = document.querySelector('#dialog-link .waypoints-list');
+  const li = document.createElement('li');
+  const field = (name, value) => {
+    const label = document.createElement('label');
+    const input = document.createElement('input');
+    Object.assign(input, { type: 'number', value, step: 10 });
+    input.dataset.axis = name;
+    label.append(`${name} `, input);
+    return label;
+  };
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.textContent = 'Supprimer';
+  del.addEventListener('click', () => {
+    const next = li.nextElementSibling || li.previousElementSibling;
+    li.remove();
+    relabelWaypoints();
+    (next?.querySelector('button') || document.querySelector('#dialog-link .waypoint-add')).focus();
+    announcer.announce('Point de pliage retiré');
+  });
+  li.append(field('X', point.x), field('Y', point.y), del);
+  list.append(li);
+  relabelWaypoints();
+}
+
+function relabelWaypoints() {
+  document.querySelectorAll('#dialog-link .waypoints-list li').forEach((li, i) => {
+    li.querySelector('button').setAttribute('aria-label', `Supprimer le point de pliage ${i + 1}`);
+    li.querySelectorAll('input').forEach(input => input.setAttribute('aria-label', `${input.dataset.axis} du point de pliage ${i + 1}`));
+  });
+}
+
+function setLinkError(message) {
+  const error = document.querySelector('#dialog-link .dialog-error');
+  error.textContent = message;
+  error.hidden = !message;
+}
+
 function openLinkDialog() {
   editingId = null;
   const dialog = document.getElementById('dialog-link');
   dialog.querySelector('form').reset();
-  dialog.querySelector('.dialog-title').textContent = 'Nouveau lien';
+  dialog.querySelector('.dialog-title').textContent = 'Nouvelle ligne';
   dialog.querySelector('.dialog-submit').textContent = 'Créer';
   dialog.querySelector('.dialog-delete').hidden = true;
+  dialog.querySelector('.waypoints-list').replaceChildren();
+  setLinkError('');
   populateLinkSelects();
+  syncLinkFree();
   dialog.showModal();
 }
 
@@ -607,50 +679,75 @@ function openLinkDialogForEdit(item) {
   const dialog = document.getElementById('dialog-link');
   const form = dialog.querySelector('form');
   form.reset();
-  dialog.querySelector('.dialog-title').textContent = 'Éditer le lien';
+  dialog.querySelector('.dialog-title').textContent = 'Éditer la ligne';
   dialog.querySelector('.dialog-submit').textContent = 'Enregistrer';
   dialog.querySelector('.dialog-delete').hidden = false;
+  setLinkError('');
   populateLinkSelects();
-  form.querySelector('[name="link-start"]').value = item.startId;
-  form.querySelector('[name="link-end"]').value = item.endId;
-  form.querySelector('[name="link-label"]').value = item.label || '';
-  form.querySelector('[name="link-type"]').value = item.lineType || 'arrow';
+  const value = (name, v) => { form.querySelector(`[name="${name}"]`).value = v; };
+  for (const end of ['start', 'end']) {
+    value(`link-${end}`, item[`${end}Id`] || FREE_END);
+    const at = L.anchorOf(item, end, state.getItem) || { x: 0, y: 0 };
+    value(`link-${end}-x`, at.x);
+    value(`link-${end}-y`, at.y);
+  }
+  value('link-label', item.label || '');
+  value('link-type', item.lineType);
+  value('link-start-cap', item.startCap);
+  value('link-end-cap', item.endCap);
+  value('link-style', item.lineStyle);
+  value('link-width', String(item.strokeWidth));
+  value('link-color', item.stroke);
+  dialog.querySelector('.waypoints-list').replaceChildren();
+  (item.waypoints || []).forEach(addWaypointRow);
+  syncLinkFree();
   dialog.showModal();
 }
 
 function populateLinkSelects() {
   const items = state.getNonConnectorItems();
   document.querySelectorAll('#dialog-link [name="link-start"], #dialog-link [name="link-end"]').forEach(sel => {
-    sel.innerHTML = '<option value="">-- Choisir --</option>';
-    for (const item of items) {
-      const opt = document.createElement('option');
-      opt.value = item.id;
-      opt.textContent = state.getItemLabel(item);
-      sel.appendChild(opt);
-    }
+    sel.replaceChildren(new Option('-- Choisir --', ''), new Option('Point libre', FREE_END));
+    for (const item of items) sel.add(new Option(state.getItemLabel(item), item.id));
   });
 }
 
 function submitLinkForm() {
   const dialog = document.getElementById('dialog-link');
   const fd = new FormData(dialog.querySelector('form'));
-  const startId = fd.get('link-start');
-  const endId = fd.get('link-end');
-  const label = fd.get('link-label') || '';
-  const lineType = fd.get('link-type') || 'arrow';
-  if (!startId || !endId || startId === endId) {
-    announcer.announce('Veuillez choisir deux éléments différents');
+  const startId = fd.get('link-start'), endId = fd.get('link-end');
+  if (!startId || !endId || (startId === endId && startId !== FREE_END)) {
+    const message = 'Choisissez deux objets différents ou des points libres.';
+    setLinkError(message);
+    announcer.announce(message);
     return;
   }
-  if (editingId) {
-    state.updateItem(editingId, { startId, endId, label, lineType });
-    announcer.announce('Lien modifié');
+  const number = name => Number(fd.get(name)) || 0;
+  const target = (value, end) => (value === FREE_END ? { x: number(`link-${end}-x`), y: number(`link-${end}-y`) } : { id: value });
+  const waypoints = [...dialog.querySelectorAll('.waypoints-list li')].map(li => ({
+    x: Math.round(Number(li.querySelector('[data-axis="X"]').value) || 0),
+    y: Math.round(Number(li.querySelector('[data-axis="Y"]').value) || 0)
+  }));
+  const fields = {
+    label: fd.get('link-label') || '', lineType: fd.get('link-type'), startCap: fd.get('link-start-cap'), endCap: fd.get('link-end-cap'),
+    lineStyle: fd.get('link-style'), strokeWidth: Number(fd.get('link-width')) || 2, stroke: fd.get('link-color'), waypoints
+  };
+  let id = editingId;
+  if (id) {
+    state.mutateItem(id, item => {
+      Object.assign(item, fields);
+      L.setEnd(item, 'start', target(startId, 'start'));
+      L.setEnd(item, 'end', target(endId, 'end'));
+    }, 'Ligne modifiée');
   } else {
-    state.addItem({ type: 'connector', startId, endId, label, lineType, x: 0, y: 0 });
-    const s = state.getItem(startId);
-    const t = state.getItem(endId);
-    announcer.announce(`Lien créé entre ${s ? state.getItemLabel(s) : '?'} et ${t ? state.getItemLabel(t) : '?'}`);
+    const data = { type: 'connector', x: 0, y: 0, ...fields };
+    L.setEnd(data, 'start', target(startId, 'start'));
+    L.setEnd(data, 'end', target(endId, 'end'));
+    const item = state.addItem(data);
+    id = item.id;
+    announcer.announce(`Créé : ${state.getItemLabel(item)}`);
   }
   editingId = null;
   dialog.close();
+  if (state.getItem(id) && currentView === 'canvas') canvas.focusItem(id);
 }
