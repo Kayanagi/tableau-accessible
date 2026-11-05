@@ -2,6 +2,16 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.6.2] - 2026-11-05
+
+### Accessibilité
+- Annonces disponibles dans les dialogues modaux et compteur de résultats stable dans la boutique.
+- Focus conservé après le choix d’une catégorie sur mobile et aide ouverte sur son titre.
+- Déplacement des cartes Kanban par boutons, désactivés aux limites.
+- Noms accessibles alignés sur les textes visibles et sélection simple exposée sur le canevas.
+- Raccourcis sans débordement à 320 px, placeholders contrastés et cibles de tri d’au moins 24 px.
+- Contenu textuel du cadre disponible pendant la présentation.
+
 ## [1.6.1] - 2026-11-05
 
 ### Sécurité

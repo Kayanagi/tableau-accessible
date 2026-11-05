@@ -63,6 +63,9 @@ export function openLibrary(use) {
     root.querySelector('.store-nav-toggle').textContent = `Catégories : ${sectionOf(key).title}`;
     if (matchMedia('(max-width: 640px)').matches) toggleNav(false);
     renderMain();
+    const toggle = root.querySelector('.store-nav-toggle');
+    if (toggle.getClientRects().length) toggle.focus();
+    else root.querySelector(`[data-section="${CSS.escape(key)}"]`)?.focus();
     announce(`${sectionOf(key).title} : ${plural(found().length, 'modèle')}`);
   };
 
@@ -122,8 +125,7 @@ export function openLibrary(use) {
     const list = found();
     const head = make('div', { class: 'store-head' });
     head.append(make('h3', { text: section.title }));
-    status = make('p', { class: 'store-count', role: 'status', text: plural(list.length, 'modèle') });
-    head.append(status);
+    status.textContent = plural(list.length, 'modèle');
     const sort = make('select', { id: 'store-sort' });
     [['recommended', 'Recommandés'], ['name', 'Nom A-Z'], ['recent', 'Récents']].forEach(([v, name]) => sort.add(new Option(name, v, v === view.sort, v === view.sort)));
     sort.onchange = () => { view.sort = sort.value; renderMain(); root.querySelector('#store-sort').focus(); announce(`Tri : ${sort.options[sort.selectedIndex].text}`); };
@@ -165,7 +167,8 @@ export function openLibrary(use) {
     main = make('main', { class: 'store-main', tabindex: '-1' });
     main.setAttribute('role', 'region');
     main.setAttribute('aria-label', 'Modèles');
-    el.append(top, toggle, make('div', { class: 'store-body' }, nav, main));
+    status = make('p', { class: 'store-count', role: 'status', 'aria-atomic': 'true' });
+    el.append(top, toggle, status, make('div', { class: 'store-body' }, nav, main));
     el.addEventListener('cancel', e => { if (view.previewId) { e.preventDefault(); backToList(view.previewId); } });
     nav.querySelector('[data-section="all"]').setAttribute('aria-current', 'true');
   });

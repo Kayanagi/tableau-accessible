@@ -1455,6 +1455,90 @@ try {
   });
   log('Sécurité : formule neutralisée dans le CSV', csv.includes(`"'=HYPERLINK`), csv.split('\r\n')[1]);
   await secCtx.close();
+  const auditCtx = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const audit = await auditCtx.newPage();
+  await audit.goto(BASE + '/#/');
+  await audit.waitForSelector('#btn-template-library');
+  await audit.click('#btn-template-library');
+  await audit.waitForSelector('dialog.template-store[open]');
+  await audit.evaluate(async () => { (await import('/js/a11y/announcer.js')).announce('Annonce modale'); });
+  await audit.waitForFunction(() => document.querySelector('dialog[open] [data-announcer]')?.textContent === 'Annonce modale');
+  log('Annonce dans une région du dialogue modal', await audit.locator('dialog[open] [data-announcer][aria-live="polite"]').count() === 1);
+  await audit.evaluate(() => { window.auditStatus = document.querySelector('.template-store .store-count'); });
+  await audit.fill('#store-search', 'a');
+  await audit.fill('#store-search', 'ag');
+  log('Boutique : même nœud status après deux frappes', await audit.evaluate(() => window.auditStatus === document.querySelector('.template-store .store-count') && window.auditStatus.isConnected));
+  await audit.click('.store-nav-toggle');
+  await audit.locator('.store-nav [data-section^="cat:"]').first().click();
+  await audit.waitForFunction(() => document.activeElement?.matches('.store-nav-toggle'));
+  log('320 px : focus sur Catégories après sélection', await audit.locator('.store-nav-toggle').evaluate(el => el === document.activeElement));
+  const auditContrast = await audit.evaluate(() => {
+    const luminance = rgb => {
+      const channels = rgb.match(/[\d.]+/g).slice(0, 3).map(Number).map(v => { v /= 255; return v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; });
+      return channels[0] * .2126 + channels[1] * .7152 + channels[2] * .0722;
+    };
+    const original = document.documentElement.getAttribute('data-theme');
+    const ratios = [];
+    for (const theme of ['light', 'dark', 'high-contrast']) {
+      document.documentElement.setAttribute('data-theme', theme);
+      for (const selector of ['#search-boards', '#store-search']) {
+        const el = document.querySelector(selector);
+        const fg = luminance(getComputedStyle(el, '::placeholder').color);
+        let bg = el;
+        while (getComputedStyle(bg).backgroundColor === 'rgba(0, 0, 0, 0)' && bg.parentElement) bg = bg.parentElement;
+        const back = luminance(getComputedStyle(bg).backgroundColor);
+        ratios.push((Math.max(fg, back) + .05) / (Math.min(fg, back) + .05));
+      }
+    }
+    if (original === null) document.documentElement.removeAttribute('data-theme'); else document.documentElement.setAttribute('data-theme', original);
+    return ratios;
+  });
+  log('Placeholders : contraste ≥ 4,5 dans les trois thèmes', auditContrast.every(r => r >= 4.5), auditContrast.join(', '));
+  await audit.locator('dialog.template-store .dialog-header button').click();
+  const auditId = await audit.evaluate(async () => (await import('/js/store/boards.js')).create('Audit', { name: 'Audit', items: [] }).id);
+  await audit.goto(BASE + '/#/tableau/' + auditId);
+  await audit.waitForFunction(() => document.getElementById('board-title')?.textContent.includes('Audit'));
+  await audit.evaluate(() => document.getElementById('btn-help').click());
+  await audit.waitForFunction(() => document.activeElement?.id === 'dialog-help-title');
+  log('Aide ouverte en haut sur le titre', await audit.locator('#dialog-help').evaluate(el => el.scrollTop === 0));
+  log('320 px : raccourcis sans débordement horizontal', await audit.locator('.shortcuts-list').evaluate(el => el.scrollWidth <= el.clientWidth) && await audit.locator('#dialog-help').evaluate(el => el.scrollWidth <= el.clientWidth));
+  await audit.evaluate(() => document.getElementById('dialog-help').close());
+  await audit.evaluate(async () => {
+    const state = await import('/js/state.js');
+    state.loadBoard({ name: 'Audit', items: [{ id: 'kb', type: 'kanban', x: 10, y: 10, width: 600, height: 300, columns: [
+      { id: 'c1', name: 'À faire', cards: [{ id: 'k1', text: 'Carte audit' }, { id: 'k2', text: 'Deuxième' }] },
+      { id: 'c2', name: 'Fait', cards: [] }
+    ] }] });
+    (await import('/js/views/canvas.js')).focusSub('kb', 'card:k1');
+  });
+  await audit.waitForSelector('[data-key="kb-move-right"]');
+  const leftDisabled = await audit.locator('[data-key="kb-move-left"]').isDisabled();
+  await audit.click('[data-key="kb-move-down"]');
+  const movedDown = await audit.evaluate(async () => (await import('/js/state.js')).getItem('kb').columns[0].cards[1].id === 'k1');
+  await audit.click('[data-key="kb-move-right"]');
+  await audit.waitForFunction(async () => (await import('/js/state.js')).getItem('kb').columns[1].cards[0]?.id === 'k1');
+  await audit.click('[data-key="kb-move-left"]');
+  await audit.click('[data-key="kb-move-down"]');
+  await audit.click('[data-key="kb-move-up"]');
+  log('Kanban : quatre boutons déplacent la carte et limites désactivées', leftDisabled && movedDown && await audit.locator('[data-key="kb-move-up"]').isDisabled());
+  await audit.click('#tab-table');
+  await audit.waitForSelector('.sort-btn');
+  log('Tri : toutes les cibles font au moins 24 × 24 px', await audit.locator('.sort-btn').evaluateAll(nodes => nodes.length > 0 && nodes.every(el => { const r = el.getBoundingClientRect(); return r.width >= 24 && r.height >= 24; })));
+  await audit.click('#tab-canvas');
+  await audit.evaluate(async () => {
+    (await import('/js/state.js')).loadBoard({ name: 'Audit', items: [
+      { id: 'f1', type: 'frame', x: 0, y: 0, width: 600, height: 400, content: 'Premier' },
+      { id: 't1', type: 'text', x: 40, y: 80, width: 100, height: 40, content: 'Texte du premier', parent: 'f1' },
+      { id: 'f2', type: 'frame', x: 800, y: 0, width: 600, height: 400, content: 'Second' },
+      { id: 't2', type: 'text', x: 840, y: 80, width: 100, height: 40, content: 'Texte du second', parent: 'f2' }
+    ] });
+    document.getElementById('btn-present').click();
+  });
+  await audit.waitForFunction(() => document.getElementById('presentation-content')?.textContent.includes('Texte du premier'));
+  await audit.getByRole('button', { name: 'Suivant', exact: true }).click();
+  await audit.waitForFunction(() => document.getElementById('presentation-content')?.textContent.includes('Texte du second'));
+  log('Présentation : alternative mise à jour hors aria-live', await audit.locator('#presentation-content').evaluate(el => !el.closest('[aria-live], [role="status"]') && !el.inert && !el.textContent.includes('Texte du premier')));
+  await auditCtx.close();
 } catch (err) {
   log('Exécution complète des tests', false, err.message);
   console.error('Erreur fatale:', err);

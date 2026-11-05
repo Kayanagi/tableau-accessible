@@ -190,12 +190,12 @@ export function render(route) {
   const viewToggle = document.createElement('button');
   viewToggle.id = 'btn-toggle-view';
   viewToggle.setAttribute('aria-pressed', String(gridView));
-  viewToggle.setAttribute('aria-label', gridView ? 'Vue en liste' : 'Vue en grille');
+  viewToggle.setAttribute('aria-label', gridView ? 'Liste : vue en liste' : 'Grille : vue en grille');
   viewToggle.textContent = gridView ? 'Liste' : 'Grille';
   viewToggle.addEventListener('click', () => {
     gridView = !gridView;
     viewToggle.setAttribute('aria-pressed', String(gridView));
-    viewToggle.setAttribute('aria-label', gridView ? 'Vue en liste' : 'Vue en grille');
+    viewToggle.setAttribute('aria-label', gridView ? 'Liste : vue en liste' : 'Grille : vue en grille');
     viewToggle.textContent = gridView ? 'Liste' : 'Grille';
     updateBoardsList(boardsSection, route);
     announce(gridView ? 'Vue en grille' : 'Vue en liste');

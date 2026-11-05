@@ -246,21 +246,29 @@ export function render() {
   state.syncDerived();
   const activeId = document.activeElement?.closest('.canvas-item')?.getAttribute('data-id');
   const activeSub = document.activeElement?.dataset?.sub;
-  itemsGroup.innerHTML = '';
-  const multi = state.getSelectedIds().length > 1;
+  const previous = new Map([...itemsGroup.children].map(g => [g.dataset.id, g]));
 
   state.getItems().forEach((item, idx) => {
     if (item.type === 'mindmap' && state.isMindHidden(item)) return;
-    const g = renderItem(item, idx);
+    let g = renderItem(item, idx);
     if (!g) return;
     if (state.isSelected(item.id)) {
       g.classList.add('selected');
-      if (multi) g.setAttribute('aria-label', 'Sélectionné, ' + g.getAttribute('aria-label'));
+      g.setAttribute('aria-label', g.getAttribute('aria-label') + ', sélectionné');
     }
     if (item.id === editingId) g.classList.add('is-editing');
-    itemsGroup.appendChild(g);
+    const old = previous.get(item.id);
+    if (old) {
+      for (const attr of [...old.attributes]) if (!g.hasAttribute(attr.name)) old.removeAttribute(attr.name);
+      for (const attr of g.attributes) if (old.getAttribute(attr.name) !== attr.value) old.setAttribute(attr.name, attr.value);
+      old.replaceChildren(...g.childNodes);
+      g = old;
+      previous.delete(item.id);
+    }
+    if (itemsGroup.children[idx] !== g) itemsGroup.insertBefore(g, itemsGroup.children[idx] || null);
   });
 
+  for (const g of previous.values()) g.remove();
   updateFocusableItems();
   if (activeId) {
     const g = itemsGroup.querySelector(`[data-id="${activeId}"]`);
@@ -908,6 +916,7 @@ export function focusSub(id, s) {
   focusedIndex = Array.from(itemsGroup.children).indexOf(g);
   updateFocusableItems();
   g.querySelector(`[data-sub="${CSS.escape(s)}"]`)?.focus({ preventScroll: true });
+  emitView();
 }
 
 export function getActiveSub(id) {

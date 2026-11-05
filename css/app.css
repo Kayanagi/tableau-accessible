@@ -531,8 +531,8 @@ main {
   cursor: pointer;
   text-decoration: underline;
   text-decoration-style: dotted;
-  min-width: auto;
-  min-height: auto;
+  min-width: 24px;
+  min-height: 24px;
 }
 .sort-btn:hover {
   background: none;
@@ -1465,4 +1465,11 @@ dialog.template-store[open] { display: flex; flex-direction: column; }
   #board-tools > .toolbar-group:not(.creation-toolbar):not(.zoom-toolbar) { display: none; }
   #board-tools.is-open > .toolbar-group:not(.creation-toolbar):not(.zoom-toolbar) { display: flex; margin-top: .25rem; }
   .store-top input[type="search"] { font-size: .85rem; }
+}
+
+:root { --placeholder: var(--fg); }
+::placeholder { color: var(--placeholder); opacity: 1; }
+@media (max-width: 640px) {
+  .shortcuts-list { grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
+  .shortcuts-list dt { text-align: left; white-space: normal; }
 }

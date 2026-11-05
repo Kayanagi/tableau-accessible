@@ -5,7 +5,7 @@ import { ask } from '../ui/dialog.js';
 import { getPref } from '../preferences.js';
 import { geometry } from '../lines.js';
 
-let board, panel, list, search, input, status, map, player, counter;
+let board, panel, list, search, input, status, map, player, counter, slideContent;
 let showCanvas, searchOpener, panelOpener, presenting = false, slide = 0, hits = [], hit = -1;
 let mapBounds, dragging = false, savedView;
 const NS = 'http://www.w3.org/2000/svg';
@@ -61,6 +61,9 @@ export function init(openCanvas) {
   player = document.createElement('div'); player.id = 'presentation-controls'; player.className = 'presentation-controls'; player.hidden = true;
   player.setAttribute('role', 'toolbar'); player.setAttribute('aria-label', 'Présentation');
   counter = document.createElement('span'); counter.setAttribute('role', 'status'); counter.setAttribute('aria-live', 'polite');
+  slideContent = document.createElement('section'); slideContent.id = 'presentation-content'; slideContent.className = 'sr-only';
+  slideContent.setAttribute('aria-label', 'Contenu du cadre');
+  player.append(slideContent);
   player.append(button('Précédent', () => goSlide(slide - 1)), counter, button('Suivant', () => goSlide(slide + 1)), button('Quitter', stopPresentation));
   board.append(player);
   byId('btn-present').onclick = startPresentation;
@@ -224,9 +227,22 @@ function goSlide(index) {
     }
     clip.replaceChildren(rect(canvas.itemBox(frames[slide]), ''));
     byId('canvas-items').setAttribute('clip-path', 'url(#presentation-clip)');
+    const contents = state.getItems().filter(item => {
+      let parent = item.parent;
+      const seen = new Set();
+      while (parent && !seen.has(parent)) {
+        if (parent === frames[slide].id) return true;
+        seen.add(parent); parent = state.getItem(parent)?.parent;
+      }
+      return false;
+    });
+    const list = document.createElement('ul');
+    for (const item of contents) { const li = document.createElement('li'); li.textContent = state.getItemAriaLabel(item); list.append(li); }
+    slideContent.replaceChildren(contents.length ? list : document.createTextNode('Cadre vide'));
     counter.textContent = `Cadre ${slide + 1} sur ${frames.length} : ${name(frames[slide])}`;
   } else {
     byId('canvas-items').removeAttribute('clip-path');
+    slideContent.textContent = state.getItems().map(state.getItemAriaLabel).join(' ; ');
     canvas.zoomToFit(); counter.textContent = 'Vue entière. Ajoutez des cadres pour présenter';
   }
   const [prev, next, quit] = player.querySelectorAll('button');

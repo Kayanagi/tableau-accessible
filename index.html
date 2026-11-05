@@ -15,7 +15,7 @@
   <div id="app-board" hidden>
     <header role="banner">
       <div class="board-header-top">
-        <a href="#/" class="btn-back" aria-label="Retour au tableau de bord">&larr; Tableaux</a>
+        <a href="#/" class="btn-back" aria-label="← Tableaux : retour au tableau de bord">&larr; Tableaux</a>
         <h1 id="board-title" tabindex="-1">Tableau</h1>
         <button id="btn-search" type="button" aria-keyshortcuts="Control+f">Rechercher</button>
         <button id="btn-present" type="button">Présenter</button>
@@ -32,8 +32,8 @@
           <button id="btn-text" aria-keyshortcuts="t" type="button" aria-pressed="false" aria-label="Texte (T)">Texte</button>
           <button id="btn-card" type="button" aria-pressed="false" aria-label="Carte">Carte</button>
           <button id="btn-frame" aria-keyshortcuts="f" type="button" aria-pressed="false" aria-label="Cadre (F)">Cadre</button>
-          <button id="btn-more-tools" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tools-panel" aria-label="Plus d’outils">Plus…</button>
-          <button id="btn-link" type="button" aria-label="Nouvelle ligne par dialogue : objets ou points libres">Lien…</button>
+          <button id="btn-more-tools" type="button" aria-haspopup="dialog" aria-expanded="false" aria-controls="tools-panel" aria-label="Plus… d’outils">Plus…</button>
+          <button id="btn-link" type="button" aria-label="Lien… Nouvelle ligne par dialogue : objets ou points libres">Lien…</button>
         </div>
         <fieldset id="sticky-palette" class="tool-palette" aria-describedby="sticky-palette-hint" hidden>
           <legend>Couleur du post-it</legend>
@@ -69,12 +69,12 @@
         <div class="toolbar-group zoom-toolbar" role="toolbar" aria-orientation="horizontal" aria-label="Zoom">
           <button id="btn-frames" type="button" aria-expanded="false" aria-controls="frames-panel"><span aria-hidden="true">▣</span> Cadres</button>
           <button id="btn-minimap" type="button" aria-pressed="false" aria-keyshortcuts="m">Mini-carte</button>
-          <button id="btn-zoom-out" type="button" aria-label="Zoom arri&egrave;re (-)">-</button>
+          <button id="btn-zoom-out" type="button" aria-label="- Zoom arri&egrave;re">-</button>
           <button id="btn-zoom-reset" type="button" aria-keyshortcuts="0" aria-describedby="zoom-reset-hint">100 %</button>
           <span id="zoom-reset-hint" hidden>R&eacute;initialiser le zoom &agrave; 100 % (0)</span>
-          <button id="btn-zoom-in" type="button" aria-label="Zoom avant (+)">+</button>
+          <button id="btn-zoom-in" type="button" aria-label="+ Zoom avant">+</button>
           <button id="btn-zoom-fit" type="button" aria-keyshortcuts="Shift+1" title="Tout afficher (Maj+1)">Tout afficher</button>
-          <button id="btn-help" type="button" aria-label="Aide et raccourcis (?)">Aide (?)</button>
+          <button id="btn-help" type="button" aria-label="Aide (?) et raccourcis">Aide (?)</button>
         </div>
         <div class="toolbar-group" role="group" aria-label="Fichiers">
           <div class="export-control">
@@ -268,7 +268,7 @@
   </dialog>
 
   <dialog id="dialog-help" aria-labelledby="dialog-help-title">
-    <h2 class="dialog-title" id="dialog-help-title">Aide et raccourcis clavier</h2>
+    <h2 class="dialog-title" id="dialog-help-title" tabindex="-1" autofocus>Aide et raccourcis clavier</h2>
 
     <h3>Raccourcis clavier</h3>
     <p>Les raccourcis fonctionnent dans la vue Canevas, hors des champs et dialogues. Les flèches naviguent dans les barres d’outils.</p>

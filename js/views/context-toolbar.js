@@ -42,7 +42,11 @@ export function init(el, options) {
   bar.addEventListener('focusout', e => { if (menu && !bar.contains(e.relatedTarget)) closeMenu(false); });
   document.addEventListener('pointerdown', e => { if (menu && !bar.contains(e.target)) closeMenu(false); });
   state.subscribe(update);
-  canvas.onView(place);
+  canvas.onView(() => {
+    const item = selection()[0];
+    if (item?.type === 'kanban') update();
+    else place();
+  });
   addEventListener('resize', place);
 }
 
@@ -163,6 +167,18 @@ function typeControls(items) {
   }
   if (one?.type === 'kanban') {
     const col = () => obj.activeColumn(one, canvas.getActiveSub(one.id));
+    const sub = canvas.getActiveSub(one.id);
+    const c = col();
+    const k = sub?.startsWith('card:') ? one.columns[c].cards.findIndex(card => card.id === sub.slice(5)) : -1;
+    if (k >= 0) {
+      for (const [key, label, dc, dk] of [
+        ['left', 'à gauche', -1, 0], ['right', 'à droite', 1, 0],
+        ['up', 'vers le haut', 0, -1], ['down', 'vers le bas', 0, 1]
+      ]) list.push({ key: `kb-move-${key}`, label: `Déplacer la carte ${label}`, text: `Déplacer la carte ${label}`,
+        disabled: !!one.locked || c + dc < 0 || c + dc >= one.columns.length || (!dc && (k + dk < 0 || k + dk >= one.columns[c].cards.length)),
+        run: () => obj.moveCard(one.id, sub.slice(5), c + dc, k + dk) });
+    }
+
     list.push(
       { key: 'kb-card', label: 'Ajouter une carte (Insertion)', text: '+ Carte', run: () => obj.addCard(one.id, col()) },
       { key: 'kb-col', label: 'Ajouter une colonne', text: '+ Colonne', run: () => obj.addColumn(one.id) },
@@ -291,14 +307,16 @@ function update() {
   }
   if (menu) closeMenu(false);
   controls = build(items);
-  if (!controls.some(c => c.key === activeKey)) activeKey = controls[0].key;
+  if (!controls.some(c => c.key === activeKey && !c.disabled)) activeKey = controls.find(c => !c.disabled)?.key;
   bar.replaceChildren(...controls.map(c => {
     const b = document.createElement('button');
     b.type = 'button';
     b.dataset.key = c.key;
     b.tabIndex = c.key === activeKey ? 0 : -1;
     if (c.html) b.innerHTML = c.html; else b.textContent = c.text;
-    if (c.text !== c.label) { b.setAttribute('aria-label', c.label); b.title = c.label; }
+    const label = c.text && !c.label.startsWith(c.text) ? `${c.text} : ${c.label}` : c.label;
+    if (c.text !== label) { b.setAttribute('aria-label', label); b.title = label; }
+    b.disabled = !!c.disabled;
     if (c.pressed !== undefined) b.setAttribute('aria-pressed', String(c.pressed));
     if (c.menu) { b.setAttribute('aria-haspopup', 'menu'); b.setAttribute('aria-expanded', 'false'); }
     b.addEventListener('click', () => c.menu ? toggleMenu(c, b) : c.run());
@@ -362,7 +380,7 @@ function onKey(e) {
     e.stopPropagation();
     return;
   }
-  const buttons = [...bar.children].filter(b => b.dataset.key);
+  const buttons = [...bar.children].filter(b => b.dataset.key && !b.disabled);
   const i = buttons.indexOf(e.target);
   if (i < 0) return;
   if (['ArrowRight', 'ArrowLeft', 'Home', 'End'].includes(e.key)) {

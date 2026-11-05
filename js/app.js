@@ -542,7 +542,7 @@ function setupShortcuts() {
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); state.undo(); }
     else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' && e.shiftKey || e.key === 'Z')) { e.preventDefault(); state.redo(); }
     else if (!singleKey) return;
-    else if (e.key === '?' || (e.shiftKey && e.key === '?')) { e.preventDefault(); document.getElementById('dialog-help').showModal(); }
+    else if (e.key === '?' || (e.shiftKey && e.key === '?')) { e.preventDefault(); openHelp(); }
     else if ((e.key === '+' || e.key === '=') && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomIn(); }
     else if (e.key === '-' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomOut(); }
     else if (e.key === '0' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomReset(); }
@@ -779,4 +779,9 @@ function submitLinkForm() {
   editingId = null;
   dialog.close();
   if (state.getItem(id) && currentView === 'canvas') canvas.focusItem(id);
+}
+
+function openHelp() {
+  document.getElementById('dialog-help').showModal();
+  document.getElementById('dialog-help-title').focus();
 }
