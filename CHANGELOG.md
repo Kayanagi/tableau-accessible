@@ -2,7 +2,7 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
-## [Non publié]
+## [1.7.0] - 2026-11-05
 
 ### Modifié
 - Les emojis servant d’images de tableau et de pictogrammes d’interface sont remplacés par les 13 composants vectoriels validés dans la bibliothèque Figma Baro.
