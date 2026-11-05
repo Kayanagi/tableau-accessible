@@ -109,3 +109,13 @@ Catégories : Réunions et ateliers, Idéation et brainstorming, Recherche et de
 - Affichage : **grille**, curseurs des collaborateurs, commentaires, barres de défilement, dimensions des objets, boutons annuler/rétablir, plein écran.
 - Préférences : souris ou pavé tactile, alignement des objets, profil.
 - Accessibilité : sélection précise, **réduire les animations**, **raccourcis à un seul caractère** (désactivables), vérificateur d'accessibilité.
+
+## Clic droit et souris (testé en vrai)
+
+- Réglage « Souris ou pavé tactile » (s'applique à tous les onglets) : Souris, Pavé tactile, Détection automatique.
+  - Souris : **clic droit maintenu puis glisser pour déplacer la vue**, molette pour zoomer.
+  - Pavé tactile : glisser à deux doigts pour déplacer, pincer pour zoomer.
+- Un clic droit sans glisser ouvre un menu contextuel, à l'endroit du pointeur.
+- Sur le fond : Coller (`Ctrl+V`), Tout déverrouiller, Ajouter un texte, Ajouter un post-it, Ajouter un commentaire, Discussion au curseur (`/`), Définir la vue de départ, Afficher la grille (`G`), Afficher les commentaires (`Maj+C`), Aligner sur la grille, Aligner sur les objets, Afficher la taille des objets, Suggérer la taille, Souris ou pavé tactile, Tout afficher (`Alt+1`).
+- Sur un post-it : Copier, Copier le lien, Copier en image, Dupliquer, Supprimer, Commenter, Copier le style, Coller le style, Effacer le contenu (`Ctrl+Retour arrière`), Organiser, Lier à (`Ctrl+Alt+K`), Verrouiller, Créer un cadre, Enregistrer comme modèle, Exporter en CSV, Infos.
+- Sur une ligne : le même menu, sans Commenter, Effacer le contenu ni Exporter en CSV.
