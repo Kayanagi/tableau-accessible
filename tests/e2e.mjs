@@ -1227,6 +1227,95 @@ try {
   log('Tactile : glisser au doigt crée le post-it', (await dItems())[0]?.type === 'sticky_note');
   await dropCtx.close();
 
+  // Apparence et préférences (1.6.0)
+  const prefCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
+  const pp = await prefCtx.newPage();
+  await pp.goto(BASE + '/#/');
+  await pp.waitForSelector('#btn-create-space');
+  const appearance = pp.locator('#app-dashboard .btn-appearance');
+  const noCycle = await pp.locator('#btn-theme').count() === 0 && await pp.getByRole('button', { name: 'Thème', exact: true }).count() === 0;
+  log('Thème : le bouton qui fait défiler est supprimé, sélecteur affichant le thème courant', noCycle && await appearance.textContent() === 'Thème : Automatique' && await appearance.getAttribute('aria-haspopup') === 'menu');
+  await appearance.focus();
+  await pp.keyboard.press('ArrowDown');
+  await pp.waitForSelector('.prefs-menu[role="menu"]');
+  const firstChecked = await pp.evaluate(() => document.activeElement.dataset.theme + ':' + document.activeElement.getAttribute('aria-checked'));
+  const radios = await pp.locator('.prefs-menu [role="menuitemradio"]').allTextContents();
+  await pp.keyboard.press('ArrowDown');
+  await pp.keyboard.press('ArrowDown');
+  const onDark = await pp.evaluate(() => document.activeElement.dataset.theme);
+  await pp.keyboard.press('Escape');
+  const escReturn = await pp.evaluate(() => document.activeElement.classList.contains('btn-appearance')) && await pp.locator('.prefs-menu').count() === 0;
+  await appearance.press('Enter');
+  await pp.waitForSelector('.prefs-menu');
+  await pp.keyboard.press('ArrowDown'); await pp.keyboard.press('ArrowDown');
+  await pp.keyboard.press('Enter');
+  await pp.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
+  log('Menu Apparence : flèches, aria-checked, Échap et retour du focus', firstChecked === 'auto:true' && radios.length === 4 && radios[3].includes('Contraste élevé') && onDark === 'dark' && escReturn);
+  await pp.waitForFunction(() => /Thème : Sombre/.test(document.getElementById('announcer').textContent));
+  log('Menu Apparence : Entrée applique, annonce et rend le focus', await appearance.textContent() === 'Thème : Sombre' && await pp.evaluate(() => document.activeElement.classList.contains('btn-appearance')));
+  await pp.reload();
+  await pp.waitForSelector('#app-dashboard .btn-appearance');
+  await pp.locator('#app-dashboard .btn-appearance').click();
+  log('Menu Apparence : thème persistant et coché', await pp.evaluate(() => document.documentElement.dataset.theme === 'dark') && await pp.getAttribute('.prefs-menu [data-theme="dark"]', 'aria-checked') === 'true' && await pp.getAttribute('.prefs-menu [data-theme="light"]', 'aria-checked') === 'false');
+  await pp.keyboard.press('Escape');
+
+  const contrast = await pp.evaluate(() => {
+    const lum = hex => { const v = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255).map(c => c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+    const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+    const out = {};
+    for (const theme of ['light', 'dark', 'high-contrast']) {
+      document.documentElement.setAttribute('data-theme', theme);
+      const css = getComputedStyle(document.documentElement);
+      const v = n => css.getPropertyValue(`--${n}`).trim();
+      out[theme] = { text: [['fg', 'bg'], ['fg', 'surface'], ['link', 'bg'], ['on-primary', 'primary'], ['on-danger', 'danger'], ['frame-label', 'bg']].map(([a, b]) => ratio(v(a), v(b))), ui: [['border', 'bg'], ['focus-ring', 'bg'], ['primary', 'bg'], ['connector-stroke', 'bg']].map(([a, b]) => ratio(v(a), v(b))), primary: v('primary') };
+    }
+    document.documentElement.setAttribute('data-theme', 'dark');
+    return out;
+  });
+  log('Thèmes : contraste AA (texte 4,5:1, interface 3:1) dans tous les thèmes', Object.values(contrast).every(c => c.text.every(r => r >= 4.5) && c.ui.every(r => r >= 3)), JSON.stringify(contrast));
+  log('Thème sombre : palette DWES', contrast.dark.primary === '#6c4bff' && contrast.light.primary === '#4a2fcc');
+
+  const prefBoard = await pp.evaluate(async () => (await import('/js/store/boards.js')).create('Préférences', { name: 'Préférences', items: [] }).id);
+  await pp.evaluate(id => { location.hash = `#/tableau/${id}`; }, prefBoard);
+  await pp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Préférences'));
+  const boardPrefs = pp.locator('#app-board .btn-preferences');
+  await boardPrefs.click();
+  const prefItems = await pp.locator('.prefs-menu [role="menuitemcheckbox"]').evaluateAll(els => els.map(e => [e.dataset.pref, e.getAttribute('aria-checked')]));
+  const hasThemes = await pp.locator('.prefs-menu [role="menuitemradio"][data-theme]').count() === 4;
+  log('Préférences : Apparence et trois cases activées par défaut', hasThemes && JSON.stringify(prefItems) === '[["grid","true"],["reduceMotion","false"],["singleKey","true"]]');
+  await pp.click('.prefs-menu [data-pref="grid"]');
+  const stillOpen = await pp.locator('.prefs-menu').count() === 1 && await pp.getAttribute('.prefs-menu [data-pref="grid"]', 'aria-checked') === 'false';
+  await pp.click('.prefs-menu [data-pref="reduceMotion"]');
+  await pp.click('.prefs-menu [data-pref="singleKey"]');
+  await pp.keyboard.press('Escape');
+  log('Préférences : grille masquée et animations réduites', stillOpen && await pp.locator('.canvas-grid').evaluate(el => getComputedStyle(el).display) === 'none' && await pp.evaluate(() => document.documentElement.hasAttribute('data-reduce-motion')));
+  await pp.focus('#board-title');
+  for (const k of ['n', 't', 'l', 'm', '?', '+']) await pp.keyboard.press(k);
+  const ignored = await pp.getAttribute('#btn-select', 'aria-pressed') === 'true' && await pp.getAttribute('#btn-minimap', 'aria-pressed') === 'false' && await pp.locator('dialog[open]').count() === 0 && await pp.textContent('#btn-zoom-reset') === (await pp.textContent('#btn-zoom-reset'));
+  await pp.reload();
+  await pp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Préférences'));
+  await pp.focus('#board-title');
+  await pp.keyboard.press('n');
+  const stillOff = await pp.getAttribute('#btn-sticky', 'aria-pressed') === 'false';
+  await pp.locator('#app-board .btn-preferences').click();
+  await pp.click('.prefs-menu [data-pref="singleKey"]');
+  await pp.keyboard.press('Escape');
+  await pp.focus('#board-title');
+  await pp.keyboard.press('n');
+  log('Raccourcis à une lettre : désactivés, persistants, puis réactivables (WCAG 2.1.4)', ignored && stillOff && await pp.getAttribute('#btn-sticky', 'aria-pressed') === 'true' && await pp.locator('#view-canvas').count() === 1);
+  await pp.keyboard.press('Escape');
+  await pp.locator('#app-board .btn-preferences').click();
+  await pp.click('.prefs-menu [data-background="mint"]');
+  await pp.waitForFunction(() => /Couleur de fond : Vert d’eau/.test(document.getElementById('announcer').textContent));
+  const bgState = await pp.evaluate(async () => (await import('/js/state.js')).getSnapshot().background);
+  const bgCss = await pp.locator('.canvas-svg').evaluate(el => getComputedStyle(el).backgroundColor);
+  const inkOnBg = await pp.locator('#view-canvas').evaluate(el => getComputedStyle(el).getPropertyValue('--fg').trim());
+  await pp.reload();
+  await pp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Préférences'));
+  await pp.waitForFunction(() => document.querySelector('.canvas-svg').style.backgroundColor !== '');
+  log('Couleur de fond : stockée dans le tableau, persistante, encre lisible sur le fond clair en thème sombre', bgState === 'mint' && bgCss === 'rgb(227, 246, 238)' && inkOnBg === '#1b1740');
+  await prefCtx.close();
+
 } catch (err) {
   log('Exécution complète des tests', false, err.message);
   console.error('Erreur fatale:', err);

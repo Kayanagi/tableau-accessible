@@ -9,6 +9,11 @@ export const TAG_COLORS = [
 ];
 export const REACTIONS = [['👍', 'pouce levé'], ['👎', 'pouce baissé'], ['❤️', 'cœur'], ['🎉', 'fête'], ['😂', 'rire'], ['😮', 'surprise']];
 export const LANGUAGES = { text: 'Texte brut', javascript: 'JavaScript', python: 'Python', html: 'HTML', css: 'CSS', json: 'JSON', bash: 'Bash', sql: 'SQL' };
+export const BOARD_BACKGROUNDS = [
+  ['default', 'Selon le thème', null, null], ['white', 'Blanc', '#ffffff', 'light'], ['cream', 'Crème', '#fbf6e9', 'light'],
+  ['gray', 'Gris clair', '#eceef1', 'light'], ['sky', 'Bleu ciel', '#e3f1fb', 'light'], ['mint', 'Vert d’eau', '#e3f6ee', 'light'],
+  ['lavender', 'Lavande', '#eee9ff', 'light'], ['night', 'Nuit', '#12101f', 'dark'], ['deep', 'Violet nuit', '#241a66', 'dark']
+];
 export const TAG_TYPES = ['sticky_note', 'card'];
 export const AUTO_SIZE = ['kanban', 'datatable', 'mindmap', 'comment'];
 

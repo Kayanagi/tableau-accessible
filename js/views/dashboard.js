@@ -4,6 +4,7 @@ import * as boards from '../store/boards.js';
 import { TEMPLATES, getTemplate } from '../store/templates.js';
 import * as router from '../router.js';
 import { announce } from '../a11y/announcer.js';
+import * as prefsMenu from './preferences-menu.js';
 
 let navExpanded = !matchMedia('(max-width: 640px)').matches;
 let container = null;
@@ -11,11 +12,9 @@ let searchQuery = '';
 let sortCol = 'dernièreOuverture';
 let sortAsc = false;
 let gridView = false;
-let onThemeToggle = null;
 
-export function init(el, opts) {
+export function init(el) {
   container = el;
-  if (opts && opts.onThemeToggle) onThemeToggle = opts.onThemeToggle;
 }
 
 export function render(route) {
@@ -64,13 +63,7 @@ export function render(route) {
   actions.appendChild(importBtn);
   actions.appendChild(fileInput);
 
-  if (onThemeToggle) {
-    const themeBtn = document.createElement('button');
-    themeBtn.setAttribute('aria-label', 'Changer de thème');
-    themeBtn.textContent = 'Thème';
-    themeBtn.addEventListener('click', onThemeToggle);
-    actions.appendChild(themeBtn);
-  }
+  prefsMenu.mount(actions);
 
   header.appendChild(actions);
   container.appendChild(header);

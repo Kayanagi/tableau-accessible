@@ -18,13 +18,14 @@ import * as objects from './views/canvas-objects.js';
 import * as O from './objects.js';
 import * as L from './lines.js';
 import * as paletteDrag from './views/palette-drag.js';
+import * as prefs from './preferences.js';
+import * as prefsMenu from './views/preferences-menu.js';
 
 const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-line': 'line', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
 const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', l: 'line', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
 const MORE_TOOLS = ['pen', 'eraser', 'comment', 'mindmap', 'kanban', 'datatable', 'code', 'flipcard'];
 
 let currentView = 'canvas';
-let currentTheme = 'auto';
 let editingId = null;
 let currentBoardId = null;
 let unsubAutoSave = null;
@@ -33,12 +34,11 @@ let boardInitialized = false;
 document.addEventListener('DOMContentLoaded', () => {
   announcer.init();
   boards.init();
+  prefs.load();
+  prefsMenu.init();
 
-  dashboard.init(document.getElementById('app-dashboard'), {
-    onThemeToggle: toggleTheme
-  });
+  dashboard.init(document.getElementById('app-dashboard'));
 
-  setupTheme();
   setupDashboardDialogs();
 
   router.subscribe(onRouteChange);
@@ -142,6 +142,7 @@ function initBoardView() {
   setupToolbar();
   setupDialogs();
   navigation.init(showCanvasTab);
+  prefsMenu.mount(document.getElementById('board-prefs'), true);
   setupDragSources();
   setupShortcuts();
 }
@@ -244,7 +245,6 @@ function setupToolbar() {
     e.target.value = '';
   });
   document.getElementById('btn-help').addEventListener('click', () => document.getElementById('dialog-help').showModal());
-  document.getElementById('btn-theme').addEventListener('click', toggleTheme);
   state.subscribe(() => {
     document.getElementById('btn-undo').disabled = !state.canUndo();
     document.getElementById('btn-redo').disabled = !state.canRedo();
@@ -409,27 +409,6 @@ function duplicate(ids) {
   if (copies.length > 1) state.setSelection(copies.map(c => c.id));
 }
 
-function toggleTheme() {
-  const themes = ['auto', 'light', 'dark', 'high-contrast'];
-  const labels = { auto: 'Automatique', light: 'Clair', dark: 'Sombre', 'high-contrast': 'Contraste élevé' };
-  const idx = themes.indexOf(currentTheme);
-  currentTheme = themes[(idx + 1) % themes.length];
-  applyTheme();
-  announcer.announce(`Thème : ${labels[currentTheme]}`);
-}
-
-function setupTheme() {
-  try { const saved = localStorage.getItem('tableau-accessible-theme'); if (saved) currentTheme = saved; } catch (e) { /* ignore */ }
-  applyTheme();
-}
-
-function applyTheme() {
-  const html = document.documentElement;
-  html.removeAttribute('data-theme');
-  if (currentTheme !== 'auto') html.setAttribute('data-theme', currentTheme);
-  try { localStorage.setItem('tableau-accessible-theme', currentTheme); } catch (e) { /* ignore */ }
-}
-
 function setupDialogs() {
   const dialogItem = document.getElementById('dialog-item');
   const dialogLink = document.getElementById('dialog-link');
@@ -491,6 +470,7 @@ function setupShortcuts() {
     if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select, [contenteditable], .comments-panel, .tools-panel, .frames-panel, .board-search')) return;
     const boardVisible = !document.getElementById('app-board').hidden;
     if (!boardVisible) return;
+    const singleKey = prefs.getPref('singleKey');
     if (currentView === 'canvas') {
       const key = e.key.toLowerCase();
       const id = document.activeElement.closest?.('.canvas-item')?.getAttribute('data-id') || state.getSelectedId();
@@ -533,8 +513,8 @@ function setupShortcuts() {
       if (e.altKey && !ctrl && e.key === 'F10') { e.preventDefault(); contextToolbar.focus(); return; }
       if (!e.ctrlKey && !e.altKey && !e.metaKey) {
         if (['PageUp', 'PageDown'].includes(e.key)) { e.preventDefault(); state.reorderItems(ids, e.key === 'PageUp'); return; }
-        if (e.shiftKey && key === 'c') { e.preventDefault(); commentsPanel.toggle(); return; }
-        if (TOOL_KEYS[key] && !e.shiftKey) { e.preventDefault(); activateTool(TOOL_KEYS[key], true); return; }
+        if (singleKey && e.shiftKey && key === 'c') { e.preventDefault(); commentsPanel.toggle(); return; }
+        if (singleKey && TOOL_KEYS[key] && !e.shiftKey) { e.preventDefault(); activateTool(TOOL_KEYS[key], true); return; }
         if (e.key === 'Escape') {
           if (canvas.cancelTool()) { e.preventDefault(); return; }
           if (state.getSelectedIds().length) { e.preventDefault(); state.setSelection([], true); canvas.getSvgElement().focus({ preventScroll: true }); return; }
@@ -547,6 +527,7 @@ function setupShortcuts() {
 
     if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) { e.preventDefault(); state.undo(); }
     else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' && e.shiftKey || e.key === 'Z')) { e.preventDefault(); state.redo(); }
+    else if (!singleKey) return;
     else if (e.key === '?' || (e.shiftKey && e.key === '?')) { e.preventDefault(); document.getElementById('dialog-help').showModal(); }
     else if ((e.key === '+' || e.key === '=') && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomIn(); }
     else if (e.key === '-' && !e.ctrlKey && !e.metaKey) { e.preventDefault(); canvas.zoomOut(); }

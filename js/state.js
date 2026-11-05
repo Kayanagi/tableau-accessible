@@ -825,6 +825,12 @@ export function setResolved(id, resolved) {
   return transact(() => { getItem(id).resolved = resolved; }, resolved ? 'Commentaire résolu' : 'Commentaire rouvert');
 }
 
+export function setBoardBackground(id) {
+  const entry = O.BOARD_BACKGROUNDS.find(b => b[0] === id);
+  if (!entry) return;
+  transact(() => { if (id === 'default') delete board.background; else board.background = id; }, `Couleur de fond : ${entry[1]}`);
+}
+
 /* Lignes */
 const END_WORDS = { start: ['Début', ''], end: ['Fin', 'e'] };
 

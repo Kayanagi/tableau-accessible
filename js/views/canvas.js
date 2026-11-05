@@ -233,8 +233,16 @@ export function getZoom() {
   return zoom;
 }
 
+function applyBackground() {
+  const entry = O.BOARD_BACKGROUNDS.find(b => b[0] === state.getBoard().background);
+  svg.style.background = entry?.[2] || '';
+  container.classList.toggle('on-light', entry?.[3] === 'light');
+  container.classList.toggle('on-dark', entry?.[3] === 'dark');
+}
+
 export function render() {
   if (!itemsGroup) return;
+  applyBackground();
   state.syncDerived();
   const activeId = document.activeElement?.closest('.canvas-item')?.getAttribute('data-id');
   const activeSub = document.activeElement?.dataset?.sub;
