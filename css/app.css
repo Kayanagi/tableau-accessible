@@ -211,6 +211,27 @@ body {
   flex-direction: column;
 }
 
+.baro-icon {
+  width: 1.25em;
+  height: 1.25em;
+  flex: 0 0 auto;
+  fill: currentColor;
+  vertical-align: -0.2em;
+}
+.baro-icon .icon-cut { fill: var(--surface); }
+.baro-icon .icon-line { fill: none; stroke: currentColor; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+.baro-icon .icon-line-cut { fill: none; stroke: var(--surface); stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+.board-icon { width: 1.5em; height: 1.5em; color: var(--primary); margin-right: 0.4rem; }
+.board-link, .board-card-title, #board-title { display: inline-flex; align-items: center; }
+.btn-fav .baro-icon { color: var(--fg); opacity: 0.55; }
+.btn-fav.is-active .baro-icon { color: var(--primary); opacity: 1; }
+.outline-icon .baro-icon, .outline-lock .baro-icon { width: 1rem; height: 1rem; }
+.outline-lock { display: inline-flex; margin-left: 0.35rem; color: var(--primary); }
+.context-toolbar .baro-icon { width: 1.1rem; height: 1.1rem; }
+.canvas-lock-icon { fill: var(--fg); }
+.canvas-lock-icon .icon-cut { fill: var(--bg); }
+.canvas-lock-icon .icon-line { fill: none; stroke: var(--fg); stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+
 /* === Skip link === */
 .skip-link {
   position: absolute;

@@ -1,6 +1,8 @@
+import { BOARD_ICONS, normalizeBoardIcon } from '../ui/icons.js';
+
 const STORAGE_KEY = 'tableau-accessible-boards';
 const OLD_STORAGE_KEY = 'tableau-accessible-board';
-const CURRENT_VERSION = 3;
+const CURRENT_VERSION = 4;
 
 let data = { version: CURRENT_VERSION, tableaux: [], espaces: [] };
 const listeners = new Set();
@@ -30,7 +32,11 @@ export function init() {
       data = JSON.parse(raw);
       data.espaces ||= [];
       data.version = CURRENT_VERSION;
-      for (const b of data.tableaux) { b.emoji ||= '📋'; b.espaceId ||= null; }
+      for (const b of data.tableaux) {
+        b.icon = normalizeBoardIcon(b.icon || b.emoji);
+        delete b.emoji;
+        b.espaceId ||= null;
+      }
       save();
       return;
     }
@@ -41,6 +47,7 @@ export function init() {
       data.tableaux.push({
         id: generateId(),
         nom: oldBoard.name || 'Tableau importé',
+        icon: 'board',
         créé: now,
         dernièreOuverture: now,
         favori: false,
@@ -71,7 +78,7 @@ export function create(nom, données) {
   const board = {
     id: generateId(),
     nom,
-    emoji: '📋',
+    icon: 'board',
     espaceId: null,
     créé: now,
     dernièreOuverture: now,
@@ -116,7 +123,7 @@ export function duplicate(id) {
   const copy = {
     id: generateId(),
     nom: original.nom + ' (copie)',
-    emoji: original.emoji || '📋',
+    icon: normalizeBoardIcon(original.icon || original.emoji),
     espaceId: original.espaceId || null,
     créé: now,
     dernièreOuverture: now,
@@ -150,11 +157,11 @@ export function touchOpened(id) {
   save();
 }
 
-export const EMOJIS = ['📋', '💡', '🎯', '🚀', '🌱', '⭐'];
-export function setEmoji(id, emoji) {
+export { BOARD_ICONS };
+export function setIcon(id, icon) {
   const board = get(id);
-  if (!board || !EMOJIS.includes(emoji)) return;
-  board.emoji = emoji;
+  if (!board || !BOARD_ICONS.some(([id]) => id === icon)) return;
+  board.icon = icon;
   save(); notify();
 }
 export function getSpaces() { return data.espaces; }

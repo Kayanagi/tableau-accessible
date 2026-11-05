@@ -1,6 +1,7 @@
 import { ask, dialog } from '../ui/dialog.js';
 import { openLibrary } from './template-library.js';
 import * as boards from '../store/boards.js';
+import { iconSvg, setBoardLabel } from '../ui/icons.js';
 import { TEMPLATES, getTemplate } from '../store/templates.js';
 import * as router from '../router.js';
 import { announce } from '../a11y/announcer.js';
@@ -317,7 +318,7 @@ function renderTable(section, boardsList, route) {
     nameTd.setAttribute('data-label', 'Nom');
     const nameLink = document.createElement('a');
     nameLink.href = `#/tableau/${board.id}`;
-    nameLink.textContent = `${board.emoji || '📋'} ${board.nom}`;
+    setBoardLabel(nameLink, board);
     nameLink.classList.add('board-link');
     nameTd.appendChild(nameLink);
     row.appendChild(nameTd);
@@ -345,7 +346,8 @@ function renderTable(section, boardsList, route) {
     favBtn.classList.add('btn-sm', 'btn-fav');
     favBtn.setAttribute('aria-pressed', String(!!board.favori));
     favBtn.setAttribute('aria-label', board.favori ? `Retirer ${board.nom} des favoris` : `Ajouter ${board.nom} aux favoris`);
-    favBtn.textContent = board.favori ? '★' : '☆';
+    favBtn.innerHTML = iconSvg('favorite');
+    favBtn.classList.toggle('is-active', !!board.favori);
     favBtn.addEventListener('click', () => {
       const isFav = boards.toggleFavori(board.id);
       announce(isFav ? `${board.nom} ajouté aux favoris` : `${board.nom} retiré des favoris`);
@@ -415,7 +417,7 @@ function renderGrid(section, boardsList) {
     link.classList.add('board-card-link');
     const title = document.createElement('strong');
     title.classList.add('board-card-title');
-    title.textContent = `${board.emoji || '📋'} ${board.nom}`;
+    setBoardLabel(title, board);
     link.appendChild(title);
     const meta = document.createElement('span');
     meta.classList.add('board-card-meta');
@@ -435,7 +437,8 @@ function renderGrid(section, boardsList) {
     const favBtn = document.createElement('button');
     favBtn.setAttribute('aria-pressed', String(!!board.favori));
     favBtn.setAttribute('aria-label', board.favori ? `Retirer ${board.nom} des favoris` : `Ajouter ${board.nom} aux favoris`);
-    favBtn.textContent = board.favori ? '★' : '☆';
+    favBtn.innerHTML = iconSvg('favorite');
+    favBtn.classList.toggle('is-active', !!board.favori);
     favBtn.classList.add('btn-sm', 'btn-fav');
     favBtn.addEventListener('click', (e) => {
       e.preventDefault();
@@ -580,11 +583,16 @@ function formatDate(isoStr) {
 }
 
 function addBoardActions(el, board) {
-  const emoji = document.createElement('select');
-  emoji.setAttribute('aria-label', `Emoji de ${board.nom}`);
-  for (const icon of boards.EMOJIS) emoji.add(new Option(icon, icon));
-  emoji.value = board.emoji || '📋';
-  emoji.onchange = () => { boards.setEmoji(board.id, emoji.value); const link = el.closest('tr, li').querySelector('.board-link, .board-card-title'); link.textContent = `${emoji.value} ${board.nom}`; announce('Emoji du tableau modifié'); };
+  const icon = document.createElement('select');
+  icon.setAttribute('aria-label', `Image de ${board.nom}`);
+  for (const [id, label] of boards.BOARD_ICONS) icon.add(new Option(label, id));
+  icon.value = board.icon || 'board';
+  icon.onchange = () => {
+    boards.setIcon(board.id, icon.value);
+    const link = el.closest('tr, li').querySelector('.board-link, .board-card-title');
+    setBoardLabel(link, board);
+    announce('Image du tableau modifiée');
+  };
   const move = document.createElement('button'); move.textContent = 'Déplacer';
   move.onclick = () => dialog(`Déplacer « ${board.nom} »`, d => {
     const select = document.createElement('select'); select.setAttribute('aria-label', 'Espace de destination'); select.add(new Option('Sans espace', ''));
@@ -594,5 +602,5 @@ function addBoardActions(el, board) {
     ok.onclick = () => { d.close(); boards.moveToSpace(board.id, select.value); render(router.getRoute()); announce('Tableau déplacé'); };
     d.append(select, ok);
   });
-  el.append(emoji, move);
+  el.append(icon, move);
 }

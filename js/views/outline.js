@@ -1,4 +1,5 @@
 import * as state from '../state.js';
+import { iconSvg } from '../ui/icons.js';
 
 let container = null;
 
@@ -109,7 +110,7 @@ function createFrameNode(frame, selectedId) {
   const btn = document.createElement('button');
   btn.classList.add('outline-item-btn');
   btn.setAttribute('data-id', frame.id);
-  btn.innerHTML = `<span class="outline-icon" aria-hidden="true">□</span> <strong>${escapeHtml((frame.content || '(cadre sans nom)') + (frame.locked ? ' — 🔒 Verrouillé' : ''))}</strong>`;
+  btn.innerHTML = `<span class="outline-icon" aria-hidden="true">□</span> <strong>${escapeHtml(frame.content || '(cadre sans nom)')}</strong>${frame.locked ? `<span class="outline-lock">${iconSvg('lock')}<span class="sr-only"> — Verrouillé</span></span>` : ''}`;
   btn.addEventListener('click', () => {
     state.setSelectedId(frame.id);
     dispatchFocus(frame.id);
@@ -265,9 +266,9 @@ function getTypeIcon(item) {
     case 'card': return '▣';
     case 'frame': return '□';
     case 'connector': return '→';
-    case 'drawing': return '✎';
-    case 'comment': return '💬';
-    case 'mindmap': return '❋';
+    case 'drawing': return iconSvg('drawing');
+    case 'comment': return iconSvg('comment');
+    case 'mindmap': return iconSvg('mindmap');
     case 'kanban': return '▥';
     case 'datatable': return '▦';
     case 'code': return '‹›';

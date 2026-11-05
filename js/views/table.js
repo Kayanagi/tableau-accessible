@@ -141,7 +141,7 @@ export function render() {
     selTd.appendChild(cb);
     tr.appendChild(selTd);
 
-    tr.appendChild(createTd((state.TYPES[item.type] || item.type) + (item.locked ? ' — 🔒 Verrouillé' : '')));
+    tr.appendChild(createTd((state.TYPES[item.type] || item.type) + (item.locked ? ' — Verrouillé' : '')));
     tr.appendChild(createTd(getContentDisplay(item)));
     tr.appendChild(createTd(getColorDisplay(item)));
     tr.appendChild(createTd(getTagsDisplay(item)));

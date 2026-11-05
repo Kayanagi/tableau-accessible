@@ -4,6 +4,7 @@ import * as boards from '../store/boards.js';
 import { saveTemplate } from '../store/templates.js';
 import { ask } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
+import { setBoardLabel } from '../ui/icons.js';
 
 export function init(getId) {
   const title = document.getElementById('board-title');
@@ -21,7 +22,7 @@ export function init(getId) {
         document.title = `${board.nom} — Tableau blanc accessible`;
         announce(`Tableau renommé : ${board.nom}`);
       } else announce('Renommage annulé');
-      title.textContent = `${board.emoji || '📋'} ${board.nom}`;
+      setBoardLabel(title, board);
       title.focus();
     };
     input.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); finish(e.key === 'Enter'); } };

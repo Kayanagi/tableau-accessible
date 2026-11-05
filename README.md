@@ -23,13 +23,13 @@ Les raccourcis de création et d’organisation s’appliquent au Canevas, hors 
 
 La barre latérale regroupe Accueil (« Bon retour », modèles et tableaux récents), Favoris, Parcourir et Espaces. Le bouton « Menu de navigation » la replie ; elle est fermée initialement sur mobile. Les espaces sont des dossiers locaux : création, renommage, suppression confirmée sans supprimer les tableaux, déplacement depuis une ligne ou une carte.
 
-Chaque tableau peut recevoir un emoji parmi six choix. Son titre dans l’en-tête est éditable au clic ou avec Entrée : Entrée valide, Échap annule. « Enregistrer comme modèle » conserve une copie dans « Mes modèles » de la bibliothèque ouverte par « Tous les modèles ».
+Chaque tableau peut recevoir une image vectorielle parmi six choix. Son titre dans l’en-tête est éditable au clic ou avec Entrée : Entrée valide, Échap annule. « Enregistrer comme modèle » conserve une copie dans « Mes modèles » de la bibliothèque ouverte par « Tous les modèles ».
 
 Modèles intégrés : Vierge, Organigramme / flux, Rétrospective 4 L, Feuille de route, Liste de tâches, Brainstorming, Rétro Start/Stop/Continue, Daily stand-up, Kanban de projet, Diagramme de flux, Carte mentale, Matrice d’Eisenhower, SWOT, Persona, Parcours utilisateur, Lean canvas, User story map, Matrice effort/impact, Ordre du jour de réunion, Revue de sprint.
 
 Catégories : Réunions et ateliers, Idéation et brainstorming, Recherche et design, Agile, Stratégie et planification, Diagrammes et cartographie, Mes modèles. Les cinq identifiants historiques restent compatibles. Les données supplémentaires sont dans `js/store/template-library.js`.
 
-Le stockage `tableau-accessible-boards` passe en version 3 : collection `espaces` (id, nom), champs facultatifs `espaceId` (null) et `emoji` (📋) par tableau. Les tableaux et réglages antérieurs sont conservés. Les modèles personnels utilisent `tableau-accessible-templates`.
+Le stockage `tableau-accessible-boards` est en version 4 : collection `espaces` (id, nom), champs facultatifs `espaceId` (null) et `icon` (`board`) par tableau. Les six anciennes valeurs emoji sont migrées automatiquement ; les tableaux et réglages antérieurs sont conservés. Les modèles personnels utilisent `tableau-accessible-templates`.
 
 ### Manipulation directe (1.3.0)
 

@@ -2,7 +2,7 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
-## [1.6.2] - 2026-11-05
+## [1.7.1] - 2026-11-05
 
 ### Accessibilité
 - Annonces disponibles dans les dialogues modaux et compteur de résultats stable dans la boutique.
@@ -11,6 +11,13 @@ Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 - Noms accessibles alignés sur les textes visibles et sélection simple exposée sur le canevas.
 - Raccourcis sans débordement à 320 px, placeholders contrastés et cibles de tri d’au moins 24 px.
 - Contenu textuel du cadre disponible pendant la présentation.
+
+## [1.7.0] - 2026-11-05
+
+### Modifié
+- Les emojis servant d’images de tableau et de pictogrammes d’interface sont remplacés par les 13 composants vectoriels validés dans la bibliothèque Figma Baro.
+- Le stockage passe en version 4 : les six anciens emojis de tableau sont migrés automatiquement vers des identifiants d’image stables, sans perte des tableaux existants.
+- Les pictogrammes conservent des libellés accessibles et s’adaptent aux thèmes clair, sombre et contraste élevé.
 
 ## [1.6.1] - 2026-11-05
 
