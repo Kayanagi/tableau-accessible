@@ -2,43 +2,11 @@ import * as history from './store/history.js';
 import { announce } from './a11y/announcer.js';
 import * as O from './objects.js';
 import * as L from './lines.js';
+import { PALETTE, LEGACY_COLORS, SHAPES, TYPES, SAFE_ID, ID_REFS, sanitizeIds } from './model-rules.js';
 
-export const PALETTE = [
-  ['light_yellow', 'Jaune clair', '#fff79e'], ['miro_yellow', 'Jaune', '#ffe86d'],
-  ['miro_orange', 'Orange', '#ffb575'], ['red', 'Rouge', '#ff9e9e'],
-  ['light_pink', 'Rose clair', '#ffd2f2'], ['miro_pink', 'Rose', '#fd9ae7'],
-  ['light_blue', 'Bleu clair', '#b2d0fe'], ['violet', 'Violet', '#b8acfb'],
-  ['miro_blue', 'Bleu', '#9ce6ff'], ['dark_blue', 'Bleu foncé', '#86b4f9'],
-  ['cyan', 'Cyan', '#81e7de'], ['dark_green', 'Vert foncé', '#6ae08d'],
-  ['light_green', 'Vert clair', '#d1f09f'], ['miro_green', 'Vert', '#b3e65f'],
-  ['miro_gray', 'Gris', '#f3f5f7'], ['black', 'Noir', '#151515']
-];
+export { PALETTE, SAFE_ID, ID_REFS, sanitizeIds };
 const COLORS = Object.fromEntries(PALETTE.map(([id, name]) => [id, name]));
 export const LINE_TYPES = L.LINE_TYPES;
-const LEGACY_COLORS = { yellow: 'miro_yellow', blue: 'miro_blue', green: 'miro_green', pink: 'miro_pink', orange: 'miro_orange', purple: 'violet', gray: 'miro_gray' };
-
-const SHAPES = {
-  rectangle: 'Rectangle',
-  circle: 'Cercle',
-  triangle: 'Triangle',
-  diamond: 'Losange'
-};
-
-const TYPES = {
-  sticky_note: 'Post-it',
-  shape: 'Forme',
-  text: 'Texte',
-  card: 'Carte',
-  frame: 'Cadre',
-  connector: 'Ligne',
-  drawing: 'Dessin à main levée',
-  comment: 'Commentaire',
-  mindmap: 'Carte mentale',
-  kanban: 'Kanban',
-  datatable: 'Tableau de données',
-  code: 'Bloc de code',
-  flipcard: 'Carte recto-verso'
-};
 
 let board = { name: 'Nouveau tableau', items: [] };
 let selected = [];
@@ -69,16 +37,6 @@ function notify() {
 
 export function sizeFromWidth(w) {
   return w <= 125 ? 's' : w <= 185 ? 'm' : 'l';
-}
-
-const SAFE_ID = /^[\w-]+$/;
-const ID_REFS = ['parent', 'startId', 'endId', 'targetId', 'groupId', 'parentNode'];
-
-function sanitizeIds(items) {
-  items.forEach((item, i) => {
-    if (typeof item.id !== 'string' || !SAFE_ID.test(item.id)) item.id = `item-import-${i + 1}`;
-    for (const ref of ID_REFS) if (item[ref] != null && !SAFE_ID.test(String(item[ref]))) item[ref] = null;
-  });
 }
 
 export function normalizeItem(item) {
