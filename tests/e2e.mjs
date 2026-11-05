@@ -1348,7 +1348,7 @@ try {
   const prefItems = await pp.locator('.prefs-menu [role="menuitemcheckbox"]').evaluateAll(els => els.map(e => [e.dataset.pref, e.getAttribute('aria-checked')]));
   const hasThemes = await pp.locator('.prefs-menu [role="menuitemradio"][data-theme-choice]').count() === 4;
   log('Menu Apparence : libellés lisibles sur toutes les entrées', await pp.evaluate(() => [...document.querySelectorAll('.prefs-menu [data-theme-choice] .menu-label')].length === 0 || [...document.querySelectorAll('.prefs-menu [data-theme-choice] .menu-label')].every(l => getComputedStyle(l).color === getComputedStyle(l.closest('.prefs-menu')).color)));
-  log('Préférences : Apparence et trois cases activées par défaut', hasThemes && JSON.stringify(prefItems) === '[["grid","true"],["reduceMotion","false"],["singleKey","true"]]');
+  log('Préférences : Apparence, cases par défaut et réglage de la souris', hasThemes && JSON.stringify(prefItems) === '[["grid","true"],["snapGrid","false"],["showSize","false"],["reduceMotion","false"],["singleKey","true"]]');
   await pp.click('.prefs-menu [data-pref="grid"]');
   const stillOpen = await pp.locator('.prefs-menu').count() === 1 && await pp.getAttribute('.prefs-menu [data-pref="grid"]', 'aria-checked') === 'false';
   await pp.click('.prefs-menu [data-pref="reduceMotion"]');
@@ -1539,6 +1539,320 @@ try {
   await audit.waitForFunction(() => document.getElementById('presentation-content')?.textContent.includes('Texte du second'));
   log('Présentation : alternative mise à jour hors aria-live', await audit.locator('#presentation-content').evaluate(el => !el.closest('[aria-live], [role="status"]') && !el.inert && !el.textContent.includes('Texte du premier')));
   await auditCtx.close();
+
+  // === Clic droit et souris (1.8.0) ===
+  {
+  const rcCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const rc = await rcCtx.newPage();
+  const rcErrors = [];
+  rc.on('console', m => { if (m.type() === 'error') rcErrors.push(m.text()); });
+  rc.on('pageerror', e => rcErrors.push(e.message));
+  await rc.goto(BASE + '/#/');
+  await rc.waitForSelector('#app-dashboard .btn-preferences');
+  const openRcBoard = async page => {
+    const id = await page.evaluate(async () => (await import('/js/store/boards.js')).create('Clic droit', { name: 'Clic droit', items: [] }).id);
+    await page.evaluate(id => { location.hash = `#/tableau/${id}`; }, id);
+    await page.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Clic droit'));
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+  };
+  await openRcBoard(rc);
+  const rcItems = [
+    { id: 'n1', type: 'sticky_note', x: 200, y: 150, width: 150, height: 150, content: 'Un', color: 'light_yellow' },
+    { id: 'n2', type: 'sticky_note', x: 420, y: 150, width: 150, height: 150, content: 'Deux', color: 'light_yellow' },
+    { id: 'l1', type: 'connector', start: { x: 650, y: 200 }, end: { x: 950, y: 200 } }
+  ];
+  const rcLoad = async (page, items = rcItems, selected = []) => page.evaluate(async ({ items, selected }) => {
+    const state = await import('/js/state.js');
+    state.loadBoard({ name: 'Clic droit', items });
+    (await import('/js/views/canvas.js')).zoomReset();
+    state.setSelection(selected);
+    document.querySelector('.canvas-svg').focus({ preventScroll: true });
+  }, { items, selected });
+  const rcAt = (page, x, y) => page.evaluate(({ x, y }) => {
+    const svg = document.querySelector('.canvas-svg');
+    const p = new DOMPoint(x, y).matrixTransform(svg.getScreenCTM());
+    return { x: p.x, y: p.y };
+  }, { x, y });
+  const rcWorld = (page, x, y) => page.evaluate(({ x, y }) => {
+    const p = new DOMPoint(x, y).matrixTransform(document.querySelector('.canvas-svg').getScreenCTM().inverse());
+    return { x: p.x, y: p.y };
+  }, { x, y });
+  const rcView = page => page.evaluate(async () => {
+    const canvas = await import('/js/views/canvas.js');
+    return { ...canvas.getViewport(), zoom: canvas.getZoom() };
+  });
+  const rcSelected = page => page.evaluate(async () => (await import('/js/state.js')).getSelectedIds());
+  const rcLabels = page => page.locator('.canvas-menu .menu-label').allTextContents();
+  const rcRightClick = async (page, x, y) => {
+    await page.mouse.click(x, y, { button: 'right' });
+    await page.waitForSelector('.canvas-menu');
+  };
+  const rcRightDrag = async (page, from, to, during) => {
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down({ button: 'right' });
+    await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 3 });
+    await page.mouse.move(to.x, to.y, { steps: 3 });
+    const seen = during ? await during() : null;
+    await page.mouse.up({ button: 'right' });
+    return seen;
+  };
+  const rcPointerMode = (page, mode) => page.evaluate(async mode => (await import('/js/preferences.js')).setPref('pointerMode', mode), mode);
+
+  await rcLoad(rc, rcItems, ['n1']);
+  await rc.evaluate(() => { window.rcNative = []; document.addEventListener('contextmenu', e => window.rcNative.push(e.defaultPrevented)); });
+  let before = await rcView(rc);
+  let start = await rcAt(rc, 1100, 600);
+  const cursor = await rcRightDrag(rc, start, { x: start.x - 120, y: start.y - 60 }, () => rc.evaluate(() => getComputedStyle(document.querySelector('.canvas-svg')).cursor));
+  let after = await rcView(rc);
+  log('Clic droit glissé sur le fond : vue déplacée, grabbing, sans menu ni changement de sélection', Math.abs(after.x - before.x - 120) < 1 && Math.abs(after.y - before.y - 60) < 1 && cursor === 'grabbing' && await rc.locator('.canvas-menu').count() === 0 && (await rcSelected(rc)).join() === 'n1' && await rc.evaluate(() => window.rcNative.length > 0 && window.rcNative.every(Boolean)), `${JSON.stringify(after)} curseur ${cursor}`);
+
+  await rcLoad(rc, rcItems, ['n1']);
+  before = await rcView(rc);
+  start = await rcAt(rc, 495, 225);
+  await rcRightDrag(rc, start, { x: start.x + 80, y: start.y + 40 });
+  after = await rcView(rc);
+  const unmoved = await rc.evaluate(async () => { const n = (await import('/js/state.js')).getItem('n2'); return n.x === 420 && n.y === 150; });
+  log('Clic droit glissé au-dessus d’un objet : vue déplacée, objet immobile, sélection inchangée', Math.abs(before.x - after.x - 80) < 1 && unmoved && (await rcSelected(rc)).join() === 'n1' && await rc.locator('.canvas-menu').count() === 0);
+
+  await rcLoad(rc);
+  await rc.evaluate(async () => (await import('/js/views/canvas.js')).edit('n1'));
+  await rc.waitForSelector('.inline-editor');
+  await rc.keyboard.type('Saisie');
+  start = await rcAt(rc, 1100, 600);
+  await rcRightDrag(rc, start, { x: start.x - 50, y: start.y });
+  const stillEditing = await rc.evaluate(() => document.activeElement?.classList.contains('inline-editor') && document.activeElement.value.endsWith('Saisie'));
+  await rc.keyboard.press('Escape');
+  await rc.waitForFunction(async () => !document.querySelector('.inline-editor') && (await import('/js/state.js')).getItem('n1').content.endsWith('Saisie'));
+  await rcLoad(rc);
+  const nDrag = await rcAt(rc, 275, 225);
+  await rc.mouse.move(nDrag.x, nDrag.y);
+  await rc.mouse.down();
+  await rc.mouse.move(nDrag.x + 40, nDrag.y + 20, { steps: 3 });
+  await rc.mouse.down({ button: 'right' });
+  await rc.mouse.up({ button: 'right' });
+  await rc.mouse.move(nDrag.x + 60, nDrag.y + 20, { steps: 2 });
+  await rc.mouse.up();
+  const dragged = await rc.evaluate(async () => (await import('/js/state.js')).getItem('n1').x);
+  log('Édition sur place et glisser d’objet : clic droit sans dégât', stillEditing && dragged === 260 && await rc.locator('.canvas-menu').count() === 0, `édition ${stillEditing}, x ${dragged}`);
+
+  await rcLoad(rc);
+  await rc.locator('.canvas-svg').evaluate(el => el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true })));
+  start = await rcAt(rc, 1100, 600);
+  await rcRightClick(rc, start.x, start.y);
+  const backgroundLabels = await rcLabels(rc);
+  const box = await rc.locator('.canvas-menu').boundingBox();
+  const gridRole = await rc.locator('.canvas-menu [data-pref="grid"]').getAttribute('role');
+  const gridHint = await rc.locator('.canvas-menu [data-pref="grid"] .menu-shortcut').textContent();
+  log('Clic droit sur le fond : menu complet à l’emplacement du pointeur et dans l’écran', backgroundLabels.join('|') === 'Coller|Tout déverrouiller|Ajouter un texte|Ajouter un post-it|Ajouter un commentaire|Afficher la grille|Afficher les commentaires|Aligner sur la grille|Afficher la taille des objets|Souris ou pavé tactile…|Tout afficher' && gridRole === 'menuitemcheckbox' && gridHint === 'G' && box.x <= start.x && box.y <= start.y && box.x + box.width <= 1400 && box.y + box.height <= 900 && await rc.evaluate(() => document.activeElement.closest('.canvas-menu[role="menu"]') !== null), backgroundLabels.join('|'));
+  await rc.keyboard.press('Escape');
+
+  await rcLoad(rc);
+  const nOne = await rcAt(rc, 275, 225);
+  await rcRightClick(rc, nOne.x, nOne.y);
+  const objectLabels = await rcLabels(rc);
+  const selectedFirst = await rcSelected(rc);
+  const copyHint = await rc.getByRole('menuitem', { name: 'Copier', exact: true }).locator('.menu-shortcut').textContent();
+  await rc.keyboard.press('Escape');
+  await rcLoad(rc, rcItems, ['n1', 'n2']);
+  await rcRightClick(rc, nOne.x, nOne.y);
+  const multiKept = (await rcSelected(rc)).join() === 'n1,n2' && (await rcLabels(rc)).includes('Grouper') && !(await rcLabels(rc)).includes('Propriétés…');
+  await rc.keyboard.press('Escape');
+  log('Clic droit sur un objet : sélectionne, bon menu, raccourci affiché ; sélection multiple gardée', selectedFirst.join() === 'n1' && objectLabels.join('|') === 'Copier|Couper|Dupliquer|Supprimer|Commenter|Copier le style|Coller le style|Effacer le contenu|Premier plan|Arrière-plan|Verrouiller|Créer un cadre|Enregistrer comme modèle|Exporter en CSV|Propriétés…' && copyHint === 'Ctrl+C' && multiKept, objectLabels.join('|'));
+
+  await rcLoad(rc);
+  const onLine = await rcAt(rc, 800, 200);
+  await rcRightClick(rc, onLine.x, onLine.y);
+  const lineLabels = await rcLabels(rc);
+  log('Clic droit sur une ligne : sans Commenter, Effacer le contenu ni Exporter en CSV', (await rcSelected(rc)).join() === 'l1' && !['Commenter', 'Effacer le contenu', 'Exporter en CSV'].some(l => lineLabels.includes(l)) && ['Copier', 'Couper', 'Dupliquer', 'Supprimer', 'Copier le style', 'Coller le style', 'Premier plan', 'Arrière-plan', 'Verrouiller', 'Créer un cadre', 'Enregistrer comme modèle', 'Propriétés…'].every(l => lineLabels.includes(l)), lineLabels.join('|'));
+  await rc.getByRole('menuitem', { name: 'Créer un cadre', exact: true }).click();
+  await rc.waitForFunction(async () => (await import('/js/state.js')).getItems().some(i => i.type === 'frame'));
+
+  await rcLoad(rc);
+  await rcRightClick(rc, start.x, start.y);
+  const clickPoint = await rcWorld(rc, start.x, start.y);
+  await rc.getByRole('menuitem', { name: 'Ajouter un post-it', exact: true }).click();
+  await rc.waitForSelector('.inline-editor');
+  const posed = await rc.evaluate(async () => { const s = await import('/js/state.js'); return s.getItem(s.getSelectedId()); });
+  await rc.keyboard.press('Escape');
+  await rc.waitForFunction(() => !document.querySelector('.inline-editor'));
+  await rcRightClick(rc, 500, 500);
+  await rc.locator('.canvas-menu [data-pref="snapGrid"]').click();
+  await rc.keyboard.press('Escape');
+  await rcRightClick(rc, 507, 513);
+  await rc.getByRole('menuitem', { name: 'Ajouter un texte', exact: true }).click();
+  await rc.waitForSelector('.inline-editor');
+  const snapped = await rc.evaluate(async () => { const s = await import('/js/state.js'); const i = s.getItem(s.getSelectedId()); return i.x % 50 === 0 && i.y % 50 === 0; });
+  await rc.keyboard.press('Escape');
+  await rc.waitForFunction(() => !document.querySelector('.inline-editor'));
+  await rc.keyboard.press('ArrowRight');
+  const arrowSnapped = await rc.evaluate(async () => { const s = await import('/js/state.js'); return s.getItem(s.getSelectedId()).x % 50 === 0; });
+  await rc.evaluate(async () => (await import('/js/preferences.js')).setPref('snapGrid', false));
+  log('Ajouter un post-it au point du clic ; Aligner sur la grille aimante à 50', Math.abs(posed.x + posed.width / 2 - clickPoint.x) <= 1 && Math.abs(posed.y + posed.height / 2 - clickPoint.y) <= 1 && posed.type === 'sticky_note' && snapped && arrowSnapped, JSON.stringify({ x: posed.x, y: posed.y, clickPoint }));
+
+  await rcLoad(rc);
+  await rcRightClick(rc, start.x, start.y);
+  const gridItem = rc.locator('.canvas-menu [data-pref="grid"]');
+  const gridBefore = await gridItem.getAttribute('aria-checked');
+  await gridItem.click();
+  await rc.waitForFunction(() => document.documentElement.hasAttribute('data-no-grid') && /Grille masquée/.test(document.getElementById('announcer').textContent));
+  const gridAfter = await gridItem.getAttribute('aria-checked');
+  await rc.keyboard.press('Escape');
+  await rc.locator('.canvas-svg').focus();
+  await rc.keyboard.press('g');
+  await rc.waitForFunction(() => !document.documentElement.hasAttribute('data-no-grid'));
+  await rc.click('#app-board .btn-preferences');
+  const syncedGrid = await rc.locator('.prefs-menu [data-pref="grid"]').getAttribute('aria-checked');
+  const prefLabels = await rc.locator('.prefs-menu .menu-label').allTextContents();
+  await rc.keyboard.press('Escape');
+  await rc.locator('.canvas-svg').focus();
+  await rc.keyboard.press('Alt+1');
+  await rc.waitForFunction(() => /Vue ajustée/.test(document.getElementById('announcer').textContent));
+  await rcLoad(rc, rcItems, ['n1']);
+  await rc.evaluate(async () => (await import('/js/preferences.js')).setPref('showSize', true));
+  await rc.waitForSelector('.size-label');
+  const sizeShown = await rc.locator('.size-label').textContent();
+  await rc.evaluate(async () => (await import('/js/preferences.js')).setPref('showSize', false));
+  await rc.waitForFunction(() => !document.querySelector('.size-label'));
+  log('Coche grille, touche G, Alt+1 et taille des objets, synchronisées avec le menu Préférences', gridBefore === 'true' && gridAfter === 'false' && syncedGrid === 'true' && sizeShown === '150 × 150' && ['Aligner sur la grille', 'Afficher la taille des objets', 'Souris ou pavé tactile…'].every(l => prefLabels.includes(l)), sizeShown);
+
+  await rcLoad(rc, rcItems, ['n1']);
+  await rc.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('n1'));
+  await rc.keyboard.press('Shift+F10');
+  await rc.waitForSelector('.canvas-menu');
+  const firstItem = await rc.evaluate(() => document.activeElement.textContent);
+  await rc.keyboard.press('ArrowUp');
+  const wrapped = await rc.evaluate(() => document.activeElement.querySelector('.menu-label').textContent);
+  await rc.keyboard.press('Home');
+  await rc.keyboard.press('ArrowDown');
+  const second = await rc.evaluate(() => document.activeElement.querySelector('.menu-label').textContent);
+  await rc.keyboard.press('End');
+  const last = await rc.evaluate(() => document.activeElement.querySelector('.menu-label').textContent);
+  await rc.keyboard.press('Escape');
+  const focusBack = await rc.evaluate(() => !document.querySelector('.canvas-menu') && document.activeElement.getAttribute('data-id') === 'n1');
+  await rcLoad(rc);
+  await rc.keyboard.press('ContextMenu');
+  await rc.waitForSelector('.canvas-menu');
+  const centered = await rc.evaluate(() => {
+    const m = document.querySelector('.canvas-menu').getBoundingClientRect(), s = document.querySelector('.canvas-svg').getBoundingClientRect();
+    return Math.abs(m.left - (s.left + s.width / 2)) < 2 && document.querySelector('.canvas-menu').getAttribute('aria-label') === 'Menu du canevas';
+  });
+  await rc.keyboard.press('Escape');
+  log('Maj+F10 et touche Menu : flèches, Début, Fin, Échap et retour du focus', firstItem.startsWith('✓Copier') && wrapped === 'Propriétés…' && second === 'Couper' && last === 'Propriétés…' && focusBack && centered && await rc.evaluate(() => document.activeElement.classList.contains('canvas-svg')), `${firstItem} / ${wrapped} / ${second} / ${last} / ${focusBack} / ${centered}`);
+
+  await rcLoad(rc);
+  await rcRightClick(rc, 1000, 300);
+  const firstPlace = await rc.locator('.canvas-menu').boundingBox();
+  await rc.mouse.click(300, 700, { button: 'right' });
+  await rc.waitForFunction(({ x }) => { const m = document.querySelector('.canvas-menu'); return m && m.getBoundingClientRect().x !== x; }, { x: firstPlace.x });
+  const secondPlace = await rc.locator('.canvas-menu').boundingBox();
+  const single = await rc.locator('.canvas-menu').count() === 1;
+  await rc.mouse.click(1200, 700);
+  await rc.waitForFunction(() => !document.querySelector('.canvas-menu'));
+  log('Second clic droit ailleurs : rouvert au bon endroit ; clic extérieur : fermé', single && firstPlace.x === 1000 && firstPlace.y === 300 && secondPlace.x === 300 && secondPlace.y + secondPlace.height <= 900, JSON.stringify({ firstPlace, secondPlace }));
+
+  await rcLoad(rc);
+  await rcPointerMode(rc, 'mouse');
+  start = await rcAt(rc, 700, 400);
+  await rc.mouse.move(start.x, start.y);
+  const worldBefore = await rcWorld(rc, start.x, start.y);
+  await rc.mouse.wheel(0, -100);
+  await rc.waitForFunction(async () => (await import('/js/views/canvas.js')).getZoom() > 1);
+  const worldAfter = await rcWorld(rc, start.x, start.y);
+  before = await rcView(rc);
+  await rc.keyboard.down('Shift');
+  await rc.mouse.wheel(0, 100);
+  await rc.keyboard.up('Shift');
+  await rc.waitForFunction(async x => (await import('/js/views/canvas.js')).getViewport().x !== x, before.x);
+  after = await rcView(rc);
+  log('Mode Souris : la molette zoome sur le pointeur, Maj+molette déplace à l’horizontale', Math.abs(worldBefore.x - worldAfter.x) < 1 && Math.abs(worldBefore.y - worldAfter.y) < 1 && after.zoom === before.zoom && after.y === before.y && after.x > before.x, JSON.stringify({ worldBefore, worldAfter }));
+
+  await rcLoad(rc);
+  await rcPointerMode(rc, 'trackpad');
+  before = await rcView(rc);
+  await rc.mouse.move(start.x, start.y);
+  await rc.mouse.wheel(30, 40);
+  await rc.waitForFunction(async x => (await import('/js/views/canvas.js')).getViewport().x !== x, before.x);
+  after = await rcView(rc);
+  const panned = Math.abs(after.x - before.x - 30) < 1 && Math.abs(after.y - before.y - 40) < 1 && after.zoom === 1;
+  await rc.keyboard.down('Control');
+  await rc.mouse.wheel(0, -100);
+  await rc.keyboard.up('Control');
+  await rc.waitForFunction(async () => (await import('/js/views/canvas.js')).getZoom() > 1);
+  const pinchPlace = await rcView(rc);
+  await rc.evaluate(({ x, y }) => document.querySelector('.canvas-svg').dispatchEvent(new WheelEvent('wheel', { deltaY: 3.5, ctrlKey: true, clientX: x, clientY: y, bubbles: true, cancelable: true })), start);
+  await rc.waitForFunction(async z => (await import('/js/views/canvas.js')).getZoom() < z, pinchPlace.zoom);
+  const padPinch = panned && pinchPlace.zoom > 1 && (await rcView(rc)).zoom > pinchPlace.zoom * 0.9;
+
+  await rcLoad(rc);
+  await rcPointerMode(rc, 'auto');
+  await rc.evaluate(() => { window.rcWheel = performance.now(); });
+  await rc.waitForFunction(() => performance.now() - window.rcWheel > 250);
+  const wheelAt = (delta) => rc.evaluate(({ x, y, delta }) => document.querySelector('.canvas-svg').dispatchEvent(new WheelEvent('wheel', { ...delta, clientX: x, clientY: y, bubbles: true, cancelable: true })), { ...start, delta });
+  await wheelAt({ deltaY: 2.5, deltaX: 1.5 });
+  const padView = await rcView(rc);
+  await rc.evaluate(() => { window.rcWheel = performance.now(); });
+  await rc.waitForFunction(() => performance.now() - window.rcWheel > 250);
+  await wheelAt({ deltaY: -120 });
+  const mouseView = await rcView(rc);
+  await rc.evaluate(() => { window.rcWheel = performance.now(); });
+  await rc.waitForFunction(() => performance.now() - window.rcWheel > 250);
+  await wheelAt({ deltaY: -3, deltaMode: 1 });
+  const lineView = await rcView(rc);
+  log('Mode Pavé tactile et détection automatique : deux doigts déplacent, pincement et molette entière zooment', padPinch && padView.zoom === 1 && padView.y > 0 && mouseView.zoom > 1 && lineView.zoom > mouseView.zoom, JSON.stringify({ pinchPlace, padView, mouseView, lineView }));
+
+  await rcLoad(rc);
+  await rcRightClick(rc, 1000, 300);
+  await rc.getByRole('menuitem', { name: 'Souris ou pavé tactile…' }).click();
+  await rc.waitForSelector('#dialog-pointer[open]');
+  const modeNames = await rc.locator('#dialog-pointer label').allTextContents();
+  const autoChecked = await rc.getByRole('radio', { name: 'Détection automatique' }).isChecked();
+  const described = await rc.evaluate(() => [...document.querySelectorAll('#dialog-pointer input')].every(i => document.getElementById(i.getAttribute('aria-describedby'))?.textContent.length > 20));
+  await rc.getByRole('radio', { name: 'Pavé tactile' }).check();
+  await rc.waitForFunction(() => document.querySelector('#dialog-pointer [data-announcer]')?.textContent.includes('Pavé tactile'));
+  await rc.keyboard.press('Escape');
+  const pointerFocus = await rc.evaluate(() => document.activeElement.classList.contains('canvas-svg'));
+  await rc.reload();
+  await rc.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Clic droit'));
+  await rc.click('#app-board .btn-preferences');
+  await rc.locator('.prefs-menu').getByRole('menuitem', { name: 'Souris ou pavé tactile…' }).click();
+  await rc.waitForSelector('#dialog-pointer[open]');
+  const persisted = await rc.getByRole('radio', { name: 'Pavé tactile' }).isChecked();
+  await rc.keyboard.press('Escape');
+  const stored = await rc.evaluate(() => JSON.parse(localStorage.getItem('tableau-accessible-prefs')).pointerMode);
+  log('Réglage Souris ou pavé tactile : trois radios décrites, persistant après rechargement', modeNames.join('|') === 'Souris|Pavé tactile|Détection automatique' && autoChecked && described && pointerFocus && persisted && stored === 'trackpad' && !rcErrors.length, `${modeNames.join('|')} ${rcErrors.join(' ; ')}`);
+  await rcCtx.close();
+
+  const narrowCtx = await browser.newContext({ viewport: { width: 320, height: 568 } });
+  const narrow = await narrowCtx.newPage();
+  await narrow.goto(BASE + '/#/');
+  await narrow.waitForSelector('#app-dashboard .btn-preferences');
+  await openRcBoard(narrow);
+  await rcLoad(narrow, rcItems, []);
+  const narrowCheck = async () => narrow.evaluate(() => {
+    const m = document.querySelector('.canvas-menu').getBoundingClientRect();
+    const targets = [...document.querySelectorAll('.canvas-menu button')].every(b => { const r = b.getBoundingClientRect(); return r.height >= 24 && r.width >= 24; });
+    return m.left >= 0 && m.right <= innerWidth && m.top >= 0 && m.bottom <= innerHeight && targets && document.documentElement.scrollWidth <= innerWidth;
+  });
+  const narrowCorner = await narrow.evaluate(() => {
+    const svg = document.querySelector('.canvas-svg');
+    for (let y = innerHeight - 4; y > 0; y -= 4) if (svg.contains(document.elementFromPoint(innerWidth - 6, y))) return { x: innerWidth - 6, y };
+    return null;
+  });
+  await rcRightClick(narrow, narrowCorner.x, narrowCorner.y);
+  const narrowFond = await narrowCheck();
+  await narrow.keyboard.press('Escape');
+  await narrow.evaluate(async () => (await import('/js/views/canvas.js')).focusItem('n1'));
+  await narrow.keyboard.press('Shift+F10');
+  await narrow.waitForSelector('.canvas-menu');
+  const narrowObjet = await narrowCheck();
+  const narrowComplete = await narrow.locator('.canvas-menu').evaluate(m => m.scrollHeight <= m.clientHeight);
+  await narrow.keyboard.press('Escape');
+  await narrow.evaluate(async () => (await import('/js/views/pointer-settings.js')).open());
+  await narrow.waitForSelector('#dialog-pointer[open]');
+  const narrowDialog = await narrow.evaluate(() => { const d = document.getElementById('dialog-pointer'); return d.scrollWidth <= d.clientWidth && document.documentElement.scrollWidth <= innerWidth; });
+  log('320 px : menus et dialogue sans débordement, cibles d’au moins 24 px', narrowFond && narrowObjet && narrowComplete && narrowDialog, `${narrowFond} ${narrowObjet} ${narrowComplete} ${narrowDialog}`);
+  await narrowCtx.close();
+  }
 } catch (err) {
   log('Exécution complète des tests', false, err.message);
   console.error('Erreur fatale:', err);
