@@ -1508,3 +1508,4 @@ dialog.template-store[open] { display: flex; flex-direction: column; }
   .shortcuts-list { grid-template-columns: minmax(0, 1fr); overflow-wrap: anywhere; }
   .shortcuts-list dt { text-align: left; white-space: normal; }
 }
+dialog { margin: auto; }
