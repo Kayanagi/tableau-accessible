@@ -258,7 +258,7 @@ function decorations(item) {
 
 export function getItemLabel(item) {
   if (!item) return '';
-  return itemLabel(item) + decorations(item) + (item.locked ? ' — 🔒 Élément verrouillé' : '');
+  return itemLabel(item) + decorations(item) + (item.locked ? ' — Élément verrouillé' : '');
 }
 
 export function isLocked(id) {

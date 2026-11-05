@@ -4,6 +4,7 @@ import { announce } from '../a11y/announcer.js';
 import * as O from '../objects.js';
 import * as obj from './canvas-objects.js';
 import * as L from '../lines.js';
+import { iconSvg } from '../ui/icons.js';
 
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const BASE_W = 2000;
@@ -302,14 +303,19 @@ function renderItem(item, index) {
   if (item.type !== 'connector') obj.renderDecorations(g, item, itemBox(item));
 
   if (item.locked) {
-    const badge = document.createElementNS(SVG_NS, 'text');
     const lockBox = itemBox(item);
-    badge.setAttribute('x', lockBox.x);
+    const icon = document.createElementNS(SVG_NS, 'g');
+    icon.setAttribute('class', 'canvas-lock-icon');
+    icon.setAttribute('transform', `translate(${lockBox.x} ${lockBox.y + lockBox.h + 3}) scale(.22)`);
+    const parsed = new DOMParser().parseFromString(iconSvg('lock'), 'image/svg+xml').documentElement;
+    for (const child of [...parsed.children]) icon.appendChild(document.importNode(child, true));
+    const badge = document.createElementNS(SVG_NS, 'text');
+    badge.setAttribute('x', lockBox.x + 18);
     badge.setAttribute('y', lockBox.y + lockBox.h + 18);
     badge.setAttribute('fill', 'var(--fg)');
     badge.setAttribute('font-size', '14');
-    badge.textContent = '🔒 Verrouillé';
-    g.appendChild(badge);
+    badge.textContent = 'Verrouillé';
+    g.append(icon, badge);
   }
   return g;
 }

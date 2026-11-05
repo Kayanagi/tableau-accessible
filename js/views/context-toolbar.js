@@ -5,6 +5,7 @@ import { announce } from '../a11y/announcer.js';
 import * as O from '../objects.js';
 import * as obj from './canvas-objects.js';
 import * as L from '../lines.js';
+import { iconSvg } from '../ui/icons.js';
 
 const TEXT_TYPES = ['sticky_note', 'shape', 'text', 'card', 'flipcard', 'mindmap'];
 const ALIGN_ICONS = {
@@ -89,7 +90,7 @@ function lineControls(links) {
     { key: 'line-width', label: `Épaisseur : ${first.strokeWidth}`, html: widthIcon(first.strokeWidth), menu: 'line-width' },
     { key: 'line-color', label: `Couleur : ${color[1]}`, html: `<span class="swatch" style="background:${color[2]}" aria-hidden="true"></span>`, menu: 'line-color' },
     { key: 'line-text', label: 'Texte sur la ligne', text: 'T', run: () => canvas.edit(first.id) },
-    { key: 'lock', label: locked ? 'Déverrouiller' : 'Verrouiller', text: '🔒', pressed: locked, run: () => state.toggleLockedMany(ids) },
+    { key: 'lock', label: locked ? 'Déverrouiller' : 'Verrouiller', html: iconSvg('lock'), pressed: locked, run: () => state.toggleLockedMany(ids) },
     { key: 'more', label: 'Plus d’actions', text: '⋯', menu: 'more' }
   ];
 }
@@ -126,9 +127,9 @@ function build(items) {
   const ids = idsOf(items);
   const locked = items.every(i => i.locked);
   list.push(
-    { key: 'lock', label: locked ? 'Déverrouiller' : 'Verrouiller', text: '🔒', pressed: locked, run: () => state.toggleLockedMany(ids) },
+    { key: 'lock', label: locked ? 'Déverrouiller' : 'Verrouiller', html: iconSvg('lock'), pressed: locked, run: () => state.toggleLockedMany(ids) },
     { key: 'duplicate', label: 'Dupliquer', text: '⧉', run: () => { const copies = state.duplicateItems(ids); if (copies[0]) canvas.focusItem(copies[0].id); } },
-    { key: 'delete', label: 'Supprimer', text: '🗑', run: () => state.removeItems(ids) }
+    { key: 'delete', label: 'Supprimer', html: iconSvg('delete'), run: () => state.removeItems(ids) }
   );
   list.push(...typeControls(items));
   if (items.length === 1 && items[0].type !== 'comment') list.push({ key: 'properties', label: 'Propriétés…', text: 'Propriétés…', run: () => onProperties(items[0].id) });
@@ -185,9 +186,9 @@ function typeControls(items) {
       { key: 'resolve', label: 'Résolu', text: '✓ Résolu', pressed: !!one.resolved, run: () => state.setResolved(one.id, !one.resolved) }
     );
   }
-  if (items.some(i => O.TAG_TYPES.includes(i.type))) list.push({ key: 'tags', label: 'Étiquettes', text: '🏷', menu: 'tags' });
-  if (items.some(i => i.type !== 'connector' && i.type !== 'comment')) list.push({ key: 'react', label: 'Réagir', text: '☺', menu: 'react' });
-  if (one && one.type !== 'connector' && one.type !== 'comment') list.push({ key: 'comment', label: 'Commenter (C)', text: '💬', run: () => canvas.createAtCenter('comment') });
+  if (items.some(i => O.TAG_TYPES.includes(i.type))) list.push({ key: 'tags', label: 'Étiquettes', html: iconSvg('tag'), menu: 'tags' });
+  if (items.some(i => i.type !== 'connector' && i.type !== 'comment')) list.push({ key: 'react', label: 'Réagir', html: iconSvg('reaction'), menu: 'react' });
+  if (one && one.type !== 'connector' && one.type !== 'comment') list.push({ key: 'comment', label: 'Commenter (C)', html: iconSvg('comment'), run: () => canvas.createAtCenter('comment') });
   return list;
 }
 

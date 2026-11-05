@@ -8,6 +8,7 @@ import * as table from './views/table.js';
 import * as io from './io.js';
 import * as router from './router.js';
 import * as boards from './store/boards.js';
+import { setBoardLabel } from './ui/icons.js';
 import * as dashboard from './views/dashboard.js';
 import * as editor from './views/inline-editor.js';
 import * as contextToolbar from './views/context-toolbar.js';
@@ -125,7 +126,7 @@ function showBoard(boardId) {
     if (currentBoardId) boards.saveData(currentBoardId, state.getSnapshot());
   });
 
-  document.getElementById('board-title').textContent = `${board.emoji || '📋'} ${board.nom}`;
+  setBoardLabel(document.getElementById('board-title'), board);
   requestAnimationFrame(() => canvas.zoomToFit());
   document.title = `${board.nom} — Tableau blanc accessible`;
 

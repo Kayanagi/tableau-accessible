@@ -2,6 +2,13 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [Non publié]
+
+### Modifié
+- Les emojis servant d’images de tableau et de pictogrammes d’interface sont remplacés par les 13 composants vectoriels validés dans la bibliothèque Figma Baro.
+- Le stockage passe en version 4 : les six anciens emojis de tableau sont migrés automatiquement vers des identifiants d’image stables, sans perte des tableaux existants.
+- Les pictogrammes conservent des libellés accessibles et s’adaptent aux thèmes clair, sombre et contraste élevé.
+
 ## [1.6.1] - 2026-11-05
 
 ### Sécurité

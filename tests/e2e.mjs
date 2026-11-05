@@ -746,8 +746,8 @@ try {
   log('Titre : Échap annule', (await d.textContent('#board-title')).includes('Titre validé'));
   await d.click('.btn-back');
   await d.waitForSelector('.boards-table');
-  await d.locator('.boards-table select').selectOption('🚀');
-  log('Tableau : emoji affiché et sauvegardé', (await d.textContent('.board-link')).startsWith('🚀') && await d.evaluate(async id => (await import('/js/store/boards.js')).get(id).emoji, dashBoardId) === '🚀');
+  await d.locator('.boards-table select').selectOption('launch');
+  log('Tableau : image vectorielle affichée et sauvegardée', await d.locator('.board-link .board-icon').count() === 1 && await d.evaluate(async id => (await import('/js/store/boards.js')).get(id).icon, dashBoardId) === 'launch');
   await d.getByRole('button', { name: 'Déplacer', exact: true }).click();
   await d.locator('dialog[open] select').selectOption({ label: 'Équipe' });
   await d.getByRole('button', { name: 'Déplacer le tableau', exact: true }).click();
