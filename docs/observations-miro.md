@@ -81,3 +81,31 @@ Les boutons sont nommés `place <couleur> sticky note, N of 16`.
 ## Bibliothèque de modèles
 
 Catégories : Réunions et ateliers, Idéation et brainstorming, Recherche et design, Agile, Stratégie et planification, Diagrammes et cartographie, Présentations, Wireframes et prototypes, Formats, Modèles avec IA, Modèles de l'équipe, Miroverse (communauté).
+
+## Lignes (testé en vrai)
+
+- `L` puis glisser dans le vide : la ligne est **libre**, elle n'est liée à aucun objet. Chaque extrémité est un cercle déplaçable, qui s'accroche à un objet si on la dépose dessus.
+- Un point au milieu de chaque segment : le tirer ajoute un point de pliage, et de nouveaux points apparaissent sur les deux segments créés.
+- Barre contextuelle d'une ligne : début de ligne, inverser les extrémités, fin de ligne, type, couleur, insérer une forme sur la ligne, texte, verrouiller, plus.
+- Extrémités : aucune, flèche arrondie, flèche en arc, flèche ouverte, flèche pleine, et d'autres dans « Plus ».
+- Type : droit, à angles droits, courbe (Bézier). Trait : plein, tirets, pointillés. Option « sauts de ligne » aux croisements.
+- Insérer sur une ligne : carte, texte, post-it carré ou large, rectangle, rectangle arrondi, cercle, triangle, losange, bulle, parallélogramme, étoile.
+
+## Glisser-déposer
+
+- Depuis la palette du post-it : saisir une pastille et la déposer sur le canevas pose le post-it à cet endroit, dans cette couleur, et ouvre l'édition.
+- Le lecteur d'écran reçoit l'annonce « Created: red sticky note. Editing ».
+
+## Boutique de modèles
+
+- Fenêtre pleine avec, à gauche : Tous les modèles, Miroverse (communauté), modèles de l'équipe ; « Cas d'usage » : Réunions et ateliers, Idéation et brainstorming, Recherche et design, Agile, Stratégie et planification, Diagrammes et cartographie, Présentations, Wireframes et prototypes, Création d'images ; « Types » : Blueprints, Formats.
+- En haut : recherche « par nom, catégorie ou entreprise » et case « Afficher à la création d'un tableau ». Une catégorie a des sous-filtres en pastilles et un tri (« Sort by Recommended »).
+- Cartes : aperçu, auteur, titre. Au survol : « Use template » et « Preview », avec une courte description.
+- Exemples : Project Review, Weekly OKR Meeting, Check-in Icebreaker, Impact/Effort Matrix, 4 L's Retrospective, Start Stop Continue, Rose Bud Thorn, Crazy Eights, Presentation, Product Brief Brainstorm, Requirements Gathering, Reverse Brainstorming, Idea Multiplier, Brainwriting, Mind Map, Product Backlog, Affinity Diagram, PI Planning, Sprint Planning, Daily Standup, Kanban Framework, Roadmap Planning, Value Stream Mapping, Timeline Builder, Flowchart, Research Insight Synthesis, Customer Journey Mapping, Design Critique, User Persona.
+
+## Menu principal
+
+- Tableau : nouveau, dupliquer, exporter, déplacer, favori, supprimer, **couleur de fond**, vue de départ, historique, détails.
+- Affichage : **grille**, curseurs des collaborateurs, commentaires, barres de défilement, dimensions des objets, boutons annuler/rétablir, plein écran.
+- Préférences : souris ou pavé tactile, alignement des objets, profil.
+- Accessibilité : sélection précise, **réduire les animations**, **raccourcis à un seul caractère** (désactivables), vérificateur d'accessibilité.
