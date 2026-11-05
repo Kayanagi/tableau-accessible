@@ -1303,11 +1303,11 @@ try {
   await appearance.focus();
   await pp.keyboard.press('ArrowDown');
   await pp.waitForSelector('.prefs-menu[role="menu"]');
-  const firstChecked = await pp.evaluate(() => document.activeElement.dataset.theme + ':' + document.activeElement.getAttribute('aria-checked'));
+  const firstChecked = await pp.evaluate(() => document.activeElement.dataset.themeChoice + ':' + document.activeElement.getAttribute('aria-checked'));
   const radios = await pp.locator('.prefs-menu [role="menuitemradio"]').allTextContents();
   await pp.keyboard.press('ArrowDown');
   await pp.keyboard.press('ArrowDown');
-  const onDark = await pp.evaluate(() => document.activeElement.dataset.theme);
+  const onDark = await pp.evaluate(() => document.activeElement.dataset.themeChoice);
   await pp.keyboard.press('Escape');
   const escReturn = await pp.evaluate(() => document.activeElement.classList.contains('btn-appearance')) && await pp.locator('.prefs-menu').count() === 0;
   await appearance.press('Enter');
@@ -1321,7 +1321,7 @@ try {
   await pp.reload();
   await pp.waitForSelector('#app-dashboard .btn-appearance');
   await pp.locator('#app-dashboard .btn-appearance').click();
-  log('Menu Apparence : thème persistant et coché', await pp.evaluate(() => document.documentElement.dataset.theme === 'dark') && await pp.getAttribute('.prefs-menu [data-theme="dark"]', 'aria-checked') === 'true' && await pp.getAttribute('.prefs-menu [data-theme="light"]', 'aria-checked') === 'false');
+  log('Menu Apparence : thème persistant et coché', await pp.evaluate(() => document.documentElement.dataset.theme === 'dark') && await pp.getAttribute('.prefs-menu [data-theme-choice="dark"]', 'aria-checked') === 'true' && await pp.getAttribute('.prefs-menu [data-theme-choice="light"]', 'aria-checked') === 'false');
   await pp.keyboard.press('Escape');
 
   const contrast = await pp.evaluate(() => {
@@ -1346,7 +1346,8 @@ try {
   const boardPrefs = pp.locator('#app-board .btn-preferences');
   await boardPrefs.click();
   const prefItems = await pp.locator('.prefs-menu [role="menuitemcheckbox"]').evaluateAll(els => els.map(e => [e.dataset.pref, e.getAttribute('aria-checked')]));
-  const hasThemes = await pp.locator('.prefs-menu [role="menuitemradio"][data-theme]').count() === 4;
+  const hasThemes = await pp.locator('.prefs-menu [role="menuitemradio"][data-theme-choice]').count() === 4;
+  log('Menu Apparence : libellés lisibles sur toutes les entrées', await pp.evaluate(() => [...document.querySelectorAll('.prefs-menu [data-theme-choice] .menu-label')].length === 0 || [...document.querySelectorAll('.prefs-menu [data-theme-choice] .menu-label')].every(l => getComputedStyle(l).color === getComputedStyle(l.closest('.prefs-menu')).color)));
   log('Préférences : Apparence et trois cases activées par défaut', hasThemes && JSON.stringify(prefItems) === '[["grid","true"],["reduceMotion","false"],["singleKey","true"]]');
   await pp.click('.prefs-menu [data-pref="grid"]');
   const stillOpen = await pp.locator('.prefs-menu').count() === 1 && await pp.getAttribute('.prefs-menu [data-pref="grid"]', 'aria-checked') === 'false';

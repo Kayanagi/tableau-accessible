@@ -49,7 +49,7 @@ function renderEntry(entry, close) {
   b.tabIndex = -1;
   b.setAttribute('role', entry.role);
   b.setAttribute('aria-checked', String(entry.checked));
-  if (entry.theme) b.dataset.theme = entry.theme;
+  if (entry.theme) b.dataset.themeChoice = entry.theme;
   if (entry.pref) b.dataset.pref = entry.pref;
   if (entry.background) b.dataset.background = entry.background;
   b.innerHTML = `<span class="menu-check" aria-hidden="true">✓</span>${entry.icon || ''}<span class="menu-label"></span>`;
