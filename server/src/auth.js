@@ -31,41 +31,51 @@ function parseHash(stored) {
 }
 
 /* Calculs scrypt : `concurrency` simultanés, `queue` en attente, puis refus immédiat. */
-export function createPasswords({ N, r, p, concurrency, queue }) {
+export function createPasswords({ N, r, p, concurrency, queue, perPrefix = 2 }) {
   let active = 0;
   const waiting = [];
+  const byPrefix = new Map();
 
-  function schedule(task) {
+  function schedule(task, prefix = '') {
     return new Promise((resolve, reject) => {
+      const prefixLoad = byPrefix.get(prefix) ?? 0;
+      if (prefix && prefixLoad >= perPrefix) { reject(new ScryptBusyError()); return; }
+      if (prefix) byPrefix.set(prefix, prefixLoad + 1);
+      const done = () => {
+        if (!prefix) return;
+        const left = (byPrefix.get(prefix) ?? 1) - 1;
+        if (left) byPrefix.set(prefix, left); else byPrefix.delete(prefix);
+      };
       const run = () => {
         active++;
         task().then(resolve, reject).finally(() => {
           active--;
+          done();
           waiting.shift()?.();
         });
       };
       if (active < concurrency) run();
       else if (waiting.length < queue) waiting.push(run);
-      else reject(new ScryptBusyError());
+      else { done(); reject(new ScryptBusyError()); }
     });
   }
 
-  async function hash(password) {
+  async function hash(password, prefix) {
     const salt = randomBytes(SALT_LENGTH);
-    const key = await schedule(() => derive(password, salt, { N, r, p }));
+    const key = await schedule(() => derive(password, salt, { N, r, p }), prefix);
     return `scrypt$${N}$${r}$${p}$${salt.toString('base64url')}$${key.toString('base64url')}`;
   }
 
-  async function verify(password, stored) {
+  async function verify(password, stored, prefix) {
     const parsed = parseHash(stored);
     if (!parsed || parsed.key.length !== KEY_LENGTH) return false;
-    const key = await schedule(() => derive(password, parsed.salt, parsed));
+    const key = await schedule(() => derive(password, parsed.salt, parsed), prefix);
     return timingSafeEqual(key, parsed.key);
   }
 
   /* Même coût qu'une vérification réelle, pour un compte inconnu. */
-  async function fakeVerify(password) {
-    await schedule(() => derive(password, randomBytes(SALT_LENGTH), { N, r, p }));
+  async function fakeVerify(password, prefix) {
+    await schedule(() => derive(password, randomBytes(SALT_LENGTH), { N, r, p }), prefix);
     return false;
   }
 

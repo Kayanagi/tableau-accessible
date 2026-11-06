@@ -33,9 +33,29 @@ function writeItems(db, boardId, items, rev) {
 }
 
 export function registerBoardRoutes(router, app) {
-  const { db } = app;
+  const { db, config } = app;
   const memberRole = db.prepare('SELECT role FROM board_members WHERE board_id = ? AND user_id = ?');
   const countOwned = db.prepare("SELECT COUNT(*) AS n FROM board_members WHERE user_id = ? AND role = 'owner'");
+  const ownerOf = db.prepare("SELECT user_id AS userId FROM board_members WHERE board_id = ? AND role = 'owner'");
+  const ownedBytes = db.prepare(`SELECT COALESCE(SUM(
+      length(CAST(b.name AS BLOB)) + length(CAST(b.icon AS BLOB)) + length(CAST(b.meta AS BLOB)) +
+      (SELECT COALESCE(SUM(length(CAST(i.data AS BLOB))), 0) FROM board_items i WHERE i.board_id = b.id)
+    ), 0) AS bytes
+    FROM boards b JOIN board_members m ON m.board_id = b.id
+    WHERE m.user_id = ? AND m.role = 'owner'`);
+  const boardBytes = db.prepare(`SELECT length(CAST(name AS BLOB)) + length(CAST(icon AS BLOB)) + length(CAST(meta AS BLOB)) +
+      (SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0) FROM board_items WHERE board_id = boards.id) AS bytes
+    FROM boards WHERE id = ?`);
+
+  const serializedBytes = (name, icon, prepared) => Buffer.byteLength(name) + Buffer.byteLength(icon)
+    + Buffer.byteLength(JSON.stringify(prepared.meta))
+    + prepared.items.reduce((sum, item) => sum + Buffer.byteLength(JSON.stringify(item)), 0);
+
+  function requireQuota(userId, nextBytes) {
+    if (nextBytes > config.accountBoardQuotaBytes) {
+      throw new HttpError(403, 'quota_exceeded', 'Le quota de stockage de vos tableaux est dépassé. Supprimez un tableau ou réduisez son contenu.');
+    }
+  }
 
   function roleOf(session, boardId) {
     if (session.guest) return session.boardId === boardId ? session.role : null;
@@ -71,6 +91,7 @@ export function registerBoardRoutes(router, app) {
       if (countOwned.get(ctx.session.userId).n >= MAX_OWNED_BOARDS) {
         throw new HttpError(403, 'quota_exceeded', `Vous avez atteint la limite de ${MAX_OWNED_BOARDS} tableaux.`);
       }
+      requireQuota(ctx.session.userId, ownedBytes.get(ctx.session.userId).bytes + serializedBytes(finalName, icon, prepared));
       db.prepare('INSERT INTO boards (id, name, icon, meta, rev, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)')
         .run(id, finalName, icon, JSON.stringify(prepared.meta), t, t);
       db.prepare("INSERT INTO board_members (board_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)").run(id, ctx.session.userId, t);
@@ -85,7 +106,7 @@ export function registerBoardRoutes(router, app) {
     const board = readBoard(db, ctx.params.id);
     if (!board) throw notFound();
     return { body: { rev: board.rev, role, board } };
-  }, { auth: 'session' });
+  }, { auth: 'session', rate: { bucket: 'board-read', limit: 60, windowMs: 60 * 1000 } });
 
   router.add('PUT', '/api/boards/:id/data', ctx => {
     requireRole(ctx, 'editor');
@@ -99,6 +120,11 @@ export function registerBoardRoutes(router, app) {
       if (current.rev !== baseRev) {
         throw new HttpError(409, 'conflict', 'Ce tableau a été modifié entre-temps.', { extra: { rev: current.rev } });
       }
+      const owner = ownerOf.get(ctx.params.id);
+      if (!owner) throw notFound();
+      const stored = boardBytes.get(ctx.params.id);
+      const row = db.prepare('SELECT name, icon FROM boards WHERE id = ?').get(ctx.params.id);
+      requireQuota(owner.userId, ownedBytes.get(owner.userId).bytes - stored.bytes + serializedBytes(row.name, row.icon, prepared));
       const next = current.rev + 1;
       // Le nom ne suit que PATCH : un renommage ailleurs ne provoque ni conflit ni retour en arrière.
       db.prepare('UPDATE boards SET meta = ?, rev = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(prepared.meta), next, t, ctx.params.id);

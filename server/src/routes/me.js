@@ -1,4 +1,5 @@
-import { HttpError, tooMany } from '../http.js';
+import { setImmediate as yieldToLoop } from 'node:timers/promises';
+import { ACCOUNT_BODY, HttpError, tooMany } from '../http.js';
 import { publicUser } from '../auth.js';
 import { isValidPassword, normalizeDisplayName, normalizePassword } from '../validate.js';
 import { readBoard } from './boards.js';
@@ -15,13 +16,24 @@ export function registerMeRoutes(router, app) {
   const deleteBoard = db.prepare('DELETE FROM boards WHERE id = ?');
   const deleteUser = db.prepare('DELETE FROM users WHERE id = ?');
 
+  async function write(res, chunk) {
+    if (res.write(chunk)) return;
+    await new Promise((resolve, reject) => {
+      const cleanup = () => { res.off('drain', onDrain); res.off('close', onClose); };
+      const onDrain = () => { cleanup(); resolve(); };
+      const onClose = () => { cleanup(); reject(new Error('connexion fermée pendant l’export')); };
+      res.once('drain', onDrain);
+      res.once('close', onClose);
+    });
+  }
+
   /* Réponse 403 et non 401 : une erreur de saisie ne doit pas faire croire à une session perdue. */
   async function requirePassword(ctx, value) {
     const wait = limiter.hit('password-check', ctx.session.userId, 5, 15 * MIN);
     if (wait) throw tooMany(wait);
     const password = normalizePassword(value);
     const user = userById.get(ctx.session.userId);
-    if (!isValidPassword(password) || !(await passwords.verify(password, user.password_hash))) {
+    if (!isValidPassword(password) || !(await passwords.verify(password, user.password_hash, ctx.ipKey))) {
       throw new HttpError(403, 'wrong_password', 'Mot de passe incorrect.');
     }
   }
@@ -37,20 +49,20 @@ export function registerMeRoutes(router, app) {
     if (!name) throw new HttpError(400, 'invalid_display_name', 'Le nom affiché doit contenir de 1 à 50 caractères.');
     rename.run(name, Date.now(), ctx.session.userId);
     return { body: { guest: false, user: publicUser(userById.get(ctx.session.userId)) } };
-  }, { auth: 'account' });
+  }, { auth: 'account', bodyLimit: ACCOUNT_BODY });
 
   router.add('POST', '/api/me/password', async ctx => {
     const next = normalizePassword(ctx.body.newPassword);
     if (!isValidPassword(next)) throw new HttpError(400, 'invalid_password', 'Le mot de passe doit contenir de 12 à 128 caractères.');
     await requirePassword(ctx, ctx.body.oldPassword);
-    const hash = await passwords.hash(next);
+    const hash = await passwords.hash(next, ctx.ipKey);
     const token = db.transaction(() => {
       setHash.run(hash, Date.now(), ctx.session.userId);
       sessions.destroyAll(ctx.session.userId);
       return sessions.create(ctx.session.userId);
     })();
     return { status: 204, headers: { 'Set-Cookie': sessions.setCookie(token) } };
-  }, { auth: 'account' });
+  }, { auth: 'account', bodyLimit: ACCOUNT_BODY });
 
   router.add('DELETE', '/api/me', async ctx => {
     await requirePassword(ctx, ctx.body.password);
@@ -59,14 +71,28 @@ export function registerMeRoutes(router, app) {
       deleteUser.run(ctx.session.userId);
     })();
     return { status: 204, headers: { 'Set-Cookie': sessions.clearCookie() } };
-  }, { auth: 'account' });
+  }, { auth: 'account', bodyLimit: ACCOUNT_BODY });
 
-  router.add('GET', '/api/me/export', ctx => {
+  router.add('GET', '/api/me/export', async ctx => {
     const userId = ctx.session.userId;
-    const boards = ownedBoards.all(userId).map(({ id }) => readBoard(db, id));
-    return {
-      headers: { 'Content-Disposition': 'attachment; filename="baro-export.json"' },
-      body: { exportedAt: new Date().toISOString(), user: publicUser(userById.get(userId)), boards, memberships: otherMemberships.all(userId) }
-    };
-  }, { auth: 'account' });
+    const { res } = ctx;
+    res.statusCode = 200;
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="baro-export.json"');
+    for (const [name, value] of Object.entries(ctx.headers)) res.setHeader(name, value);
+    const prefix = JSON.stringify({ exportedAt: new Date().toISOString(), user: publicUser(userById.get(userId)) }).slice(0, -1);
+    await write(res, `${prefix},"boards":[`);
+    let first = true;
+    for (const { id } of ownedBoards.all(userId)) {
+      await yieldToLoop();
+      const board = readBoard(db, id);
+      await write(res, `${first ? '' : ','}${JSON.stringify(board)}`);
+      first = false;
+    }
+    await yieldToLoop();
+    await write(res, `],"memberships":${JSON.stringify(otherMemberships.all(userId))}}`);
+    res.end();
+    return { handled: true };
+  }, { auth: 'account', rate: { bucket: 'account-export', account: true, limit: 1, windowMs: 10 * MIN } });
 }

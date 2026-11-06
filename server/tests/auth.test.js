@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { PROD_SCRYPT_N, loadConfig } from '../src/config.js';
 import { ScryptBusyError, createPasswords, hashToken, sessionCookie } from '../src/auth.js';
-import { clientIp } from '../src/http.js';
+import { clientIp, ipPrefix } from '../src/http.js';
 import { createRateLimiter } from '../src/rate-limit.js';
 import { COOKIE, ORIGIN, PASSWORD, nextIp, startServer, tokenFrom } from './helpers.js';
 
@@ -18,7 +18,8 @@ describe('configuration', () => {
 
   it('applique par défaut les paramètres de production', () => {
     const config = loadConfig(prod);
-    assert.deepEqual(config.scrypt, { N: 2 ** 16, r: 8, p: 2, concurrency: 2, queue: 10 });
+    assert.deepEqual(config.scrypt, { N: 2 ** 16, r: 8, p: 2, concurrency: 2, queue: 10, perPrefix: 2 });
+    assert.equal(config.accountBoardQuotaBytes, 100 * 1024 * 1024);
     assert.deepEqual(config.cookie, { name: '__Host-baro_sid', secure: true });
     assert.equal(PROD_SCRYPT_N, 65536);
   });
@@ -75,6 +76,14 @@ describe('hachage scrypt', () => {
     assert.equal(refused[0].headers['Retry-After'], '5');
     assert.deepEqual(pw.load(), { active: 0, waiting: 0 });
   });
+
+  it('empêche un préfixe de remplir seul la file scrypt', async () => {
+    const pw = createPasswords({ ...FAST, concurrency: 1, queue: 4, perPrefix: 2 });
+    const jobs = [pw.hash(PASSWORD, 'a'), pw.hash(PASSWORD, 'a'), pw.hash(PASSWORD, 'a'), pw.hash(PASSWORD, 'b')];
+    const results = await Promise.allSettled(jobs);
+    assert.equal(results.filter(result => result.status === 'rejected' && result.reason instanceof ScryptBusyError).length, 1);
+    assert.equal(results.filter(result => result.status === 'fulfilled').length, 3);
+  });
 });
 
 describe('adresse cliente', () => {
@@ -86,6 +95,12 @@ describe('adresse cliente', () => {
     assert.equal(clientIp(req('198.51.100.7', '203.0.113.9')), '198.51.100.7');
     assert.equal(clientIp(req('127.0.0.1', 'pas une adresse')), '127.0.0.1');
     assert.equal(clientIp(req('127.0.0.1')), '127.0.0.1');
+  });
+
+  it('regroupe les IPv6 par /64 et normalise les IPv4 mappées', () => {
+    assert.equal(ipPrefix('2001:0db8:abcd:12::1'), '2001:db8:abcd:12::/64');
+    assert.equal(ipPrefix('2001:db8:abcd:12:ffff::9'), '2001:db8:abcd:12::/64');
+    assert.equal(ipPrefix('::ffff:192.0.2.4'), '192.0.2.4');
   });
 });
 
@@ -105,6 +120,10 @@ describe('débit, fenêtre glissante', () => {
     t = 5000;
     limiter.sweep();
     assert.equal(limiter.size(), 0);
+    limiter.hit('login-email', 'victime', 2, 1000);
+    limiter.hit('login-ip', 'adresse', 2, 1000);
+    assert.equal(limiter.size('login-email'), 1);
+    assert.equal(limiter.size('login-ip'), 1);
   });
 });
 
@@ -173,6 +192,15 @@ describe('API d’authentification', () => {
     assert.match((await s.call('POST', '/api/auth/register', { body: { ...ok, displayName: '' } })).body.message, /affiché/);
   });
 
+  it('borne le corps avant normalisation et refuse un JSON de compte trop gros', async () => {
+    const expansion = await s.call('POST', '/api/auth/register', { body: { email: 'expansion@exemple.test', password: '\uFDFA'.repeat(2000), displayName: 'Nom' } });
+    assert.equal(expansion.status, 400);
+    assert.equal(expansion.body.code, 'invalid_password');
+    const oversized = await s.call('POST', '/api/auth/login', { raw: JSON.stringify({ email: 'a@b.fr', password: PASSWORD, nested: 'x'.repeat(20 * 1024) }) });
+    assert.equal(oversized.status, 413);
+    assert.equal(oversized.body.code, 'body_too_large');
+  });
+
   it('accepte exactement 12 et 128 caractères, sans règle de composition', async () => {
     const a = await s.call('POST', '/api/auth/register', { body: { email: 'douze@exemple.test', password: 'aaaaaaaaaaaa', displayName: 'A' } });
     const b = await s.call('POST', '/api/auth/register', { body: { email: 'cent@exemple.test', password: 'é'.repeat(128), displayName: 'B' } });
@@ -212,6 +240,39 @@ describe('API d’authentification', () => {
       assert.deepEqual(res.body, { code: 'bad_credentials', message: 'E-mail ou mot de passe incorrect' });
       assert.deepEqual(res.setCookie, []);
     }
+  });
+
+  it('compte seulement les échecs par couple e-mail et préfixe, avec un plafond e-mail plus large', async () => {
+    const { email } = await s.signUp();
+    const ip = nextIp();
+    for (let i = 0; i < 4; i++) assert.equal((await s.call('POST', '/api/auth/login', { ip, body: { email, password: PASSWORD } })).status, 200);
+    for (let i = 0; i < 5; i++) assert.equal((await s.call('POST', '/api/auth/login', { ip, body: { email, password: 'mot de passe faux' } })).status, 401);
+    assert.equal((await s.call('POST', '/api/auth/login', { ip, body: { email, password: 'mot de passe faux' } })).status, 429);
+    for (let i = 0; i < 6; i++) {
+      assert.equal((await s.call('POST', '/api/auth/login', { ip: nextIp(), body: { email, password: 'encore un faux mot' } })).status, 401);
+    }
+  });
+
+  it('refuse de créer une session si le hash change pendant la connexion', async () => {
+    const { email } = await s.signUp();
+    const original = s.app.passwords.verify;
+    let enteredResolve, release;
+    const entered = new Promise(resolve => { enteredResolve = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    s.app.passwords.verify = async (...args) => {
+      const ok = await original(...args);
+      enteredResolve();
+      await gate;
+      return ok;
+    };
+    const pending = s.call('POST', '/api/auth/login', { body: { email, password: PASSWORD } });
+    await entered;
+    s.app.db.prepare('UPDATE users SET password_hash = ? WHERE email = ?').run('scrypt$2$8$2$AA$AA', email);
+    release();
+    const res = await pending;
+    s.app.passwords.verify = original;
+    assert.equal(res.status, 401);
+    assert.deepEqual(res.setCookie, []);
   });
 
   it('exécute un calcul scrypt factice si le compte est inconnu', async () => {
@@ -292,6 +353,7 @@ describe('API d’authentification', () => {
     assert.equal(res.body.user.displayName, 'Élodie');
     assert.equal(res.body.user.email, email);
     assert.equal((await s.call('PATCH', '/api/me', { cookie: token, body: { displayName: '  ' } })).status, 400);
+    assert.equal((await s.call('PATCH', '/api/me', { cookie: token, body: { displayName: 'Claire\u200B' } })).status, 400);
   });
 
   it('exporte le compte sans le hash ni le jeton', async () => {
@@ -300,12 +362,15 @@ describe('API d’authentification', () => {
     const res = await s.call('GET', '/api/me/export', { cookie: token });
     assert.equal(res.status, 200);
     assert.match(res.headers.get('content-disposition'), /attachment/);
+    assert.equal(res.headers.get('content-length'), null);
     assert.equal(res.body.user.email, email);
     assert.equal(res.body.boards.length, 1);
     assert.equal(res.body.boards[0].name, 'À exporter');
     const text = JSON.stringify(res.body);
     assert.ok(!text.includes('scrypt$'));
     assert.ok(!text.includes(token));
+    const limited = await s.call('GET', '/api/me/export', { cookie: token });
+    assert.equal(limited.status, 429);
   });
 
   it('supprime le compte (mot de passe exigé), ses tableaux possédés et ses sessions', async () => {
@@ -417,14 +482,14 @@ describe('garde CSRF', () => {
 
   it('rejette sans erreur serveur un JSON imbriqué à l’extrême', async () => {
     const { token } = await s.signUp();
-    const depth = 1_000_000;
+    const depth = 10_000;
     const raw = `{"name":"X","data":{"items":[{"id":"a","type":"text","x":0,"y":0,"z":${'['.repeat(depth)}${']'.repeat(depth)}}]}}`;
     const res = await s.call('POST', '/api/boards', { cookie: token, raw });
     assert.equal(res.status, 400);
   });
 
-  it('refuse un corps de plus de 4 Mio : 413', async () => {
-    const res = await s.call('POST', '/api/auth/login', { raw: `{"email":"${'x'.repeat(4 * 1024 * 1024)}"}` });
+  it('refuse un corps de compte de plus de 16 Kio : 413', async () => {
+    const res = await s.call('POST', '/api/auth/login', { raw: `{"email":"${'x'.repeat(17 * 1024)}"}` });
     assert.equal(res.status, 413);
     assert.equal(res.body.code, 'body_too_large');
     assert.equal((await s.call('GET', '/api/me')).status, 401);
@@ -448,10 +513,10 @@ describe('débits de l’API', () => {
     } finally { await s.close(); }
   });
 
-  it('connexion : 5 / 15 min par e-mail, depuis des adresses différentes, casse ignorée', async () => {
+  it('connexion : 50 échecs / 15 min par e-mail, depuis des adresses différentes, casse ignorée', async () => {
     const s = await startServer();
     try {
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 50; i++) {
         assert.equal((await s.call('POST', '/api/auth/login', { body: { email: 'cible@exemple.test', password: PASSWORD } })).status, 401);
       }
       const res = await s.call('POST', '/api/auth/login', { body: { email: 'CIBLE@exemple.test', password: PASSWORD } });

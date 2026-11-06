@@ -7,6 +7,8 @@ import { chmodSync, mkdirSync, readdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 
+process.umask(0o077);
+
 const KEEP_DAYS = 14;
 const DAY = 24 * 3600 * 1000;
 const NAME = /^baro-(\d{4}-\d{2}-\d{2})\.db$/;
@@ -18,6 +20,7 @@ const target = join(directory, `baro-${today}.db`);
 const partial = `${target}.partiel`;
 
 mkdirSync(directory, { recursive: true, mode: 0o700 });
+chmodSync(directory, 0o700);
 rmSync(partial, { force: true });
 
 const db = new Database(source, { readonly: true, fileMustExist: true });

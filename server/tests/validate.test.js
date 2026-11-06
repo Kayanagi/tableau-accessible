@@ -231,11 +231,14 @@ describe('tableau entier', () => {
     assert.equal(findParentCycle([mind('r', null), mind('a', 'r')]), null);
   });
 
-  it('détecte un long cycle en temps raisonnable', () => {
+  it('détecte un long cycle et borne la profondeur parentale', () => {
     const items = fill(5000, i => mind(`n${i}`, `n${(i + 1) % 5000}`));
     assert.equal(boardCode({ items }), 'parent_cycle');
-    const chain = fill(5000, i => mind(`n${i}`, i ? `n${i - 1}` : null));
-    assert.equal(boardCode({ items: chain }), 'ok');
+    const chain = fill(66, i => mind(`n${i}`, i ? `n${i - 1}` : null));
+    assert.equal(boardCode({ items: chain }), 'parent_depth');
+    const imported = prepareImport({ items: chain });
+    assert.equal(boardCode({ items: imported.items }), 'ok');
+    assert.equal(imported.items[65].parentNode, undefined);
   });
 
   it('refuse les identifiants d’objets en double', () => {
@@ -387,6 +390,7 @@ describe('champs de compte', () => {
     assert.equal(isValidEmail('a b@c.fr'), false);
     assert.equal(isValidEmail(''), false);
     assert.equal(isValidEmail(`${'a'.repeat(250)}@b.fr`), false);
+    assert.equal(isValidEmail('a<b>@c.fr'), false);
   });
 
   it('borne le mot de passe en caractères, sans règle de composition', () => {
@@ -404,6 +408,8 @@ describe('champs de compte', () => {
     assert.equal(normalizeDisplayName('   '), null);
     assert.equal(normalizeDisplayName(5), null);
     assert.equal(normalizeDisplayName('a\u0000b'), null);
+    assert.equal(normalizeDisplayName('Élodie'), 'Élodie');
+    assert.equal(normalizeDisplayName('a\u200Bb'), null);
     assert.equal(normalizeBoardName('x'.repeat(200)).length, 200);
     assert.equal(normalizeBoardName('x'.repeat(201)), null);
   });

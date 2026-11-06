@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 
 export const MAX_BODY = 4 * 1024 * 1024;
+export const ACCOUNT_BODY = 16 * 1024;
 const WRITE_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 const JSON_TYPE = /^application\/json\s*(;\s*charset\s*=\s*"?utf-8"?\s*)?$/i;
 
@@ -28,6 +29,20 @@ export function clientIp(req) {
     if (typeof real === 'string' && isIP(real.trim())) return real.trim();
   }
   return peer;
+}
+
+/* Une adresse IPv6 partage sa clé de débit avec tout son préfixe /64. */
+export function ipPrefix(value) {
+  if (typeof value !== 'string') return '';
+  const ip = value.trim().toLowerCase();
+  if (ip.startsWith('::ffff:') && isIP(ip.slice(7)) === 4) return ip.slice(7);
+  if (isIP(ip) === 4) return ip;
+  if (isIP(ip) !== 6) return ip;
+  const halves = ip.split('::');
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves[1] ? halves[1].split(':') : [];
+  const words = halves.length === 2 ? [...left, ...Array(8 - left.length - right.length).fill('0'), ...right] : left;
+  return `${words.slice(0, 4).map(word => Number.parseInt(word || '0', 16).toString(16)).join(':')}::/64`;
 }
 
 export function parseCookies(header) {
@@ -72,20 +87,21 @@ export function guardWrite(req, origin) {
   }
 }
 
-function tooLarge() {
-  return new HttpError(413, 'body_too_large', 'La requête dépasse la taille maximale de 4 Mio.');
+function tooLarge(limit) {
+  const amount = limit < 1024 * 1024 ? `${Math.ceil(limit / 1024)} Kio` : `${Math.ceil(limit / (1024 * 1024))} Mio`;
+  return new HttpError(413, 'body_too_large', `La requête dépasse la taille maximale de ${amount}.`);
 }
 
 export function readJsonBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
-    if (Number(req.headers['content-length']) > limit) return reject(tooLarge());
+    if (Number(req.headers['content-length']) > limit) return reject(tooLarge(limit));
     const chunks = [];
     let size = 0;
     let over = false;
     req.on('data', chunk => {
       if (over) return;
       size += chunk.length;
-      if (size > limit) { over = true; chunks.length = 0; reject(tooLarge()); return; }
+      if (size > limit) { over = true; chunks.length = 0; reject(tooLarge(limit)); return; }
       chunks.push(chunk);
     });
     req.on('error', reject);
@@ -132,10 +148,12 @@ export function createHandler(router, app) {
         throw new HttpError(404, 'not_found', 'Adresse introuvable.');
       }
 
-      const ctx = { req, res, params, ip: clientIp(req), body: {}, session: null, headers: {} };
+      const ip = clientIp(req);
+      const ctx = { req, res, params, ip, ipKey: ipPrefix(ip), body: {}, session: null, headers: {} };
       app.prepare(ctx, route.options);
-      if (WRITE_METHODS.has(req.method)) ctx.body = await readJsonBody(req);
+      if (WRITE_METHODS.has(req.method)) ctx.body = await readJsonBody(req, route.options.bodyLimit ?? MAX_BODY);
       const result = (await route.handler(ctx)) ?? {};
+      if (result.handled) return;
       send(res, result.status ?? 200, result.body, { ...ctx.headers, ...result.headers });
     } catch (err) {
       if (res.headersSent) { res.destroy(); return; }

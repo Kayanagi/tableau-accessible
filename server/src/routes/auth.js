@@ -1,4 +1,4 @@
-import { HttpError, tooMany } from '../http.js';
+import { ACCOUNT_BODY, HttpError, tooMany } from '../http.js';
 import { newId, publicUser } from '../auth.js';
 import { isValidEmail, isValidPassword, normalizeDisplayName, normalizeEmail, normalizePassword } from '../validate.js';
 
@@ -15,8 +15,8 @@ export function registerAuthRoutes(router, app) {
   const insertUser = db.prepare('INSERT INTO users (id, email, display_name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
   const rehash = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash = ?');
 
-  function limit(bucket, key, max, windowMs) {
-    const wait = limiter.hit(bucket, key, max, windowMs);
+  function limit(bucket, key, max, windowMs, checkOnly = false) {
+    const wait = limiter[checkOnly ? 'check' : 'hit'](bucket, key, max, windowMs);
     if (wait) throw tooMany(wait);
   }
 
@@ -34,11 +34,10 @@ export function registerAuthRoutes(router, app) {
     if (!isValidEmail(email)) throw invalid('invalid_email', 'Adresse e-mail invalide.');
     if (!isValidPassword(password)) throw invalid('invalid_password', 'Le mot de passe doit contenir de 12 à 128 caractères.');
     if (!displayName) throw invalid('invalid_display_name', 'Le nom affiché doit contenir de 1 à 50 caractères.');
-    limit('register-ip', ctx.ip, 5, 60 * MIN);
 
     const taken = () => new HttpError(409, 'email_taken', 'Un compte existe déjà avec cette adresse e-mail.');
     if (findUser.get(email)) throw taken();
-    const hash = await passwords.hash(password);
+    const hash = await passwords.hash(password, ctx.ipKey);
     const id = newId('u_');
     const t = Date.now();
     try {
@@ -52,7 +51,7 @@ export function registerAuthRoutes(router, app) {
       headers: { 'Set-Cookie': openSession(ctx, id) },
       body: { guest: false, user: { id, email, displayName, createdAt: t } }
     };
-  });
+  }, { bodyLimit: ACCOUNT_BODY, ipRate: { bucket: 'register-ip', limit: 5, windowMs: 60 * MIN } });
 
   router.add('POST', '/api/auth/login', async ctx => {
     if (typeof ctx.body.email !== 'string' || typeof ctx.body.password !== 'string') {
@@ -60,28 +59,40 @@ export function registerAuthRoutes(router, app) {
     }
     const email = normalizeEmail(ctx.body.email).slice(0, 320);
     const password = normalizePassword(ctx.body.password);
-    limit('login-ip', ctx.ip, 10, 15 * MIN);
-    limit('login-email', email, 5, 15 * MIN);
+    limit('login-pair', `${email}\0${ctx.ipKey}`, 5, 15 * MIN, true);
+    limit('login-email', email, 50, 15 * MIN, true);
 
     const user = isValidEmail(email) ? findUser.get(email) : undefined;
     const usable = user && isValidPassword(password);
     // Compte inconnu ou mot de passe hors format : même coût, même réponse.
-    const ok = usable ? await passwords.verify(password, user.password_hash) : await passwords.fakeVerify(password.slice(0, 256));
-    if (!ok) throw new HttpError(401, 'bad_credentials', WRONG_LOGIN);
+    const ok = usable ? await passwords.verify(password, user.password_hash, ctx.ipKey) : await passwords.fakeVerify(ctx.body.password.slice(0, 128), ctx.ipKey);
+    if (!ok) {
+      limiter.hit('login-pair', `${email}\0${ctx.ipKey}`, 5, 15 * MIN);
+      limiter.hit('login-email', email, 50, 15 * MIN);
+      throw new HttpError(401, 'bad_credentials', WRONG_LOGIN);
+    }
 
+    let expectedHash = user.password_hash;
     if (passwords.needsRehash(user.password_hash)) {
       // Relèvement des paramètres : une file saturée ne doit pas faire échouer la connexion.
-      try { rehash.run(await passwords.hash(password), Date.now(), user.id, user.password_hash); }
+      try {
+        const nextHash = await passwords.hash(password, ctx.ipKey);
+        if (rehash.run(nextHash, Date.now(), user.id, user.password_hash).changes) expectedHash = nextHash;
+      }
       catch (err) { console.error('[baro] relèvement du hachage reporté :', err.code || err.message); }
     }
+    const cookie = db.transaction(() => {
+      if (findUser.get(email)?.password_hash !== expectedHash) throw new HttpError(401, 'bad_credentials', WRONG_LOGIN);
+      return openSession(ctx, user.id);
+    })();
     return {
-      headers: { 'Set-Cookie': openSession(ctx, user.id) },
+      headers: { 'Set-Cookie': cookie },
       body: { guest: false, user: publicUser(user) }
     };
-  });
+  }, { bodyLimit: ACCOUNT_BODY, ipRate: { bucket: 'login-ip', limit: 10, windowMs: 15 * MIN } });
 
   router.add('POST', '/api/auth/logout', ctx => {
     sessions.destroy(ctx.session.hash);
     return { status: 204, headers: { 'Set-Cookie': sessions.clearCookie() } };
-  }, { auth: 'session' });
+  }, { auth: 'session', bodyLimit: 4 * 1024 });
 }

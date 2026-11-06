@@ -26,6 +26,12 @@ function parseScryptN(value) {
   return n;
 }
 
+function parsePositiveInteger(name, value, fallback) {
+  const number = Number(value ?? fallback);
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error(`${name} doit être un entier positif : ${value}`);
+  return number;
+}
+
 export function loadConfig(env = process.env) {
   const production = env.NODE_ENV === 'production';
   const origin = parseOrigin(env.BARO_ORIGIN ?? 'https://baro.dwes.fr');
@@ -48,8 +54,9 @@ export function loadConfig(env = process.env) {
     dbPath: env.BARO_DB ?? '/var/lib/baro/baro.db',
     origin,
     inscriptionsOpen: inscriptions === 'ouvert',
+    accountBoardQuotaBytes: parsePositiveInteger('BARO_ACCOUNT_BOARD_QUOTA_BYTES', env.BARO_ACCOUNT_BOARD_QUOTA_BYTES, 100 * 1024 * 1024),
     // Le préfixe __Host- impose Secure : le mode de test local change donc aussi de nom de cookie.
     cookie: { name: insecureCookie ? INSECURE_COOKIE_NAME : COOKIE_NAME, secure: !insecureCookie },
-    scrypt: { N, r: 8, p: 2, concurrency: 2, queue: 10 }
+    scrypt: { N, r: 8, p: 2, concurrency: 2, queue: 10, perPrefix: 2 }
   };
 }

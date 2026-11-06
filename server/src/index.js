@@ -23,14 +23,23 @@ export function createApp(config) {
     passwords: createPasswords(config.scrypt),
     sessions: createSessions(db, config),
     limiter: createRateLimiter(),
-    /* Session requise par la route, puis débit des écritures par session. */
+    /* Les limites IP de route sont appliquées avant toute lecture du corps. */
     prepare(ctx, options) {
+      if (options.ipRate) {
+        const wait = app.limiter.hit(options.ipRate.bucket, ctx.ipKey, options.ipRate.limit, options.ipRate.windowMs);
+        if (wait) throw tooMany(wait);
+      }
       if (!options.auth) return;
       const { session, setCookie } = app.sessions.resolve(ctx.req);
       if (!session) throw new HttpError(401, 'unauthenticated', 'Vous devez vous connecter pour continuer.');
       if (options.auth === 'account' && session.guest) throw new HttpError(403, 'account_required', 'Cette action demande un compte.');
       if (ctx.req.method !== 'GET') {
         const wait = app.limiter.hit('writes', session.key, WRITES_PER_MINUTE, MINUTE);
+        if (wait) throw tooMany(wait);
+      }
+      if (options.rate) {
+        const key = options.rate.account ? session.userId : session.key;
+        const wait = app.limiter.hit(options.rate.bucket, key, options.rate.limit, options.rate.windowMs);
         if (wait) throw tooMany(wait);
       }
       ctx.session = session;

@@ -1,7 +1,7 @@
 import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -344,6 +344,22 @@ describe('API des tableaux', () => {
     assert.equal(res.body.code, 'quota_exceeded');
   });
 
+  it('applique le quota en octets à la création et au remplacement', async () => {
+    const limited = await startServer({}, config => ({ ...config, accountBoardQuotaBytes: 900 }));
+    try {
+      const user = await limited.signUp('Octets');
+      const first = await limited.call('POST', '/api/boards', { cookie: user.token, body: { name: 'Petit', data: { items: [sticky('a', { content: 'x'.repeat(200) })] } } });
+      assert.equal(first.status, 201);
+      const create = await limited.call('POST', '/api/boards', { cookie: user.token, body: { name: 'Trop', data: { items: [sticky('b', { content: 'x'.repeat(600) })] } } });
+      assert.equal(create.status, 403);
+      assert.equal(create.body.code, 'quota_exceeded');
+      assert.match(create.body.message, /quota/i);
+      const replace = await limited.call('PUT', `/api/boards/${first.body.board.id}/data`, { cookie: user.token, body: { baseRev: 0, data: { items: [sticky('a', { content: 'x'.repeat(1000) })] } } });
+      assert.equal(replace.status, 403);
+      assert.equal(replace.body.code, 'quota_exceeded');
+    } finally { await limited.close(); }
+  });
+
   it('refuse un second propriétaire au niveau du schéma', async () => {
     const id = await newBoard();
     assert.throws(() => addMember(id, stranger, 'owner'), /UNIQUE/);
@@ -352,6 +368,7 @@ describe('API des tableaux', () => {
 
 describe('sauvegarde', () => {
   it('écrit une copie cohérente en 600 et ne retire que les fichiers anciens du script', async () => {
+    assert.match(readFileSync(BACKUP_SCRIPT, 'utf8'), /process\.umask\(0o077\)/);
     const s = await startServer();
     const dir = mkdtempSync(join(tmpdir(), 'baro-backup-'));
     try {
@@ -371,6 +388,7 @@ describe('sauvegarde', () => {
       const today = `baro-${new Date().toISOString().slice(0, 10)}.db`;
       assert.deepEqual(readdirSync(dir).sort(), ['autre-2020-01-01.db', recent, today].sort());
       assert.equal(statSync(join(dir, today)).mode & 0o777, 0o600);
+      assert.equal(statSync(dir).mode & 0o777, 0o700);
       assert.equal(existsSync(join(dir, oldName)), false);
 
       const copy = new Database(join(dir, today), { readonly: true });

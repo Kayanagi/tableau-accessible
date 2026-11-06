@@ -33,8 +33,8 @@ export const LIMITS = {
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 const TOP_LEVEL_KEY = /^[A-Za-z]\w{0,39}$/;
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const CONTROL = /\p{Cc}/u;
+const EMAIL = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
 const STRUCTURAL = { kanban: 'columns', datatable: 'rows', comment: 'messages' };
 const ALIGNS = ['left', 'center', 'right'];
 const STICKY_SIZES = ['s', 'm', 'l'];
@@ -65,7 +65,7 @@ function fail(path, message, code = 'invalid_data') {
 }
 
 const isPlain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
-const charCount = s => [...s].length;
+const charCount = s => { let count = 0; for (const _ of s) count++; return count; };
 const join = (path, key) => (path ? `${path}.${key}` : String(key));
 
 function requireEnum(value, set, path, message) {
@@ -267,6 +267,31 @@ export function findParentCycle(items) {
   return null;
 }
 
+export function findDeepParent(items, maximum = 64) {
+  const parents = new Map(items.map(item => [item.id, item.parentNode]));
+  for (const item of items) {
+    let id = item.id;
+    const seen = new Set();
+    for (let depth = 0; id != null && parents.has(id); depth++) {
+      if (seen.has(id)) break;
+      if (depth > maximum) return item.id;
+      seen.add(id);
+      id = parents.get(id);
+    }
+  }
+  return null;
+}
+
+function repairParentDepth(items, maximum = 64) {
+  while (true) {
+    const id = findDeepParent(items, maximum);
+    if (id === null) return;
+    const item = items.find(candidate => candidate.id === id);
+    if (!item) return;
+    delete item.parentNode;
+  }
+}
+
 function checkBoardMeta(data) {
   if (data.name !== undefined) shortText(data.name, 'name', 'Nom du tableau');
   if (data.background !== undefined && data.background !== null) requireEnum(data.background, BACKGROUND_IDS, 'background', 'Couleur de fond inconnue');
@@ -325,6 +350,8 @@ function checkBoard(data) {
   });
   const cycle = findParentCycle(items);
   if (cycle !== null) fail(`data.items`, `Cycle de parentNode autour de ${cycle}`, 'parent_cycle');
+  const deep = findDeepParent(items);
+  if (deep !== null) fail('data.items', `Profondeur de parentNode supérieure à 64 autour de ${deep}`, 'parent_depth');
   bytes += Buffer.byteLength(JSON.stringify(rest));
   if (bytes > LIMITS.boardBytes) fail('data', 'Tableau de plus de 4 Mio', 'too_large');
 }
@@ -358,6 +385,7 @@ export function prepareImport(data) {
   const copy = clone({ ...data, items: source });
   try {
     sanitizeIds(copy.items);
+    repairParentDepth(copy.items);
     for (const item of copy.items) {
       if (item.type === 'sticky_note' && typeof item.color === 'string' && Object.hasOwn(LEGACY_COLORS, item.color)) item.color = LEGACY_COLORS[item.color];
       if (item.type === 'connector') normalizeLine(item);
@@ -407,6 +435,8 @@ export function validateSet(current, fields = {}, removed = [], items = null) {
       const after = items.map(i => (i.id === current.id ? merged : i));
       const cycle = findParentCycle(after);
       if (cycle !== null) fail('parentNode', `Cycle de parentNode autour de ${cycle}`, 'parent_cycle');
+      const deep = findDeepParent(after);
+      if (deep !== null) fail('parentNode', `Profondeur de parentNode supérieure à 64 autour de ${deep}`, 'parent_depth');
     }
     return null;
   } catch (err) {
@@ -417,7 +447,7 @@ export function validateSet(current, fields = {}, removed = [], items = null) {
 
 /* Champs de compte et de tableau. */
 export function normalizeEmail(value) {
-  return typeof value === 'string' ? value.normalize('NFKC').trim().toLowerCase() : '';
+  return typeof value === 'string' && value.length <= LIMITS.email ? value.normalize('NFKC').trim().toLowerCase() : '';
 }
 
 export function isValidEmail(email) {
@@ -425,7 +455,7 @@ export function isValidEmail(email) {
 }
 
 export function normalizePassword(value) {
-  return typeof value === 'string' ? value.normalize('NFKC') : null;
+  return typeof value === 'string' && value.length <= LIMITS.passwordMax * 2 ? value.normalize('NFKC') : null;
 }
 
 export function isValidPassword(password) {
@@ -435,17 +465,17 @@ export function isValidPassword(password) {
 }
 
 export function normalizeDisplayName(value) {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string' || value.length > LIMITS.displayName * 2) return null;
   const name = value.normalize('NFC').trim();
   const n = charCount(name);
-  return n >= 1 && n <= LIMITS.displayName && !CONTROL.test(name) ? name : null;
+  return n >= 1 && n <= LIMITS.displayName && !CONTROL_OR_FORMAT.test(name) ? name : null;
 }
 
 export function normalizeBoardName(value) {
-  if (typeof value !== 'string') return null;
+  if (typeof value !== 'string' || value.length > LIMITS.name * 2) return null;
   const name = value.normalize('NFC').trim();
   const n = charCount(name);
-  return n >= 1 && n <= LIMITS.name && !CONTROL.test(name) ? name : null;
+  return n >= 1 && n <= LIMITS.name && !CONTROL_OR_FORMAT.test(name) ? name : null;
 }
 
 export function isValidIcon(value) {

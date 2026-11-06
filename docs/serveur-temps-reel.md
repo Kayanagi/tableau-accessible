@@ -141,13 +141,16 @@ Décisions associées :
 
 | Route | Limite |
 |---|---|
-| Connexion | 10 / 15 min par IP, 5 / 15 min par e-mail |
-| Inscription | 5 / h par IP |
+| Connexion, avant lecture du corps | 10 / 15 min par préfixe IP (`/64` en IPv6) |
+| Échec de connexion | 5 / 15 min par couple e-mail + préfixe IP ; 50 / 15 min par e-mail, succès non comptés |
+| Inscription | 5 / h par préfixe IP (`/64` en IPv6) |
 | Entrée par lien | 10 / min par IP |
 | Autres écritures HTTP | 120 / min par session |
+| Lecture d’un tableau | 60 / min par session |
+| Export du compte | 1 / 10 min par compte |
 
 - Connexion : message unique « E-mail ou mot de passe incorrect », calcul scrypt factice si le compte n'existe pas. Les 401 ne devraient déclencher aucune prison fail2ban (jails actives : `nginx-http-auth`, `nginx-botsearch`, `nginx-bad-request`) ; à confirmer au test de fumée.
-- Quotas : 100 tableaux possédés par compte.
+- Quotas : 100 tableaux possédés et 100 Mio cumulés par compte. Le quota d’octets est configurable par `BARO_ACCOUNT_BOARD_QUOTA_BYTES` et s’applique aux créations et remplacements entiers ; dépassement : `403 quota_exceeded`.
 
 ## 4. API HTTP (contrat, pour `api-designer`)
 
@@ -160,7 +163,7 @@ JSON uniquement. Erreurs : `{ "code": "...", "message": "texte français" }`. Le
 | `GET /api/me` | session | compte ou invité (`{guest, boardId}`) |
 | `PATCH /api/me`, `POST /api/me/password` | compte | nom ; ancien + nouveau mot de passe |
 | `DELETE /api/me` | compte + mot de passe | suppression (RGPD) |
-| `GET /api/me/export` | compte | archive JSON du compte et des tableaux possédés (RGPD) |
+| `GET /api/me/export` | compte | archive JSON du compte et des tableaux possédés (RGPD), envoyée tableau par tableau avec contre-pression |
 | `GET /api/boards` | compte | métadonnées, rôle, `rev` |
 | `POST /api/boards` | compte | `{name, icon, data}` : création ou envoi d'un tableau local ; applique `sanitizeIds` |
 | `GET /api/boards/:id` | membre / invité | `{rev, role, board}` |
@@ -288,7 +291,7 @@ JSON uniquement. Erreurs : `{ "code": "...", "message": "texte français" }`. Le
 | Limite | Valeur |
 |---|---|
 | Message WebSocket (`ws` `maxPayload`) | 256 Kio |
-| Corps HTTP | 4 Mio (nginx et Node) |
+| Corps HTTP | 16 Kio sur l’authentification et les routes de compte ; 4 Mio sur les données de tableau (nginx et Node) |
 | Tableau | 5 000 objets, 4 Mio de JSON |
 | Objet | 128 Kio de JSON |
 | Texte d'un champ | 50 000 caractères ; noms, étiquettes, libellés : 200 |
@@ -304,7 +307,7 @@ Règles qui vont au-delà de `sanitizeIds`/`normalizeLine`, chacune liée à un 
 - **Clés** : refus récursif de `__proto__`, `constructor`, `prototype` (un `Object.assign` côté client changerait le prototype de l'objet). Clés de premier niveau sous `/^[A-Za-z]\w{0,39}$/`.
 - **Identifiants** : `SAFE_ID` sur `id`, `ID_REFS`, identifiants imbriqués (`columns[].id`, `cards[].id`, `tags[]`, `frameOrder[]`). Plusieurs sélecteurs n'échappent pas (`[data-id="${id}"]`).
 - **Énumérations** : `type`, `color`, `shape`, `language`, `stroke` et `lineType`, clés de `reactions`, `background`, `icon`. `app.js:574` injecte `item.color` dans un sélecteur, ce qui lèverait une erreur à l'ouverture du dialogue.
-- **Cycles `parentNode` refusés** : `mindLevel` et `mindRoot` bouclent à l'infini, `mindDescendants` déborde la pile. Un seul client malveillant gèlerait tous les onglets. Autoréférences refusées sur tous les `ID_REFS`.
+- **Cycles `parentNode` refusés, profondeur limitée à 64** : `mindLevel` et `mindRoot` bouclent à l'infini, `mindDescendants` déborde la pile. Un seul client malveillant gèlerait tous les onglets. L’import historique détache les nœuds au-delà de 64 ; la validation stricte les rejette. Autoréférences refusées sur tous les `ID_REFS`.
 - **Champs structurels requis et non supprimables** : `columns`, `rows`, `messages`, sinon `normalizeItem` génère des identifiants aléatoires **différents sur chaque client** via `O.defaults`.
 - **Nombres** : finis, entre -10^7 et 10^7 ; `width`/`height` entre 0 et 10^5. `type` immuable par `set`.
 - **Audit `security-auditor` avant la v1.10.0** : tous les chemins des données vers le DOM. Lecture préliminaire : le contenu passe par `textContent` ou `escapeHtml`, et `insertAdjacentHTML` d'`icons.js` reçoit un nom normalisé. La CSP reste le second rempart.
