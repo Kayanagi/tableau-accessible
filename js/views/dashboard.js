@@ -7,6 +7,8 @@ import * as router from '../router.js';
 import { announce } from '../a11y/announcer.js';
 import * as prefsMenu from './preferences-menu.js';
 import { getPref } from '../preferences.js';
+import * as account from '../store/account.js';
+import { showNotice } from '../ui/notice.js';
 
 let navExpanded = !matchMedia('(max-width: 640px)').matches;
 let container = null;
@@ -14,6 +16,9 @@ let searchQuery = '';
 let sortCol = 'dernièreOuverture';
 let sortAsc = false;
 let gridView = false;
+let lastSection = null;
+let lastRoute = null;
+let lastSignature = '';
 
 export function init(el) {
   container = el;
@@ -21,6 +26,7 @@ export function init(el) {
 
 export function render(route) {
   if (!container) return;
+  if (route.view === 'compte') route = { ...route, view: 'accueil' };
   container.innerHTML = '';
   container.hidden = false;
 
@@ -64,6 +70,12 @@ export function render(route) {
   importBtn.addEventListener('click', () => fileInput.click());
   actions.appendChild(importBtn);
   actions.appendChild(fileInput);
+
+  const accountBtn = document.createElement('button');
+  accountBtn.id = 'btn-account';
+  accountBtn.textContent = accountLabel();
+  accountBtn.addEventListener('click', () => router.navigate('/compte'));
+  actions.appendChild(accountBtn);
 
   prefsMenu.mount(actions);
 
@@ -204,12 +216,58 @@ export function render(route) {
   toolbar.appendChild(viewToggle);
   boardsSection.appendChild(toolbar);
 
+  lastSection = boardsSection;
+  lastRoute = route;
   updateBoardsList(boardsSection, route);
   main.appendChild(boardsSection);
   container.appendChild(main);
 }
 
+const accountLabel = () => (account.hasSession() ? 'Mon compte' : 'Se connecter');
+
+function signature() {
+  const connected = account.isConnected();
+  return JSON.stringify([connected, boards.getAll().map(b => [b.id, b.nom, b.icon, b.favori, b.espaceId, b.dernièreOuverture, !!b.distant, b.role, b.perdu, b.données?.items?.length ?? b.nbÉléments])]);
+}
+
+/* Après un changement côté compte : met la liste à jour en place, sans perdre le focus ni le titre. */
+export function refresh() {
+  if (!container || container.hidden || !lastSection?.isConnected) return;
+  const btn = document.getElementById('btn-account');
+  if (btn) btn.textContent = accountLabel();
+  if (signature() === lastSignature) return;
+  const active = document.activeElement;
+  const row = lastSection.contains(active) ? active.closest('[data-board-id]') : null;
+  const rowId = row?.dataset.boardId;
+  const label = active?.getAttribute?.('aria-label') || active?.textContent;
+  updateBoardsList(lastSection, lastRoute);
+  if (!rowId) return;
+  const next = lastSection.querySelector(`[data-board-id="${CSS.escape(rowId)}"]`);
+  if (!next) { document.getElementById('boards-title')?.focus(); return; }
+  const same = [...next.querySelectorAll('a, button, select')].find(el => (el.getAttribute('aria-label') || el.textContent) === label);
+  (same || next.querySelector('a'))?.focus();
+}
+
+function itemCount(board) {
+  return board.données?.items?.length ?? board.nbÉléments ?? null;
+}
+
+function addBadge(el, board) {
+  if (!account.isConnected() && !board.distant) return;
+  const badge = document.createElement('span');
+  badge.className = `board-badge ${board.distant ? 'board-badge-account' : 'board-badge-device'}`;
+  badge.textContent = board.perdu ? 'Accès perdu' : board.distant ? 'Sur mon compte' : 'Sur cet appareil';
+  el.appendChild(badge);
+}
+
+function reportError(key, err) {
+  if (err.name !== 'ApiError') throw err;
+  showNotice(key, err.message, { tone: 'error' });
+  announce(err.message);
+}
+
 function updateBoardsList(section, route) {
+  lastSignature = signature();
   section.querySelectorAll('.boards-table, .boards-grid, .boards-empty, .search-status').forEach(el => el.remove());
 
   let allBoards = route.view === 'favoris' ? boards.getFavoris() : boards.getAll();
@@ -234,7 +292,7 @@ function updateBoardsList(section, route) {
       case 'dernièreOuverture':
         va = a.dernièreOuverture || ''; vb = b.dernièreOuverture || ''; break;
       case 'éléments':
-        va = (a.données?.items?.length) || 0; vb = (b.données?.items?.length) || 0; break;
+        va = itemCount(a) || 0; vb = itemCount(b) || 0; break;
       default: va = ''; vb = '';
     }
     if (typeof va === 'number' && typeof vb === 'number') return sortAsc ? va - vb : vb - va;
@@ -313,6 +371,7 @@ function renderTable(section, boardsList, route) {
   const tbody = document.createElement('tbody');
   for (const board of boardsList) {
     const row = document.createElement('tr');
+    row.dataset.boardId = board.id;
 
     const nameTd = document.createElement('td');
     nameTd.setAttribute('data-label', 'Nom');
@@ -321,6 +380,7 @@ function renderTable(section, boardsList, route) {
     setBoardLabel(nameLink, board);
     nameLink.classList.add('board-link');
     nameTd.appendChild(nameLink);
+    addBadge(nameTd, board);
     row.appendChild(nameTd);
 
     const dateTd = document.createElement('td');
@@ -337,7 +397,7 @@ function renderTable(section, boardsList, route) {
 
     const countTd = document.createElement('td');
     countTd.setAttribute('data-label', 'Éléments');
-    countTd.textContent = (board.données?.items?.length) || 0;
+    countTd.textContent = itemCount(board) ?? (board.distant ? '-' : 0);
     row.appendChild(countTd);
 
     const favTd = document.createElement('td');
@@ -371,12 +431,14 @@ function renderTable(section, boardsList, route) {
     renameBtn.classList.add('btn-sm');
     renameBtn.textContent = 'Renommer';
     renameBtn.addEventListener('click', () => openRenameDialog(board));
-    actTd.appendChild(renameBtn);
+    if (canEdit(board)) actTd.appendChild(renameBtn);
 
     const dupBtn = document.createElement('button');
     dupBtn.classList.add('btn-sm');
     dupBtn.textContent = 'Dupliquer';
-    dupBtn.addEventListener('click', () => {
+    dupBtn.addEventListener('click', async () => {
+      try { if (board.distant) await boards.remoteStore().ensureData(board.id); }
+      catch (err) { reportError('board-action', err); return; }
       const copy = boards.duplicate(board.id);
       if (copy) {
         announce(`Tableau dupliqué : ${copy.nom}`);
@@ -395,7 +457,7 @@ function renderTable(section, boardsList, route) {
     delBtn.classList.add('btn-sm', 'btn-danger');
     delBtn.textContent = 'Supprimer';
     delBtn.addEventListener('click', () => openDeleteDialog(board));
-    actTd.appendChild(delBtn);
+    if (canDelete(board)) actTd.appendChild(delBtn);
 
     addBoardActions(actTd, board);
     row.appendChild(actTd);
@@ -412,6 +474,7 @@ function renderGrid(section, boardsList) {
   for (const board of boardsList) {
     const li = document.createElement('li');
     li.classList.add('board-card');
+    li.dataset.boardId = board.id;
     const link = document.createElement('a');
     link.href = `#/tableau/${board.id}`;
     link.classList.add('board-card-link');
@@ -419,9 +482,10 @@ function renderGrid(section, boardsList) {
     title.classList.add('board-card-title');
     setBoardLabel(title, board);
     link.appendChild(title);
+    addBadge(link, board);
     const meta = document.createElement('span');
     meta.classList.add('board-card-meta');
-    meta.textContent = `${(board.données?.items?.length) || 0} élément(s)`;
+    meta.textContent = itemCount(board) === null && board.distant ? 'Éléments : non chargés' : `${itemCount(board) || 0} élément(s)`;
     link.appendChild(meta);
     if (board.dernièreOuverture) {
       const time = document.createElement('time');
@@ -454,7 +518,7 @@ function renderGrid(section, boardsList) {
       e.preventDefault();
       openDeleteDialog(board);
     });
-    actionsBar.appendChild(delBtn);
+    if (canDelete(board)) actionsBar.appendChild(delBtn);
     addBoardActions(actionsBar, board);
     li.appendChild(actionsBar);
     grid.appendChild(li);
@@ -513,6 +577,14 @@ export function handleRenameSubmit() {
   const fd = new FormData(dialog.querySelector('form'));
   const id = fd.get('rename-id');
   const nom = (fd.get('rename-name') || '').trim();
+  if (id && nom && boards.get(id)?.distant) {
+    dialog.close();
+    boards.remoteStore().rename(id, nom).then(() => {
+      announce(`Tableau renommé : ${nom}`);
+      render(router.getRoute());
+    }).catch(err => reportError('board-action', err));
+    return;
+  }
   if (id && nom) {
     boards.rename(id, nom);
     announce(`Tableau renommé : ${nom}`);
@@ -532,6 +604,15 @@ function openDeleteDialog(board) {
 export function handleDeleteConfirm() {
   const dialog = document.getElementById('dialog-delete-board');
   const id = dialog.querySelector('[name="delete-id"]').value;
+  if (id && boards.get(id)?.distant) {
+    const nom = boards.get(id).nom;
+    dialog.close();
+    boards.remoteStore().remove(id).then(() => {
+      announce(`${nom} supprimé`);
+      render(router.getRoute());
+    }).catch(err => reportError('board-action', err));
+    return;
+  }
   if (id) {
     const board = boards.get(id);
     const nom = board ? board.nom : 'Tableau';
@@ -561,7 +642,9 @@ function importBoardFromFile(file) {
   reader.readAsText(file);
 }
 
-function exportBoardJSON(board) {
+async function exportBoardJSON(board) {
+  try { if (board.distant) await boards.remoteStore().ensureData(board.id); }
+  catch (err) { reportError('board-action', err); return; }
   const json = JSON.stringify(board.données, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -587,8 +670,12 @@ function addBoardActions(el, board) {
   icon.setAttribute('aria-label', `Image de ${board.nom}`);
   for (const [id, label] of boards.BOARD_ICONS) icon.add(new Option(label, id));
   icon.value = board.icon || 'board';
-  icon.onchange = () => {
-    boards.setIcon(board.id, icon.value);
+  icon.disabled = !canEdit(board);
+  icon.onchange = async () => {
+    if (board.distant) {
+      try { await boards.remoteStore().setIcon(board.id, icon.value); }
+      catch (err) { icon.value = board.icon; reportError('board-action', err); return; }
+    } else boards.setIcon(board.id, icon.value);
     const link = el.closest('tr, li').querySelector('.board-link, .board-card-title');
     setBoardLabel(link, board);
     announce('Image du tableau modifiée');
@@ -603,4 +690,113 @@ function addBoardActions(el, board) {
     d.append(select, ok);
   });
   el.append(icon, move);
+  addAccountAction(el, board);
+}
+
+const canEdit = board => !board.distant || (board.role !== 'viewer' && !board.perdu);
+const canDelete = board => !board.distant || (board.role === 'owner' && !board.perdu);
+
+function focusRow(id) {
+  lastSection?.querySelector(`[data-board-id="${CSS.escape(id)}"] a`)?.focus();
+}
+
+/* Passage explicite d'un côté à l'autre : jamais de migration automatique. */
+function addAccountAction(el, board) {
+  if (!account.isConnected()) return;
+  const action = document.createElement('button');
+  action.classList.add('btn-sm', 'btn-account-action');
+  action.textContent = board.distant ? 'Garder une copie locale' : 'Enregistrer sur mon compte';
+  action.setAttribute('aria-label', `${action.textContent} : ${board.nom}`);
+  let busy = false;
+  action.addEventListener('click', async () => {
+    if (busy) return;
+    busy = true;
+    action.setAttribute('aria-disabled', 'true');
+    try {
+      if (board.distant) await keepCopy(board);
+      else await upload(board);
+    } catch (err) {
+      reportError('board-action', err);
+    } finally {
+      busy = false;
+      action.removeAttribute('aria-disabled');
+    }
+  });
+  el.append(action);
+}
+
+async function upload(board) {
+  announce(`Enregistrement de ${board.nom} sur votre compte…`);
+  const { entry, mirrored } = await boards.remoteStore().upload(board);
+  render(router.getRoute());
+  focusRow(entry.id);
+  if (mirrored) { announce(`${entry.nom} est maintenant sur votre compte.`); return; }
+  const message = `${entry.nom} est enregistré sur votre compte, mais il est trop volumineux pour la copie hors ligne. La version de cet appareil est conservée.`;
+  showNotice(`mirror-${entry.id}`, message, { tone: 'info' });
+  announce(message);
+}
+
+async function keepCopy(board) {
+  const copy = await boards.remoteStore().keepLocalCopy(board.id);
+  if (!copy) {
+    const message = 'Stockage de cet appareil plein : la copie locale n’a pas pu être créée.';
+    showNotice('board-action', message, { tone: 'error' });
+    announce(message);
+    return;
+  }
+  render(router.getRoute());
+  focusRow(copy.id);
+  announce(`Copie locale créée : ${copy.nom}`);
+}
+
+/* Tableau distant impossible à afficher : un message et un retour, jamais un tableau vide. */
+export function renderProblem({ title, message, actions = [] }) {
+  if (!container) return;
+  container.innerHTML = '';
+  container.hidden = false;
+  container.classList.add('nav-collapsed');
+  const main = document.createElement('main');
+  main.id = 'main-content';
+  main.className = 'board-problem';
+  main.tabIndex = -1;
+  const h1 = document.createElement('h1');
+  h1.id = 'dashboard-title';
+  h1.tabIndex = -1;
+  h1.textContent = title;
+  const p = document.createElement('p');
+  p.textContent = message;
+  const row = document.createElement('div');
+  row.className = 'dialog-actions';
+  for (const action of actions) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = action.label;
+    b.addEventListener('click', action.run);
+    row.append(b);
+  }
+  const back = document.createElement('a');
+  back.href = '#/';
+  back.className = 'board-problem-back';
+  back.textContent = 'Retour à l’accueil';
+  row.append(back);
+  main.append(h1, p, row);
+  container.append(main);
+  lastSection = null;
+  h1.focus();
+}
+
+export function renderLoading(message) {
+  if (!container) return;
+  container.innerHTML = '';
+  container.hidden = false;
+  container.classList.add('nav-collapsed');
+  const main = document.createElement('main');
+  main.id = 'main-content';
+  main.className = 'board-problem';
+  const p = document.createElement('p');
+  p.setAttribute('role', 'status');
+  p.textContent = message;
+  main.append(p);
+  container.append(main);
+  lastSection = null;
 }

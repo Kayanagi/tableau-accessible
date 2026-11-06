@@ -1510,3 +1510,67 @@ dialog.template-store[open] { display: flex; flex-direction: column; }
 }
 dialog { margin: auto; }
 #app-board:has(#board-tools.is-open) .context-toolbar.is-docked { display: none; }
+
+/* === Compte et tableaux enregistrés === */
+#app-notices:empty { display: none; }
+.notice {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem;
+  padding: .5rem 1rem; background: var(--surface); color: var(--fg);
+  border-bottom: 1px solid var(--border); border-left: 6px solid var(--primary);
+}
+.notice-error { border-left-color: var(--danger); font-weight: 600; }
+.notice p { flex: 1 1 16rem; min-width: 0; overflow-wrap: anywhere; font-size: .9rem; }
+.notice-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+/* Le tableau occupe tout l'écran : le message réduit sa hauteur au lieu de le recouvrir. */
+body:has(#app-board:not([hidden])):has(.notice) { height: 100vh; height: 100dvh; }
+body:has(.notice) #app-board:not([hidden]) { height: auto; flex: 1 1 0; min-height: 0; }
+
+.board-badge {
+  display: inline-block; margin-left: .5rem; padding: 0 .4rem; border: 1px solid var(--border); border-radius: 999px;
+  background: var(--bg); color: var(--fg); font-size: .75rem; font-weight: 400; line-height: 1.5; white-space: nowrap;
+}
+.board-badge-account { border: 2px solid var(--primary); font-weight: 600; }
+.board-card-link .board-badge { margin-left: 0; align-self: flex-start; }
+.btn-account-action { white-space: normal; }
+[aria-disabled="true"] { opacity: .7; cursor: progress; }
+
+.board-problem { grid-column: 1 / -1; max-width: 40rem; margin: 2rem auto; padding: 1rem; }
+.board-problem h1 { font-size: 1.25rem; margin-bottom: .5rem; }
+.board-problem-back { display: inline-flex; align-items: center; min-height: 24px; color: var(--link); }
+
+.account-dialog { width: min(32rem, calc(100vw - 16px)); max-width: calc(100vw - 16px); max-height: calc(100dvh - 16px); margin: auto; }
+.account-body { margin-top: .75rem; }
+.account-dialog .dialog-header h2 { font-size: 1.15rem; overflow-wrap: anywhere; }
+.account-dialog .dialog-header h2:focus { outline-offset: 2px; }
+.account-form { display: flex; flex-direction: column; }
+.account-field input {
+  display: block; width: 100%; min-height: 40px; padding: .4rem .6rem; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg); color: var(--fg); font: inherit;
+}
+.account-field input[aria-invalid="true"] { border: 2px solid var(--danger); }
+.field-hint { margin: .25rem 0 0; font-size: .85rem; color: var(--fg); }
+.field-error, .account-message {
+  margin: .25rem 0 0; padding-left: .5rem; border-left: 4px solid var(--danger);
+  color: var(--fg); font-size: .875rem; font-weight: 600; overflow-wrap: anywhere;
+}
+.account-message { margin: 0 0 .5rem; padding: .35rem .5rem; }
+.account-message.is-success { border-left-color: var(--primary); }
+.field-error[hidden], .account-message[hidden] { display: none; }
+.account-who, .account-switch { overflow-wrap: anywhere; }
+.account-switch { margin-top: .75rem; }
+.account-section { margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--border); }
+.account-section h3 { margin-top: 0; }
+.account-warning { margin-bottom: .75rem; padding: .5rem .75rem; border: 2px solid var(--danger); border-radius: 4px; }
+.account-dialog .dialog-actions button { white-space: normal; text-align: center; }
+/* Entre le mobile et le bureau, la navigation latérale laisse trop peu de place : la colonne Actions était coupée. */
+@media (min-width: 641px) and (max-width: 900px) {
+  .boards-table thead { display: none; }
+  .boards-table tbody tr { display: block; margin-bottom: .75rem; border: 1px solid var(--border); border-radius: 4px; }
+  .boards-table td { display: flex; justify-content: space-between; align-items: center; gap: .5rem; border: none; border-bottom: 1px solid var(--border); }
+  .boards-table td:last-child { border-bottom: none; }
+  .boards-table td::before { content: attr(data-label); font-weight: 600; margin-right: .5rem; flex-shrink: 0; }
+  .board-actions { justify-content: flex-end; }
+}
+@media (max-width: 900px) {
+  .boards-table td:first-child { flex-wrap: wrap; }
+}

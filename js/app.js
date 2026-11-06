@@ -23,6 +23,8 @@ import * as prefs from './preferences.js';
 import * as prefsMenu from './views/preferences-menu.js';
 import * as canvasMenu from './views/canvas-menu.js';
 import { duplicate } from './views/selection-actions.js';
+import * as account from './store/account.js';
+import { showNotice, clearNotice } from './ui/notice.js';
 
 const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-line': 'line', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
 const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', l: 'line', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
@@ -33,6 +35,10 @@ let editingId = null;
 let currentBoardId = null;
 let unsubAutoSave = null;
 let boardInitialized = false;
+let boardTicket = 0;
+let suppressAutoSave = false;
+let returnHash = '/';
+let closeAccount = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   announcer.init();
@@ -44,14 +50,112 @@ document.addEventListener('DOMContentLoaded', () => {
 
   setupDashboardDialogs();
 
+  boards.onSaveFailure(onLocalSaveFailure);
+  account.subscribe(() => dashboard.refresh());
+  account.onEvent(onAccountEvent);
+  // Sans indicateur de session, start() ne fait rien : aucune requête et aucun module de synchro.
+  account.start();
+
   router.subscribe(onRouteChange);
   router.init();
 });
 
+function onLocalSaveFailure(error) {
+  if (!error) { clearNotice('local-save'); return; }
+  const message = 'Enregistrement impossible : le stockage de cet appareil est plein. Exportez vos tableaux pour ne rien perdre.';
+  showNotice('local-save', message, { tone: 'error' });
+  announcer.announce(message);
+}
+
+function notify(key, message, options) {
+  showNotice(key, message, options);
+  announcer.announce(message);
+}
+
+function onAccountEvent(event) {
+  const { type, entry } = event;
+  if (type === 'offline') {
+    showNotice('server', 'Serveur injoignable : les tableaux de cet appareil restent utilisables. Vos modifications sont gardées ici et seront envoyées au retour de la connexion.', { actions: [{ label: 'Réessayer', run: () => account.start() }] });
+  } else if (type === 'online') {
+    clearNotice('server');
+  } else if (type === 'signed-in') {
+    clearNotice('session');
+  } else if (type === 'expired') {
+    notify('session', 'Votre session a expiré. Reconnectez-vous pour retrouver vos tableaux et envoyer vos modifications.', { tone: 'error', actions: [{ label: 'Se connecter', run: () => router.navigate('/compte') }] });
+  } else if (type === 'mirror-full') {
+    notify(`mirror-${entry.id}`, `« ${entry.nom} » ne tient pas dans la copie de cet appareil : pas d’accès hors ligne pour ce tableau. Il reste enregistré sur votre compte.`);
+  } else if (type === 'rejected') {
+    notify(`board-${entry.id}`, `« ${entry.nom} » n’a pas pu être enregistré : ${event.error.message} Vos modifications restent sur cet appareil.`, { tone: 'error' });
+  } else if (type === 'read-only') {
+    notify(`board-${entry.id}`, `« ${entry.nom} » est en lecture seule : vos modifications ne seront pas enregistrées.`);
+  } else if (type === 'lost') {
+    notify(`board-${entry.id}`, `Vous n’avez plus accès à « ${entry.nom} ».`, { tone: 'error', actions: [{ label: 'Garder une copie locale', run: () => keepLostCopy(entry.id) }] });
+  } else if (type === 'conflict') {
+    onConflict(event);
+  }
+}
+
+function onConflict({ entry, copy, fresh }) {
+  const isOpen = currentBoardId === entry.id;
+  const message = `« ${entry.nom} » a été modifié ailleurs. Vos modifications sont gardées dans la copie « ${copy.nom} ».`;
+  showNotice(`board-${entry.id}`, message, { tone: 'error', actions: [{ label: 'Ouvrir la copie', run: () => router.navigate(`/tableau/${copy.id}`) }] });
+  announcer.announce(fresh && isOpen ? `${message} La version du serveur est affichée.` : message);
+  if (isOpen) {
+    if (fresh) reloadOpenBoard(entry);
+    else { closeOpenBoard(); showRemoteProblem(entry.id, { status: 'error', error: { message: 'La version à jour de ce tableau n’a pas pu être chargée.' } }); }
+  } else {
+    dashboard.refresh();
+  }
+}
+
+/* Remplace le contenu affiché sans le compter comme une modification à envoyer. */
+function reloadOpenBoard(entry) {
+  const remote = boards.remoteStore();
+  suppressAutoSave = true;
+  try { state.loadBoard(JSON.parse(JSON.stringify(entry.données))); }
+  finally { suppressAutoSave = false; }
+  remote.setBaseline(entry.id, state.getSnapshot());
+  setBoardLabel(document.getElementById('board-title'), entry);
+  const active = document.activeElement;
+  if (!active || active === document.body) document.getElementById('board-title').focus();
+}
+
+async function keepLostCopy(id) {
+  try {
+    const copy = await boards.remoteStore().keepLocalCopy(id);
+    if (!copy) { notify('board-action', 'Stockage de cet appareil plein : la copie locale n’a pas pu être créée.', { tone: 'error' }); return; }
+    announcer.announce(`Copie locale créée : ${copy.nom}`);
+    router.navigate(`/tableau/${copy.id}`);
+  } catch (err) {
+    if (err.name !== 'ApiError') throw err;
+    notify('board-action', err.message, { tone: 'error' });
+  }
+}
+
+async function showAccount(route, oldRoute) {
+  if (oldRoute && oldRoute.view !== 'compte') returnHash = oldRoute.view === 'tableau' ? `/tableau/${oldRoute.boardId}` : oldRoute.view === 'espace' ? `/espace/${oldRoute.spaceId}` : oldRoute.view === 'accueil' ? '/' : `/${oldRoute.view}`;
+  if (!oldRoute || oldRoute.view === 'tableau' || !document.getElementById('dashboard-title')) showDashboard(route);
+  document.title = 'Mon compte — Tableau blanc accessible';
+  const { openAccountDialog } = await import('./views/account-dialog.js');
+  if (router.getRoute().view !== 'compte' || closeAccount) return;
+  const el = openAccountDialog({
+    onClose() {
+      closeAccount = null;
+      if (router.getRoute().view === 'compte') router.navigate(returnHash);
+    }
+  });
+  closeAccount = () => { if (el.open) el.close(); };
+}
+
 function onRouteChange(route, oldRoute) {
   if (oldRoute && route.view === oldRoute.view && route.boardId === oldRoute.boardId && route.spaceId === oldRoute.spaceId) return;
-  if (route.view === 'tableau' && route.boardId) {
-    showBoard(route.boardId);
+  if (route.view !== 'compte') closeAccount?.();
+  if (route.view === 'compte') {
+    showAccount(route, oldRoute).catch(err => console.error(err));
+  } else if (route.view === 'tableau' && route.boardId) {
+    showBoard(route.boardId).catch(err => console.error(err));
+  } else if (oldRoute?.view === 'compte') {
+    showDashboard(route, true);
   } else {
     showDashboard(route);
   }
@@ -63,10 +167,21 @@ function flushEditing() {
   editor.commitField(false);
 }
 
-function showDashboard(route) {
+/* Quitte le tableau ouvert. Un tableau du compte part aussitôt vers le serveur, sans attendre le délai. */
+function closeOpenBoard() {
   flushEditing();
   if (unsubAutoSave) { unsubAutoSave(); unsubAutoSave = null; }
+  const remote = boards.remoteStore();
+  if (currentBoardId && remote?.has(currentBoardId)) {
+    remote.leave(currentBoardId);
+    remote.flush(currentBoardId).catch(err => console.error(err));
+  }
   currentBoardId = null;
+}
+
+function showDashboard(route, fromAccount = false) {
+  boardTicket++;
+  closeOpenBoard();
   if (boardInitialized) navigation.reset();
 
   document.getElementById('app-board').hidden = true;
@@ -76,29 +191,81 @@ function showDashboard(route) {
   const dashEl = document.getElementById('app-dashboard');
   dashEl.hidden = false;
   dashboard.render(route);
+  if (account.isConnected()) account.refreshBoards();
 
   const titles = {
     accueil: 'Tableau blanc accessible',
     favoris: 'Favoris — Tableau blanc accessible',
-    parcourir: 'Parcourir — Tableau blanc accessible'
+    parcourir: 'Parcourir — Tableau blanc accessible',
+    compte: 'Mon compte — Tableau blanc accessible'
   };
   document.title = titles[route.view] || 'Tableau blanc accessible';
 
   requestAnimationFrame(() => {
-    const h1 = document.getElementById('dashboard-title');
-    if (h1) h1.focus();
+    const target = document.getElementById(fromAccount ? 'btn-account' : 'dashboard-title');
+    if (target && !document.querySelector('dialog[open]')) target.focus();
   });
+  if (fromAccount || route.view === 'compte') return;
 
   const labels = { accueil: 'Accueil', favoris: 'Tableaux favoris', parcourir: 'Tous les tableaux' };
   announcer.announce(labels[route.view] || 'Accueil');
 }
 
-function showBoard(boardId) {
-  const board = boards.get(boardId);
-  if (!board) { router.navigate('/'); return; }
+/*
+ * Un tableau local s'ouvre sans attente, comme avant. Un tableau du compte attend son état distant :
+ * le ticket écarte une réponse arrivée après une autre navigation, et sans état valide rien n'est chargé.
+ */
+async function showBoard(boardId) {
+  const ticket = ++boardTicket;
+  const local = boards.getLocal(boardId);
+  if (local) { displayBoard(local); return; }
+  if (!account.hasSession() && !boards.remoteStore()?.has(boardId)) { router.navigate('/'); return; }
 
-  flushEditing();
-  if (unsubAutoSave) { unsubAutoSave(); unsubAutoSave = null; }
+  closeOpenBoard();
+  hideBoardView();
+  dashboard.renderLoading('Chargement du tableau…');
+  announcer.announce('Chargement du tableau…');
+
+  await account.whenReady();
+  if (ticket !== boardTicket) return;
+  const remote = boards.remoteStore();
+  if (!remote) { showRemoteProblem(boardId, { status: 'expired' }); return; }
+  const result = await remote.open(boardId);
+  if (ticket !== boardTicket) return;
+  if (result.status !== 'ok') { showRemoteProblem(boardId, result); return; }
+
+  displayBoard(result.entry, true);
+  if (result.offline) {
+    const reason = result.error?.status ? result.error.message : 'Serveur injoignable.';
+    notify('server', `${reason} Voici la copie de cet appareil. Vos modifications sont gardées ici et seront envoyées au retour de la connexion.`, { actions: [{ label: 'Réessayer', run: () => account.start() }] });
+  }
+}
+
+function hideBoardView() {
+  document.getElementById('app-board').hidden = true;
+  document.querySelector('.board-main')?.removeAttribute('id');
+  document.getElementById('app-dashboard').hidden = false;
+}
+
+function showRemoteProblem(boardId, result) {
+  hideBoardView();
+  const retry = { label: 'Réessayer', run: () => showBoard(boardId).catch(err => console.error(err)) };
+  let view;
+  if (result.status === 'lost') {
+    view = { title: 'Tableau inaccessible', message: 'Ce tableau n’existe plus ou vous n’y avez plus accès.', actions: result.entry ? [{ label: 'Garder une copie locale', run: () => keepLostCopy(boardId) }] : [] };
+  } else if (result.status === 'expired') {
+    view = { title: 'Connexion requise', message: 'Connectez-vous pour ouvrir ce tableau enregistré sur un compte.', actions: [{ label: 'Se connecter', run: () => router.navigate('/compte') }] };
+  } else {
+    view = { title: 'Tableau indisponible', message: `Ce tableau n’a pas pu être chargé. ${result.error?.message || ''} Rien n’a été modifié.`.trim(), actions: [retry] };
+  }
+  document.title = `${view.title} — Tableau blanc accessible`;
+  dashboard.renderProblem(view);
+  announcer.announce(`${view.title}. ${view.message}`);
+}
+
+function displayBoard(board, distant = false) {
+  const boardId = board.id;
+  closeOpenBoard();
   boards.touchOpened(boardId);
   currentBoardId = boardId;
 
@@ -122,10 +289,12 @@ function showBoard(boardId) {
   toolsPanel.close(false);
   commentsPanel.close(false);
   canvas.setTool('select');
-  state.loadBoard(board.données || { name: board.nom, items: [] });
+  // Une copie : l'entrée du miroir ne doit changer que par edit(), jamais par mutation directe de l'état.
+  state.loadBoard(distant ? JSON.parse(JSON.stringify(board.données)) : board.données || { name: board.nom, items: [] });
+  if (distant) boards.remoteStore().setBaseline(boardId, state.getSnapshot());
 
   unsubAutoSave = state.subscribe(() => {
-    if (currentBoardId) boards.saveData(currentBoardId, state.getSnapshot());
+    if (currentBoardId && !suppressAutoSave) boards.saveData(currentBoardId, state.getSnapshot());
   });
 
   setBoardLabel(document.getElementById('board-title'), board);

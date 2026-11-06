@@ -5,6 +5,7 @@ import { saveTemplate } from '../store/templates.js';
 import { ask } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
 import { setBoardLabel } from '../ui/icons.js';
+import { showNotice } from '../ui/notice.js';
 
 let currentId = () => null;
 
@@ -28,7 +29,22 @@ export function init(getId) {
     input.value = board.nom; input.setAttribute('aria-label', 'Nom du tableau');
     title.replaceChildren(input); input.focus(); input.select();
     const finish = save => {
-      if (save && input.value.trim()) {
+      if (save && input.value.trim() && board.distant) {
+        // Le nom d'un tableau du compte suit PATCH, jamais PUT : il ne change qu'après la réponse du serveur.
+        const nom = input.value.trim();
+        const remote = boards.remoteStore();
+        remote.rename(board.id, nom).then(() => {
+          state.getBoard().name = nom;
+          remote.setBaseline(board.id, state.getSnapshot());
+          setBoardLabel(title, board);
+          document.title = `${board.nom} — Tableau blanc accessible`;
+          announce(`Tableau renommé : ${board.nom}`);
+        }).catch(err => {
+          if (err.name !== 'ApiError') throw err;
+          showNotice('board-action', err.message, { tone: 'error' });
+          announce(err.message);
+        });
+      } else if (save && input.value.trim()) {
         boards.rename(board.id, input.value.trim());
         state.getBoard().name = board.nom;
         document.title = `${board.nom} — Tableau blanc accessible`;
