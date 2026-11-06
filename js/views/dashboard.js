@@ -423,7 +423,6 @@ function renderTable(section, boardsList, route) {
     const openLink = document.createElement('a');
     openLink.href = `#/tableau/${board.id}`;
     openLink.classList.add('btn-sm');
-    openLink.setAttribute('role', 'button');
     openLink.textContent = 'Ouvrir';
     actTd.appendChild(openLink);
 

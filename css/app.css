@@ -177,6 +177,7 @@
 
 @media (prefers-contrast: more) {
   :root:not([data-theme]) {
+    --table-stripe: #1a1a1a; --table-hover: #333333; --outline-hover: #333333;
     --line-violet: #d0c4ff; --line-red: #ff9c9c; --line-blue: #9cc4ff; --line-green: #8ff0a6; --line-orange: #ffc47a;
     --bg: #000000;
     --fg: #ffffff;
@@ -1584,3 +1585,5 @@ body:has(.notice) #app-board:not([hidden]) { height: auto; flex: 1 1 0; min-heig
 @media (max-width: 900px) {
   .boards-table td:first-child { flex-wrap: wrap; }
 }
+
+.board-actions a { color: var(--link); }
