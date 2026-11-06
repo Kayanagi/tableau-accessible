@@ -164,6 +164,8 @@ export function setPen(color, width) {
 
 export function setTool(t) {
   if (!svg) return;
+  // Lecture seule : seuls les outils qui ne créent rien restent disponibles.
+  if (state.isReadOnly() && t !== 'select' && t !== 'hand') { announce('Lecture seule : ce tableau ne peut pas être modifié.'); t = 'select'; }
   tool = t;
   svg.dataset.tool = t.split(':')[0];
   for (const fn of toolListeners) fn(t);
@@ -756,7 +758,7 @@ function renderOverlay() {
     const b = unionBox(items);
     overlay.appendChild(svgEl('rect', { x: b.x - 6 * u, y: b.y - 6 * u, width: b.w + 12 * u, height: b.h + 12 * u, fill: 'none', stroke: LINK_BLUE, 'stroke-width': 1.5 * u, 'stroke-dasharray': `${6 * u} ${4 * u}`, class: 'selection-box' }));
   }
-  if (items.length === 1 && state.getSelectedIds().length === 1 && !items[0].locked && items[0].id !== editingId && !dragState?.moved && items[0].type !== 'comment') {
+  if (items.length === 1 && state.getSelectedIds().length === 1 && !items[0].locked && !state.isReadOnly() && items[0].id !== editingId && !dragState?.moved && items[0].type !== 'comment') {
     const b = itemBox(items[0]);
     const corners = O.AUTO_SIZE.includes(items[0].type) ? {} : { nw: [b.x, b.y], ne: [b.x + b.w, b.y], sw: [b.x, b.y + b.h], se: [b.x + b.w, b.y + b.h] };
     for (const [name, [cx, cy]] of Object.entries(corners)) {
@@ -774,7 +776,7 @@ function renderOverlay() {
   }
   if (items.length && getPref('showSize')) renderSizeLabel(unionBox(items), u);
   const line = selectedLine();
-  if (line && !line.locked && line.id !== editingId && !dragState?.moved) renderLineHandles(line);
+  if (line && !line.locked && !state.isReadOnly() && line.id !== editingId && !dragState?.moved) renderLineHandles(line);
   if (lineDrag) renderSnapTarget(lineDrag.hover);
   if (lineDraft) {
     overlay.appendChild(svgEl('line', { x1: lineDraft.from.x, y1: lineDraft.from.y, x2: lineDraft.cur.x, y2: lineDraft.cur.y, stroke: LINK_BLUE, 'stroke-width': 2 * u, 'stroke-dasharray': `${6 * u} ${4 * u}`, class: 'line-draft', 'pointer-events': 'none' }));
@@ -1084,7 +1086,7 @@ function onPointerDown(e) {
   if (isCreationTool()) { e.preventDefault(); pendingCreate = pt; return; }
 
   const line = selectedLine();
-  const lineHandle = line && !line.locked ? e.target.closest('[data-end], [data-wp], [data-mid]') : null;
+  const lineHandle = line && !line.locked && !state.isReadOnly() ? e.target.closest('[data-end], [data-wp], [data-mid]') : null;
   if (lineHandle) {
     e.preventDefault();
     const { end, wp, mid: segment } = lineHandle.dataset;
@@ -1129,6 +1131,7 @@ function onPointerDown(e) {
     if (subEl) focusSub(id, subEl.dataset.sub); else focusGroup(id);
     if (!state.isSelected(id)) return;
     const item = state.getItem(id);
+    if (state.isReadOnly()) return;
     if (subEl?.dataset.sub.startsWith('card:') && !item.locked) {
       cardDrag = { id, cardId: subEl.dataset.sub.slice(5), start: pt, moved: false };
       svg.setPointerCapture(e.pointerId);
@@ -1345,6 +1348,7 @@ function finishLineDrag() {
 }
 
 function createLine(start, end, message) {
+  if (state.isReadOnly()) return null;
   const data = { type: 'connector', x: 0, y: 0, label: '', lineType: 'straight', startCap: 'none', endCap: 'arrow_filled' };
   L.setEnd(data, 'start', start.id ? start : snapPoint(start));
   L.setEnd(data, 'end', end.id ? end : snapPoint(end));
@@ -1474,7 +1478,7 @@ function onPointerUp(e) {
 
 function onDoubleClick(e) {
   const line = selectedLine();
-  if (tool === 'select' && line && !line.locked) {
+  if (tool === 'select' && line && !line.locked && !state.isReadOnly()) {
     const pt = screenToSvg(e.clientX, e.clientY);
     const hit = (line.waypoints || []).findIndex(w => Math.hypot(w.x - pt.x, w.y - pt.y) * zoom <= 14);
     if (hit >= 0) { state.removeWaypoint(line.id, hit); focusGroup(line.id); return; }
@@ -1506,6 +1510,7 @@ export function dropAt(t, clientX, clientY, color) {
 }
 
 export function createAt(t, pt, useSelection = false) {
+  if (state.isReadOnly()) return null;
   if (t === 'line') return createLine({ x: pt.x - 100, y: pt.y }, { x: pt.x + 100, y: pt.y });
   const [type, shape] = t.split(':');
   const [w, h] = TOOL_SIZES[t] || [150, 150];
@@ -1531,6 +1536,7 @@ export function createAt(t, pt, useSelection = false) {
 }
 
 export function createAtCenter(t = tool) {
+  if (state.isReadOnly()) return null;
   const { w, h } = viewSize();
   const pt = { x: Math.round(panX + w / 2), y: Math.round(panY + h / 2) };
   if (!t.startsWith('comment')) {

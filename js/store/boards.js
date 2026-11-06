@@ -1,3 +1,8 @@
+/*
+ * Accès aux tableaux du compte (miroir distant, voir store/remote-boards.js) et aux espaces de l'appareil.
+ * Le stockage local historique n'est plus affiché ni modifiable : il ne sert plus que de réserve à importer
+ * (voir store/local-import.js), et de refuge au travail non envoyé d'un compte qui quitte l'appareil.
+ */
 import { BOARD_ICONS, normalizeBoardIcon } from '../ui/icons.js';
 
 const STORAGE_KEY = 'tableau-accessible-boards';
@@ -8,7 +13,8 @@ let data = { version: CURRENT_VERSION, tableaux: [], espaces: [] };
 const listeners = new Set();
 const saveListeners = new Set();
 let saveFailed = false;
-// Tableaux du compte : fourni par store/remote-boards.js, chargé seulement s'il y a un compte.
+let viewerId = null;
+// Tableaux du compte : fourni par store/remote-boards.js une fois le compte chargé.
 let remote = null;
 
 function generateId() {
@@ -17,6 +23,16 @@ function generateId() {
 
 function write() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+/* Un autre onglet peut avoir importé ou retiré un tableau : la réserve lue sur le disque fait foi. */
+function reloadReserve() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (Array.isArray(stored?.tableaux)) data.tableaux = stored.tableaux;
+  } catch (e) {
+    console.warn('Lecture impossible :', e);
+  }
 }
 
 function reportSave(error) {
@@ -28,7 +44,7 @@ function reportSave(error) {
   }
 }
 
-/* Rend compte de son résultat. Les tableaux locaux passent avant le miroir, qui cède sa place si besoin. */
+/* Rend compte de son résultat. La réserve passe avant le miroir, qui cède sa place si besoin. */
 function save() {
   try {
     write();
@@ -66,6 +82,11 @@ export function detachRemote() {
 
 export function remoteStore() {
   return remote;
+}
+
+/* Le compte qui regarde : les espaces créés par un autre compte sur cet appareil ne lui sont pas montrés. */
+export function setViewer(id) {
+  viewerId = id || null;
 }
 
 function notify() {
@@ -114,95 +135,36 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 
-export function getAll() {
-  return remote ? [...data.tableaux, ...remote.list()] : data.tableaux;
-}
+/* ---- Tableaux du compte ---- */
 
-export function getLocal(id) {
-  return data.tableaux.find(b => b.id === id) || null;
+export function getAll() {
+  return remote ? remote.list() : [];
 }
 
 export function get(id) {
-  return getLocal(id) || remote?.get(id) || null;
+  return remote?.get(id) || null;
 }
 
-export function create(nom, données) {
-  const now = new Date().toISOString();
-  const board = {
-    id: generateId(),
-    nom,
-    icon: 'board',
-    espaceId: null,
-    créé: now,
-    dernièreOuverture: now,
-    favori: false,
-    données: données ? JSON.parse(JSON.stringify(données)) : { name: nom, items: [] }
-  };
-  board.données.name = nom;
-  data.tableaux.push(board);
-  save();
+export async function create(nom, données) {
+  const entry = await remote.create(nom, données);
   notify();
-  return board;
-}
-
-/* Retire une entrée que le stockage n'a pas pu recevoir, sans réécrire : l'alerte de stockage plein reste vraie. */
-export function discard(id) {
-  data.tableaux = data.tableaux.filter(b => b.id !== id);
-  notify();
+  return entry;
 }
 
 export function saveData(id, snapshot) {
-  const board = data.tableaux.find(b => b.id === id);
-  if (!board) { remote?.edit(id, snapshot); return; }
-  board.données = snapshot;
-  board.dernièreOuverture = new Date().toISOString();
-  save();
+  remote?.edit(id, snapshot);
 }
 
-export function remove(id) {
-  data.tableaux = data.tableaux.filter(b => b.id !== id);
-  save();
-  notify();
-}
-
-export function rename(id, nom) {
-  const board = data.tableaux.find(b => b.id === id);
-  if (!board) return null;
-  board.nom = nom;
-  if (board.données) board.données.name = nom;
-  save();
-  notify();
-  return board;
-}
-
-export function duplicate(id) {
+export async function duplicate(id) {
   const original = get(id);
   if (!original?.données) return null;
-  const now = new Date().toISOString();
-  const copy = {
-    id: generateId(),
-    nom: original.nom + ' (copie)',
-    icon: normalizeBoardIcon(original.icon || original.emoji),
-    espaceId: original.espaceId || null,
-    créé: now,
-    dernièreOuverture: now,
-    favori: false,
-    données: JSON.parse(JSON.stringify(original.données))
-  };
-  copy.données.name = copy.nom;
-  data.tableaux.push(copy);
-  save();
+  const copy = await remote.create(`${original.nom} (copie)`, original.données, { icon: normalizeBoardIcon(original.icon), espaceId: original.espaceId || null });
   notify();
   return copy;
 }
 
 export function toggleFavori(id) {
-  const board = data.tableaux.find(b => b.id === id);
-  if (!board) return remote?.toggleFavori(id) ?? false;
-  board.favori = !board.favori;
-  save();
-  notify();
-  return board.favori;
+  return remote?.toggleFavori(id) ?? false;
 }
 
 export function getFavoris() {
@@ -210,38 +172,64 @@ export function getFavoris() {
 }
 
 export function touchOpened(id) {
-  const board = data.tableaux.find(b => b.id === id);
-  if (!board) { remote?.touch(id); return; }
-  board.dernièreOuverture = new Date().toISOString();
-  save();
+  remote?.touch(id);
 }
 
-export { BOARD_ICONS };
-export function setIcon(id, icon) {
-  const board = getLocal(id);
-  if (!board || !BOARD_ICONS.some(([id]) => id === icon)) return;
-  board.icon = icon;
-  save(); notify();
+/* ---- Réserve de l'appareil : tableaux historiques et travail à reprendre ---- */
+
+export function reserveBoards() {
+  reloadReserve();
+  return data.tableaux;
 }
-export function getSpaces() { return data.espaces; }
+
+/*
+ * Rend null si le stockage est plein : l'alerte reste affichée. reservedFor garde ce travail à son compte :
+ * une autre personne connectée sur cet appareil ne le verra pas.
+ */
+export function addToReserve(nom, données, { icon = 'board', reservedFor = null } = {}) {
+  reloadReserve();
+  const now = new Date().toISOString();
+  const board = { id: generateId(), nom, icon: normalizeBoardIcon(icon), espaceId: null, créé: now, dernièreOuverture: now, favori: false, données: JSON.parse(JSON.stringify(données)) };
+  board.données.name = nom;
+  if (reservedFor) board.réservéÀ = reservedFor;
+  data.tableaux.push(board);
+  if (save()) return board;
+  data.tableaux = data.tableaux.filter(b => b.id !== board.id);
+  return null;
+}
+
+export function removeFromReserve(id) {
+  reloadReserve();
+  data.tableaux = data.tableaux.filter(b => b.id !== id);
+  save();
+  notify();
+}
+
+/* ---- Espaces ---- */
+
+export { BOARD_ICONS };
+export function getSpaces() {
+  return data.espaces.filter(s => !s.owner || s.owner === viewerId);
+}
 export function createSpace(nom) {
-  const space = { id: generateId().replace('board-', 'space-'), nom };
+  reloadReserve();
+  const space = { id: generateId().replace('board-', 'space-'), nom, owner: viewerId };
   data.espaces.push(space); save(); notify(); return space;
 }
 export function renameSpace(id, nom) {
+  reloadReserve();
   const space = data.espaces.find(s => s.id === id);
   if (space) { space.nom = nom; save(); notify(); }
 }
 export function removeSpace(id) {
+  reloadReserve();
   data.espaces = data.espaces.filter(s => s.id !== id);
-  for (const b of data.tableaux) if (b.espaceId === id) b.espaceId = null;
   remote?.clearSpace(id);
   save(); notify();
 }
 export function moveToSpace(id, espaceId) {
-  const b = get(id);
-  if (b && (!espaceId || data.espaces.some(s => s.id === espaceId))) {
-    if (b.distant) { remote.setSpace(id, espaceId || null); notify(); return; }
-    b.espaceId = espaceId || null; save(); notify();
+  if (get(id) && (!espaceId || getSpaces().some(s => s.id === espaceId))) {
+    remote.setSpace(id, espaceId || null);
+    notify();
   }
 }

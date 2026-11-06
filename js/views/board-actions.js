@@ -18,18 +18,26 @@ export function saveAsTemplate(ids = null) {
   });
 }
 
+/* Le titre n'invite à renommer que si c'est possible. */
+export function syncTitle() {
+  const title = document.getElementById('board-title');
+  title.tabIndex = state.isReadOnly() ? -1 : 0;
+  if (state.isReadOnly()) title.removeAttribute('title');
+  else title.title = 'Renommer le tableau (Entrée)';
+}
+
 export function init(getId) {
   currentId = getId;
   const title = document.getElementById('board-title');
   const rename = () => {
-    if (title.querySelector('input')) return;
+    if (title.querySelector('input') || state.isReadOnly()) return;
     const board = boards.get(getId());
     if (!board) return;
     const input = document.createElement('input'); input.id = 'board-title-input';
     input.value = board.nom; input.setAttribute('aria-label', 'Nom du tableau');
     title.replaceChildren(input); input.focus(); input.select();
     const finish = save => {
-      if (save && input.value.trim() && board.distant) {
+      if (save && input.value.trim()) {
         // Le nom d'un tableau du compte suit PATCH, jamais PUT : il ne change qu'après la réponse du serveur.
         const nom = input.value.trim();
         const remote = boards.remoteStore();
@@ -47,11 +55,6 @@ export function init(getId) {
           showNotice('board-action', err.message, { tone: 'error' });
           announce(err.message);
         });
-      } else if (save && input.value.trim()) {
-        boards.rename(board.id, input.value.trim());
-        state.getBoard().name = board.nom;
-        document.title = `${board.nom} — Tableau blanc accessible`;
-        announce(`Tableau renommé : ${board.nom}`);
       } else announce('Renommage annulé');
       setBoardLabel(title, board);
       title.focus();
@@ -59,8 +62,7 @@ export function init(getId) {
     input.onkeydown = e => { e.stopPropagation(); if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); finish(e.key === 'Enter'); } };
     input.onblur = () => { if (input.isConnected) finish(false); };
   };
-  title.tabIndex = 0;
-  title.title = 'Renommer le tableau (Entrée)';
+  syncTitle();
   title.onclick = rename;
   title.onkeydown = e => { if (e.target === title && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); e.stopPropagation(); rename(); } };
   document.getElementById('btn-save-template').onclick = () => saveAsTemplate();

@@ -1,5 +1,5 @@
 /*
- * Appels à l'API du serveur. Module chargé par import() dynamique : le mode local ne l'exécute jamais.
+ * Appels à l'API du serveur.
  * Toute écriture porte Content-Type: application/json, même sans corps (garde CSRF du serveur).
  */
 const TIMEOUT_MS = 30000;
@@ -118,3 +118,13 @@ export const getBoard = id => request('GET', board(id));
 export const putBoardData = (id, baseRev, data, options = {}) => request('PUT', `${board(id)}/data`, { body: { baseRev, data }, ...options });
 export const patchBoard = (id, fields) => request('PATCH', board(id), { body: fields });
 export const deleteBoard = id => request('DELETE', board(id));
+
+export const listMembers = id => request('GET', `${board(id)}/members`);
+export const createInvite = (id, fields) => request('POST', `${board(id)}/invites`, { body: fields });
+export const cancelInvite = (id, inviteId) => request('DELETE', `${board(id)}/invites/${encodeURIComponent(inviteId)}`);
+export const setMemberRole = (id, userId, role) => request('PATCH', `${board(id)}/members/${encodeURIComponent(userId)}`, { body: { role } });
+export const removeMember = (id, userId) => request('DELETE', `${board(id)}/members/${encodeURIComponent(userId)}`);
+
+export const listInvites = () => request('GET', '/invites');
+export const acceptInvite = id => request('POST', `/invites/${encodeURIComponent(id)}/accept`);
+export const declineInvite = id => request('POST', `/invites/${encodeURIComponent(id)}/decline`);

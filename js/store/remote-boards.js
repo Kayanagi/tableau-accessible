@@ -1,7 +1,6 @@
 /*
  * Tableaux du compte : miroir local, écriture différée vers le serveur, conflits.
- * Chargé par import() dynamique, et seulement s'il y a un compte. Le miroir a sa propre clé, plafonnée :
- * il ne peut pas remplir le quota et faire échouer l'enregistrement des tableaux locaux.
+ * Le miroir a sa propre clé, plafonnée : il ne peut pas remplir le quota de l'appareil à lui seul.
  */
 import * as api from '../sync/api.js';
 import * as boards from './boards.js';
@@ -32,7 +31,7 @@ const runtime = new Map();
 
 function runtimeOf(id) {
   let rt = runtime.get(id);
-  if (!rt) { rt = { timer: null, firstEdit: 0, inflight: null, lastJson: null, sent: null, retry: 0, warned: false, blocked: false, viewerWarned: false, addedAt: 0 }; runtime.set(id, rt); }
+  if (!rt) { rt = { timer: null, firstEdit: 0, inflight: null, lastJson: null, sent: null, retry: 0, warned: false, blocked: false, addedAt: 0 }; runtime.set(id, rt); }
   return rt;
 }
 
@@ -55,7 +54,9 @@ export function setEventHandler(fn) {
 
 export const has = id => entries.has(id);
 export const get = id => entries.get(id) || null;
-export const list = () => [...entries.values()];
+/* Une entrée marquée perduPour est le travail d'un autre compte, gardé en attendant de la place : elle n'est jamais montrée. */
+const allEntries = () => [...entries.values()];
+export const list = () => allEntries().filter(e => !e.perduPour);
 export const pending = () => list().filter(e => e.sortants);
 export const isSuspended = () => suspended;
 export const getOwner = () => owner;
@@ -117,7 +118,7 @@ function persistNow() {
     return false;
   }
   // Suspendu : la session est finie, seul le travail non envoyé a sa place sur le disque.
-  const source = suspended ? pending() : list();
+  const source = suspended ? allEntries().filter(e => e.sortants) : allEntries();
   if (suspended && !source.length) return false;
 
   const prior = new Map(disk.tableaux.filter(t => t?.id).map(t => [t.id, t]));
@@ -180,7 +181,7 @@ function schedulePersist() {
   persistTimer = setTimeout(persistNow, PERSIST_DELAY);
 }
 
-/* Appelé quand les tableaux locaux manquent de place : vide les données du miroir sans sortants. */
+/* Appelé quand la réserve de l'appareil manque de place : vide les données du miroir sans sortants. */
 export function release() {
   let freed = false;
   for (const e of entries.values()) {
@@ -237,7 +238,7 @@ function onStorage(event) {
 function saveForeignWork() {
   if (!isForeign(readMirror())) return;
   for (const e of pending()) {
-    if (e.données && saveLocalCopy(e, `${e.nom} (non envoyé)`)) e.sortants = false;
+    if (e.données && saveOnDevice(e, `${e.nom} (non envoyé)`, owner?.id)) e.sortants = false;
   }
 }
 
@@ -273,15 +274,17 @@ export function init() {
 
 /*
  * Le miroir retrouvé peut appartenir à un autre compte (session expirée, autre personne connectée) :
- * ses modifications jamais envoyées deviennent des tableaux locaux, le reste est effacé.
+ * ses modifications jamais envoyées partent dans la réserve de l'appareil, réservées à ce compte, qui se les
+ * verra proposer à sa prochaine connexion. Le reste est effacé.
  */
 export function setOwner(user) {
   if (owner?.id && user?.id && owner.id !== user.id) {
     for (const e of list()) {
       if (e.id === openId) emit({ type: 'owner-changed', id: e.id });
-      if (e.sortants && e.données && !saveLocalCopy(e, `${e.nom} (non envoyé)`)) {
-        // Stockage plein : le travail reste dans le miroir, repérable, jusqu'à ce qu'il y ait de la place.
+      if (e.sortants && e.données && !saveOnDevice(e, `${e.nom} (non envoyé)`, owner.id)) {
+        // Stockage plein : le travail reste dans le miroir, invisible pour ce compte, jusqu'à ce qu'il y ait de la place.
         e.perdu = true;
+        e.perduPour = owner.id;
         emit({ type: 'copy-failed', entry: e });
         continue;
       }
@@ -290,7 +293,14 @@ export function setOwner(user) {
     mayReplaceOwner = true;
   }
   owner = user;
+  retryForeignWork();
   schedulePersist();
+}
+
+function retryForeignWork() {
+  for (const e of allEntries()) {
+    if (e.perduPour && e.données && saveOnDevice(e, `${e.nom} (non envoyé)`, e.perduPour)) forget(e.id);
+  }
 }
 
 export function suspend() {
@@ -348,7 +358,9 @@ export async function refreshList() {
     if (removed.has(row.id)) continue;
     const e = entries.get(row.id);
     if (e) {
-      Object.assign(e, { nom: row.name, icon: normalizeBoardIcon(row.icon), role: row.role, memberCount: row.memberCount, majLe: row.updatedAt, perdu: false });
+      const demoted = e.role !== 'viewer' && row.role === 'viewer';
+      Object.assign(e, { nom: row.name, icon: normalizeBoardIcon(row.icon), role: row.role, memberCount: row.memberCount, ownerName: row.ownerName, majLe: row.updatedAt, perdu: false });
+      if (demoted) emit({ type: 'role-lost', entry: e });
       if (e.données) e.données.name = row.name;
       // Modifié ailleurs : la copie est périmée. Le tableau ouvert le découvrira à son prochain envoi.
       if (!e.sortants && e.id !== openId && row.rev > (e.rev ?? 0)) {
@@ -358,7 +370,7 @@ export async function refreshList() {
       }
     } else {
       entries.set(row.id, {
-        distant: true, id: row.id, nom: row.name, icon: normalizeBoardIcon(row.icon), rev: row.rev, role: row.role, memberCount: row.memberCount,
+        distant: true, id: row.id, nom: row.name, icon: normalizeBoardIcon(row.icon), rev: row.rev, role: row.role, memberCount: row.memberCount, ownerName: row.ownerName,
         créé: toIso(row.createdAt), majLe: row.updatedAt, dernièreOuverture: toIso(row.updatedAt), favori: false, espaceId: null, données: null, sortants: false
       });
     }
@@ -406,10 +418,6 @@ export function edit(id, snapshot) {
   if (sameData(id, json)) return; // sélection, zoom : rien à enregistrer
   const rt = runtimeOf(id);
   rt.lastJson = json;
-  if (e.role === 'viewer') {
-    if (!rt.viewerWarned) { rt.viewerWarned = true; emit({ type: 'read-only', entry: e }); }
-    return;
-  }
   e.données = snapshot;
   e.nbÉléments = snapshot.items?.length ?? 0;
   e.sortants = true;
@@ -440,7 +448,8 @@ function write(id, options = {}) {
   const e = entries.get(id);
   const rt = runtimeOf(id);
   if (rt.inflight) return rt.inflight;
-  if (!e?.sortants || !e.données || e.perdu || rt.blocked || suspended) return Promise.resolve();
+  // Rôle viewer : jamais de PUT. Le travail d'avant le retrait du droit reste ici, pour la copie (keepCopy).
+  if (!e?.sortants || !e.données || e.perdu || e.role === 'viewer' || rt.blocked || suspended) return Promise.resolve();
   clearTimeout(rt.timer);
   rt.timer = null;
   rt.firstEdit = 0;
@@ -475,6 +484,13 @@ async function onWriteError(e, err) {
   if (err.code === 'unauthenticated') return; // déjà traité : session suspendue, sortants conservés
   if (err.notFound) { markLost(e); return; }
   if (err.unreachable) { retryLater(e.id, err); warnOnce(e, err); schedulePersist(); return; }
+  // Le propriétaire vient de retirer le droit d'écrire : le travail non envoyé reste ici, l'interface passe en lecture seule.
+  if (err.code === 'forbidden') {
+    e.role = 'viewer';
+    schedulePersist();
+    emit({ type: 'role-lost', entry: e });
+    return;
+  }
   // Refus définitif (validation, droits, taille) : pas de nouvel essai avant la prochaine modification.
   rt.blocked = true;
   schedulePersist();
@@ -493,11 +509,8 @@ function conflictName(nom, date = new Date()) {
   return `${nom} (conflit du ${dd}/${mm})`;
 }
 
-function saveLocalCopy(entry, nom) {
-  const copy = boards.create(nom, entry.données);
-  if (boards.isSaveFailing()) { boards.discard(copy.id); return null; }
-  boards.setIcon(copy.id, entry.icon);
-  return copy;
+function saveOnDevice(entry, nom, reservedFor) {
+  return boards.addToReserve(nom, entry.données, { icon: entry.icon, reservedFor });
 }
 
 function sortedKeys(value) {
@@ -515,8 +528,8 @@ function contentOf(data) {
 /*
  * Conflit : aucune fusion, mais d'abord vérifier qu'il y en a un. Un PUT accepté dont la réponse n'a pas été lue
  * (rechargement juste après une modification) revient en 409 alors que le serveur a déjà ce contenu.
- * Sinon le travail non envoyé part dans une copie, sur l'appareil tant qu'il y a la place, sinon sur le compte,
- * et la version du serveur redevient celle du tableau. Rien ne s'intercale entre la dernière copie et ce remplacement.
+ * Sinon le travail non envoyé part dans une copie sur le compte, et la version du serveur redevient celle du tableau.
+ * Rien ne s'intercale entre la dernière copie et ce remplacement.
  */
 async function onConflict(e, known = null) {
   const rt = runtimeOf(e.id);
@@ -546,7 +559,7 @@ async function onConflict(e, known = null) {
 
   emit({ type: 'conflict-flush', entry: e });
   const nom = conflictName(e.nom);
-  let copy = saveLocalCopy(e, nom);
+  let copy = null;
   while (!copy) {
     const snapshot = e.données;
     let created;
@@ -628,6 +641,10 @@ export async function open(id) {
     return { status: 'error', error: err };
   }
   if (e?.sortants && e.données) {
+    if (res.role === 'viewer') {
+      if (e.role !== 'viewer') { e.role = 'viewer'; emit({ type: 'role-lost', entry: e }); }
+      return { status: 'ok', entry: e };
+    }
     if (res.rev > e.rev) await onConflict(e, res);
     else Object.assign(e, { role: res.role, nom: res.board.name, icon: normalizeBoardIcon(res.board.icon), perdu: false });
     if (e.données) return { status: 'ok', entry: e };
@@ -722,25 +739,49 @@ export async function remove(id) {
   persistNow();
 }
 
-/*
- * « Enregistrer sur mon compte » : l'entrée locale n'est retirée qu'après le 201 et l'écriture du miroir.
- * Si le tableau n'entre pas dans le miroir, l'entrée locale reste : aucune copie n'est perdue.
- */
-export async function upload(local) {
-  const res = await api.createBoard({ name: local.nom, icon: normalizeBoardIcon(local.icon), data: local.données || { name: local.nom, items: [] } });
-  const entry = applyServer(res, { favori: !!local.favori, espaceId: local.espaceId || null, dernièreOuverture: local.dernièreOuverture || new Date().toISOString(), nbÉléments: res.board.items.length });
-  const written = persistNow();
-  const mirrored = written && !!entry.données && !entry.horsCopie;
-  if (mirrored) boards.remove(local.id);
-  return { entry, mirrored };
+/* Tableau neuf sur le compte, tel qu'à la création, l'import d'un fichier ou la duplication. */
+export async function create(nom, données, extra = {}) {
+  const data = JSON.parse(JSON.stringify(données || { name: nom, items: [] }));
+  data.name = nom;
+  const res = await api.createBoard({ name: nom, icon: normalizeBoardIcon(extra.icon), data });
+  const entry = applyServer(res, { favori: !!extra.favori, espaceId: extra.espaceId || null, dernièreOuverture: extra.dernièreOuverture || new Date().toISOString(), nbÉléments: res.board.items.length });
+  persistNow();
+  return entry;
 }
 
-/* « Garder une copie locale » : copie ordinaire sur l'appareil. Le tableau du compte n'est pas touché, sauf accès perdu. */
-export async function keepLocalCopy(id) {
+/* Un tableau de la réserve envoyé sur le compte. La réserve n'est jamais touchée ici : l'en retirer demande un clic. */
+export async function upload(local) {
+  const res = await api.createBoard({ name: local.nom, icon: normalizeBoardIcon(local.icon), data: local.données || { name: local.nom, items: [] } });
+  const entry = applyServer(res, { favori: !!local.favori, dernièreOuverture: local.dernièreOuverture || new Date().toISOString(), nbÉléments: res.board.items.length });
+  persistNow();
+  return { entry };
+}
+
+/*
+ * « Garder une copie » : un nouveau tableau sur le compte, comme pour un conflit.
+ * Accès perdu : l'entrée disparaît une fois la copie en sûreté.
+ * Droit d'écriture retiré : le travail est dans la copie, la version du serveur reste celle du tableau.
+ */
+export async function keepCopy(id) {
   const e = await ensureData(id);
   const lost = e.perdu;
-  const copy = saveLocalCopy(e, lost ? e.nom : `${e.nom} (copie locale)`);
-  if (!copy) return null;
-  if (lost) { forget(id); persistNow(); }
+  const copy = await create(lost ? e.nom : `${e.nom} (copie)`, e.données, { icon: e.icon, espaceId: e.espaceId });
+  if (lost) forget(id);
+  else if (e.role === 'viewer') e.sortants = false;
+  persistNow();
   return copy;
+}
+
+/* Déconnexion avec du travail non envoyé : il attend sur l'appareil, proposé à ce seul compte à sa prochaine connexion. */
+export function keepOnDevice(id) {
+  const e = entries.get(id);
+  if (!e?.données) return null;
+  return saveOnDevice(e, `${e.nom} (non envoyé)`, owner?.id);
+}
+
+/* Le tableau n'est plus à nous : quitté, ou accès retiré. */
+export function drop(id) {
+  removed.add(id);
+  forget(id);
+  persistNow();
 }

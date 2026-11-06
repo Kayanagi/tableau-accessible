@@ -16,7 +16,7 @@ export function dialog(title, build) {
   header.append(heading, close);
   el.append(header);
   build(el);
-  el.addEventListener('close', () => { el.remove(); if (opener?.isConnected) opener.focus(); else document.getElementById('dashboard-title')?.focus(); });
+  el.addEventListener('close', () => { el.remove(); if (opener?.isConnected && opener !== document.body) opener.focus(); else if (document.activeElement === document.body) (document.getElementById('dashboard-title') || document.getElementById('board-title'))?.focus(); });
   document.body.append(el);
   el.showModal();
   return el;

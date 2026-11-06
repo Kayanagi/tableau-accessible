@@ -181,7 +181,7 @@ export function flip(id) {
   const item = state.getItem(id);
   if (item?.type !== 'flipcard') return;
   flippedNow = id;
-  state.mutateItem(id, i => { i.flipped = !i.flipped; }, () => {
+  state.viewToggle(id, i => { i.flipped = !i.flipped; }, () => {
     const it = state.getItem(id);
     return `${it.flipped ? 'Verso' : 'Recto'} visible : ${(it.flipped ? it.back : it.content) || '(vide)'}`;
   });

@@ -138,8 +138,8 @@ describe('API d’authentification', () => {
 
   it('crée toutes les tables du schéma dès la première migration', () => {
     const names = s.app.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name);
-    assert.deepEqual(names, ['board_items', 'board_members', 'board_ops', 'boards', 'sessions', 'share_links', 'users']);
-    assert.equal(s.app.db.pragma('user_version', { simple: true }), 2);
+    assert.deepEqual(names, ['board_invites', 'board_items', 'board_members', 'board_ops', 'boards', 'sessions', 'share_links', 'users']);
+    assert.equal(s.app.db.pragma('user_version', { simple: true }), 3);
     assert.equal(s.app.db.pragma('journal_mode', { simple: true }), 'wal');
     assert.equal(s.app.db.pragma('foreign_keys', { simple: true }), 1);
   });
@@ -155,7 +155,7 @@ describe('API d’authentification', () => {
     assert.equal(res.setCookie.length, 1);
     const token = tokenFrom(res);
     assert.match(token, /^[\w-]{43}$/);
-    assert.equal(res.setCookie[0], `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=2592000`);
+    assert.equal(res.setCookie[0], `${COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=2592000`);
     assert.equal(res.headers.get('cache-control'), 'no-store');
 
     const stored = s.app.db.prepare('SELECT token_hash FROM sessions').all();
@@ -300,7 +300,7 @@ describe('API d’authentification', () => {
     const { token } = await s.signUp();
     const res = await s.call('POST', '/api/auth/logout', { cookie: token });
     assert.equal(res.status, 204);
-    assert.equal(res.setCookie[0], `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`);
+    assert.equal(res.setCookie[0], `${COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
     assert.equal((await s.call('GET', '/api/me', { cookie: token })).status, 401);
     assert.equal((await s.call('POST', '/api/auth/logout', { cookie: token })).status, 401);
   });
@@ -588,7 +588,7 @@ describe('mode de test local', () => {
       const res = await s.call('POST', '/api/auth/register', { body: { email: 'local@exemple.test', password: PASSWORD, displayName: 'L' } });
       assert.equal(res.status, 201);
       const line = res.setCookie[0];
-      assert.match(line, /^baro_sid=[\w-]{43}; Path=\/; HttpOnly; SameSite=Strict; Max-Age=2592000$/);
+      assert.match(line, /^baro_sid=[\w-]{43}; Path=\/; HttpOnly; SameSite=Lax; Max-Age=2592000$/);
       const token = tokenFrom(res, 'baro_sid');
       assert.equal((await s.call('GET', '/api/me', { cookie: token, cookieName: 'baro_sid' })).status, 200);
       assert.equal((await s.call('GET', '/api/me', { cookie: token })).status, 401);

@@ -131,7 +131,7 @@ describe('API des tableaux', () => {
     assert.equal(res.status, 200);
     const byId = new Map(res.body.boards.map(x => [x.id, x]));
     assert.equal(res.body.boards.length, 2);
-    assert.deepEqual(Object.keys(byId.get(a)).sort(), ['createdAt', 'icon', 'id', 'memberCount', 'name', 'rev', 'role', 'updatedAt']);
+    assert.deepEqual(Object.keys(byId.get(a)).sort(), ['createdAt', 'icon', 'id', 'memberCount', 'name', 'ownerName', 'rev', 'role', 'updatedAt']);
     assert.equal(byId.get(a).role, 'owner');
     assert.equal(byId.get(a).icon, 'goal');
     assert.equal(byId.get(a).memberCount, 1);
@@ -273,9 +273,9 @@ describe('API des tableaux', () => {
       }
     });
 
-    it('n’expose ni membres, ni liens, ni partage, ni WebSocket à cette phase', async () => {
+    it('n’expose ni liens, ni entrée par lien, ni WebSocket à cette phase', async () => {
       const id = await newBoard();
-      for (const [method, path] of [['GET', `/api/boards/${id}/members`], ['GET', `/api/boards/${id}/links`], ['POST', `/api/boards/${id}/links`], ['POST', '/api/share/join'], ['GET', '/api/ws']]) {
+      for (const [method, path] of [['GET', `/api/boards/${id}/links`], ['POST', `/api/boards/${id}/links`], ['POST', '/api/share/join'], ['GET', '/api/ws']]) {
         assert.equal((await s.call(method, path, { cookie: owner.token, body: method === 'GET' ? undefined : {} })).status, 404, `${method} ${path}`);
       }
     });

@@ -64,3 +64,9 @@ export function clearNotice(key) {
   notices.delete(key);
   next?.focus();
 }
+
+/* L'écran de connexion n'affiche aucun message : ils peuvent nommer des tableaux. */
+export function clearAllNotices() {
+  for (const el of notices.values()) el.remove();
+  notices.clear();
+}

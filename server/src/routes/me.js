@@ -14,6 +14,8 @@ export function registerMeRoutes(router, app) {
   const setHash = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?');
   const ownedBoards = db.prepare("SELECT board_id AS id FROM board_members WHERE user_id = ? AND role = 'owner'");
   const otherMemberships = db.prepare("SELECT board_id AS boardId, role FROM board_members WHERE user_id = ? AND role <> 'owner'");
+  // Métadonnées seules : le nom du tableau et celui de l'invitant appartiennent à autrui.
+  const receivedInvites = db.prepare('SELECT board_id AS boardId, role, created_at AS createdAt, expires_at AS expiresAt FROM board_invites WHERE email = ? AND expires_at > ?');
   const removeAccount = createAccountRemoval(db);
 
   async function write(res, chunk) {
@@ -88,7 +90,7 @@ export function registerMeRoutes(router, app) {
       first = false;
     }
     await yieldToLoop();
-    await write(res, `],"memberships":${JSON.stringify(otherMemberships.all(userId))}}`);
+    await write(res, `],"memberships":${JSON.stringify(otherMemberships.all(userId))},"invites":${JSON.stringify(receivedInvites.all(ctx.session.user.email, Date.now()))}}`);
     res.end();
     return { handled: true };
   }, { auth: 'account', rate: { bucket: 'account-export', account: true, limit: 1, windowMs: 10 * MIN } });

@@ -45,7 +45,7 @@ export function render() {
 
   if (items.length === 0) {
     const p = document.createElement('p');
-    p.textContent = tagFilter ? 'Aucun élément avec cette étiquette.' : 'Aucun élément. Utilisez la barre d’outils pour en ajouter.';
+    p.textContent = tagFilter ? 'Aucun élément avec cette étiquette.' : (state.isReadOnly() ? 'Aucun élément.' : 'Aucun élément. Utilisez la barre d’outils pour en ajouter.');
     p.classList.add('table-empty');
     container.appendChild(p);
     return;
@@ -104,10 +104,13 @@ export function render() {
     headerRow.appendChild(th);
   }
 
-  const actTh = document.createElement('th');
-  actTh.setAttribute('scope', 'col');
-  actTh.textContent = 'Actions';
-  headerRow.appendChild(actTh);
+  const readOnly = state.isReadOnly();
+  if (!readOnly) {
+    const actTh = document.createElement('th');
+    actTh.setAttribute('scope', 'col');
+    actTh.textContent = 'Actions';
+    headerRow.appendChild(actTh);
+  }
 
   thead.appendChild(headerRow);
   table.appendChild(thead);
@@ -151,6 +154,9 @@ export function render() {
     tr.appendChild(createTd(!line && item.width || '-'));
     tr.appendChild(createTd(!line && item.height || '-'));
 
+    tbody.appendChild(tr);
+    if (readOnly) continue;
+
     const actTd = document.createElement('td');
     const editBtn = document.createElement('button');
     editBtn.textContent = 'Éditer';
@@ -169,7 +175,6 @@ export function render() {
     actTd.appendChild(delBtn);
 
     tr.appendChild(actTd);
-    tbody.appendChild(tr);
   }
 
   table.appendChild(tbody);

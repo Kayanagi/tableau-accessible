@@ -1,8 +1,9 @@
 import { chromium } from 'playwright';
-import { spawn } from 'child_process';
+import { startAppServer } from './helpers/app-server.mjs';
+import { signedInContext } from './helpers/session.mjs';
 
-const PORT = Number(process.env.PORT) || 8765;
-const BASE = `http://localhost:${PORT}`;
+const app = await startAppServer();
+const BASE = app.origin;
 const results = [];
 let passed = 0, failed = 0;
 
@@ -12,18 +13,15 @@ function log(label, ok, detail) {
   if (ok) passed++; else failed++;
 }
 
-const server = spawn('python3', ['-m', 'http.server', String(PORT)], {
-  cwd: new URL('..', import.meta.url).pathname, stdio: 'pipe'
-});
-await new Promise(r => setTimeout(r, 800));
-
 let browser;
 try {
   browser = await chromium.launch({ headless: true });
+  // Plus de mode local : chaque contexte de ce fichier est un compte de test déjà connecté.
+  const newContext = options => signedInContext(browser, app, options);
 
   // === 1280px tests ===
   console.log('--- Tests a 1280px ---');
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const ctx = await newContext({ viewport: { width: 1280, height: 800 } });
   const page = await ctx.newPage();
   const errors = [];
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
@@ -40,10 +38,16 @@ try {
     }));
   });
   await page.reload();
-  await page.waitForLoadState('networkidle');
+  await page.waitForSelector('.import-dialog');
 
-  const migratedName = await page.textContent('.boards-table td:first-child, .boards-empty');
-  log('Migration : ancien tableau visible', migratedName && migratedName.includes('Ancien tableau'), migratedName?.slice(0, 50));
+  // Le tableau migré se retrouve dans le dialogue d'import, puis sur le compte.
+  const migratedName = await page.textContent('.import-dialog .import-option');
+  log('Migration : ancien tableau proposé à l\'import', migratedName && migratedName.includes('Ancien tableau'), migratedName?.slice(0, 50));
+  await page.getByRole('button', { name: 'Importer dans mon compte' }).click();
+  await page.getByRole('button', { name: 'Terminer' }).click();
+  await page.waitForSelector('.import-dialog', { state: 'detached' });
+  await page.locator('.boards-table td:first-child', { hasText: 'Ancien tableau' }).waitFor();
+  log('Migration : ancien tableau importé', true);
 
   const hasNewKey = await page.evaluate(() => !!localStorage.getItem('tableau-accessible-boards'));
   log('Migration : nouvelle clé créée', hasNewKey);
@@ -71,6 +75,8 @@ try {
   // Click "Organigramme" template (2nd button)
   await tplBtns[1].click();
   await page.waitForFunction(() => location.hash.startsWith('#/tableau/'));
+  // Le tableau naît sur le serveur puis se charge : son ouverture n'est plus immédiate.
+  await page.waitForSelector('.canvas-item');
   const boardH1 = await page.textContent('#board-title');
   log('Création depuis modèle : titre', boardH1.endsWith('Organigramme'), boardH1);
 
@@ -252,7 +258,7 @@ try {
 
   await page.goto(BASE + '/#/tableau/' + await page.evaluate(async () => {
     const boards = await import('/js/store/boards.js');
-    return boards.create('Tests Miro', { name: 'Tests Miro', items: [] }).id;
+    return (await boards.create('Tests Miro', { name: 'Tests Miro', items: [] })).id;
   }));
   await page.waitForSelector('#app-board:not([hidden])');
   await page.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Tests Miro'));
@@ -721,7 +727,7 @@ try {
   log('Copier-coller : arbre et groupe recréés avec de nouveaux identifiants', pastedMap.length === 4 && pastedMap.some(i => i.parentNode === newRoot?.id) && newGroup[0] && newGroup[0] === newGroup[1] && newGroup[0] !== 'g1');
 
   // Dashboard et modèles (1.5.0), contexte isolé.
-  const dashContext = await browser.newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
+  const dashContext = await newContext({ viewport: { width: 1280, height: 800 }, acceptDownloads: true });
   const d = await dashContext.newPage();
   await d.goto(BASE + '/#/');
   await d.waitForSelector('#btn-create-space');
@@ -870,7 +876,7 @@ try {
 
   // === 320px tests ===
   console.log('--- Tests a 320px ---');
-  const ctx320 = await browser.newContext({ viewport: { width: 320, height: 568 } });
+  const ctx320 = await newContext({ viewport: { width: 320, height: 568 } });
   const p320 = await ctx320.newPage();
   const err320 = [];
   p320.on('console', m => { if (m.type() === 'error') err320.push(m.text()); });
@@ -934,7 +940,7 @@ try {
   await ctx320.close();
 
   // Présentation et navigation : contexte isolé et Fullscreen API indisponible.
-  const navCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const navCtx = await newContext({ viewport: { width: 1280, height: 800 } });
   const nav = await navCtx.newPage();
   await nav.addInitScript(() => { Element.prototype.requestFullscreen = undefined; });
   await nav.goto(BASE);
@@ -1019,14 +1025,14 @@ try {
   await navCtx.close();
 
   // Lignes (1.6.0)
-  const lineCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const lineCtx = await newContext({ viewport: { width: 1400, height: 900 } });
   const lp = await lineCtx.newPage();
   const lineErrors = [];
   lp.on('pageerror', e => lineErrors.push(e.message));
   lp.on('console', m => { if (m.type() === 'error') lineErrors.push(m.text()); });
   await lp.goto(BASE + '/#/');
   await lp.waitForSelector('#btn-create-space');
-  const lineBoard = await lp.evaluate(async () => (await import('/js/store/boards.js')).create('Lignes', { name: 'Lignes', items: [] }).id);
+  const lineBoard = await lp.evaluate(async () => (await (await import('/js/store/boards.js')).create('Lignes', { name: 'Lignes', items: [] })).id);
   await lp.evaluate(id => { location.hash = `#/tableau/${id}`; }, lineBoard);
   await lp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Lignes'));
   const lState = (fn, ...args) => lp.evaluate(async ({ fn, args }) => (await import('/js/state.js'))[fn](...args), { fn, args });
@@ -1352,11 +1358,11 @@ try {
   await lineCtx.close();
 
   // Glisser-déposer depuis les palettes (1.6.0)
-  const dropCtx = await browser.newContext({ viewport: { width: 1400, height: 900 }, hasTouch: true });
+  const dropCtx = await newContext({ viewport: { width: 1400, height: 900 }, hasTouch: true });
   const dp = await dropCtx.newPage();
   await dp.goto(BASE + '/#/');
   await dp.waitForSelector('#btn-create-space');
-  const dropBoard = await dp.evaluate(async () => (await import('/js/store/boards.js')).create('Glisser', { name: 'Glisser', items: [] }).id);
+  const dropBoard = await dp.evaluate(async () => (await (await import('/js/store/boards.js')).create('Glisser', { name: 'Glisser', items: [] })).id);
   await dp.evaluate(id => { location.hash = `#/tableau/${id}`; }, dropBoard);
   await dp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Glisser'));
   const dItems = () => dp.evaluate(async () => (await import('/js/state.js')).getSnapshot().items);
@@ -1439,7 +1445,7 @@ try {
   await dropCtx.close();
 
   // Apparence et préférences (1.6.0)
-  const prefCtx = await browser.newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
+  const prefCtx = await newContext({ viewport: { width: 1280, height: 800 }, colorScheme: 'light' });
   const pp = await prefCtx.newPage();
   await pp.goto(BASE + '/#/');
   await pp.waitForSelector('#btn-create-space');
@@ -1486,7 +1492,7 @@ try {
   log('Thèmes : contraste AA (texte 4,5:1, interface 3:1) dans tous les thèmes', Object.values(contrast).every(c => c.text.every(r => r >= 4.5) && c.ui.every(r => r >= 3)), JSON.stringify(contrast));
   log('Thème sombre : palette DWES', contrast.dark.primary === '#6c4bff' && contrast.light.primary === '#4a2fcc');
 
-  const prefBoard = await pp.evaluate(async () => (await import('/js/store/boards.js')).create('Préférences', { name: 'Préférences', items: [] }).id);
+  const prefBoard = await pp.evaluate(async () => (await (await import('/js/store/boards.js')).create('Préférences', { name: 'Préférences', items: [] })).id);
   await pp.evaluate(id => { location.hash = `#/tableau/${id}`; }, prefBoard);
   await pp.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Préférences'));
   const boardPrefs = pp.locator('#app-board .btn-preferences');
@@ -1530,7 +1536,7 @@ try {
   await prefCtx.close();
 
   // 320 px : nouveautés sans débordement (1.6.0)
-  const small = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const small = await newContext({ viewport: { width: 320, height: 640 } });
   const sp = await small.newPage();
   await sp.goto(BASE + '/#/');
   await sp.waitForSelector('#btn-create-space', { state: 'attached' });
@@ -1562,10 +1568,11 @@ try {
   log('320 px : mini-carte masquée par défaut puis dans l’écran', map320.x >= 0 && map320.x + map320.width <= 320 && await noOverflow());
   await small.close();
 
-  const flushCtx = await browser.newContext();
+  const flushCtx = await newContext();
   const fl = await flushCtx.newPage();
   await fl.goto(BASE + '/#/');
-  const flushId = await fl.evaluate(async () => (await import('/js/store/boards.js')).create('Saisie', { name: 'Saisie', items: [] }).id);
+  await fl.waitForSelector('#dashboard-title');
+  const flushId = await fl.evaluate(async () => (await (await import('/js/store/boards.js')).create('Saisie', { name: 'Saisie', items: [] })).id);
   await fl.goto(BASE + '/#/tableau/' + flushId);
   await fl.waitForFunction(() => document.getElementById('board-title')?.textContent.includes('Saisie'));
   await fl.keyboard.press('n');
@@ -1578,7 +1585,7 @@ try {
   log('Quitter le tableau garde le texte en cours de saisie', kept === 'Texte non validé', kept);
   await flushCtx.close();
 
-  const secCtx = await browser.newContext();
+  const secCtx = await newContext();
   const sec = await secCtx.newPage();
   await sec.goto(BASE + '/#/');
   await sec.locator('.template-tile, #btn-template-library').first().waitFor();
@@ -1601,7 +1608,7 @@ try {
   });
   log('Sécurité : formule neutralisée dans le CSV', csv.includes(`"'=HYPERLINK`), csv.split('\r\n')[1]);
   await secCtx.close();
-  const auditCtx = await browser.newContext({ viewport: { width: 320, height: 640 } });
+  const auditCtx = await newContext({ viewport: { width: 320, height: 640 } });
   const audit = await auditCtx.newPage();
   await audit.goto(BASE + '/#/');
   await audit.waitForSelector('#btn-template-library');
@@ -1641,7 +1648,7 @@ try {
   });
   log('Placeholders : contraste ≥ 4,5 dans les trois thèmes', auditContrast.every(r => r >= 4.5), auditContrast.join(', '));
   await audit.locator('dialog.template-store .dialog-header button').click();
-  const auditId = await audit.evaluate(async () => (await import('/js/store/boards.js')).create('Audit', { name: 'Audit', items: [] }).id);
+  const auditId = await audit.evaluate(async () => (await (await import('/js/store/boards.js')).create('Audit', { name: 'Audit', items: [] })).id);
   await audit.goto(BASE + '/#/tableau/' + auditId);
   await audit.waitForFunction(() => document.getElementById('board-title')?.textContent.includes('Audit'));
   await audit.evaluate(() => document.getElementById('btn-help').click());
@@ -1688,15 +1695,16 @@ try {
 
   // === Clic droit et souris (1.8.0) ===
   {
-  const rcCtx = await browser.newContext({ viewport: { width: 1400, height: 900 } });
+  const rcCtx = await newContext({ viewport: { width: 1400, height: 900 } });
   const rc = await rcCtx.newPage();
   const rcErrors = [];
-  rc.on('console', m => { if (m.type() === 'error') rcErrors.push(m.text()); });
+  // Un 409 après un rechargement est attendu : le PUT de sortie est passé, sa réponse n'a pas été lue, et aucune copie n'est faite (voir C6 de e2e-compte).
+  rc.on('console', m => { if (m.type() === 'error' && !/status of 409/.test(m.text())) rcErrors.push(m.text()); });
   rc.on('pageerror', e => rcErrors.push(e.message));
   await rc.goto(BASE + '/#/');
   await rc.waitForSelector('#app-dashboard .btn-preferences');
   const openRcBoard = async page => {
-    const id = await page.evaluate(async () => (await import('/js/store/boards.js')).create('Clic droit', { name: 'Clic droit', items: [] }).id);
+    const id = await page.evaluate(async () => (await (await import('/js/store/boards.js')).create('Clic droit', { name: 'Clic droit', items: [] })).id);
     await page.evaluate(id => { location.hash = `#/tableau/${id}`; }, id);
     await page.waitForFunction(() => document.getElementById('board-title')?.textContent.endsWith('Clic droit'));
     await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
@@ -1968,7 +1976,7 @@ try {
   log('Réglage Souris ou pavé tactile : trois radios décrites, persistant après rechargement', modeNames.join('|') === 'Souris|Pavé tactile|Détection automatique' && autoChecked && described && pointerFocus && persisted && stored === 'trackpad' && !rcErrors.length, `${modeNames.join('|')} ${rcErrors.join(' ; ')}`);
   await rcCtx.close();
 
-  const narrowCtx = await browser.newContext({ viewport: { width: 320, height: 568 } });
+  const narrowCtx = await newContext({ viewport: { width: 320, height: 568 } });
   const narrow = await narrowCtx.newPage();
   await narrow.goto(BASE + '/#/');
   await narrow.waitForSelector('#app-dashboard .btn-preferences');
@@ -2004,7 +2012,7 @@ try {
   console.error('Erreur fatale:', err);
 } finally {
   if (browser) await browser.close();
-  server.kill();
+  await app.close();
 }
 
 console.log('\n=== RESULTATS ===');

@@ -1,0 +1,104 @@
+/*
+ * Page de connexion autonome : servie sans session, sans le reste du site.
+ * Mêmes couleurs que css/app.css (DWES, thèmes clair, sombre et contraste élevé), et rien d'autre.
+ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #f7f7fb;
+  --fg: #1b1740;
+  --surface: #ecebf8;
+  --border: #8580b3;
+  --primary: #4a2fcc;
+  --primary-hover: #3a22a8;
+  --on-primary: #ffffff;
+  --link: #4a2fcc;
+  --danger: #dc2626;
+  --focus-ring: #4a2fcc;
+}
+[data-theme="dark"] {
+  --bg: #12101f;
+  --fg: #f1eeff;
+  --surface: #1d1a33;
+  --border: #7b74ad;
+  --primary: #6c4bff;
+  --primary-hover: #5a3cf0;
+  --on-primary: #ffffff;
+  --link: #b9aaff;
+  --danger: #f87171;
+  --focus-ring: #b9aaff;
+}
+[data-theme="high-contrast"] {
+  --bg: #000000;
+  --fg: #ffffff;
+  --surface: #1a1a1a;
+  --border: #ffffff;
+  --primary: #ffff00;
+  --primary-hover: #ffff80;
+  --on-primary: #000000;
+  --link: #ffff00;
+  --danger: #ff6b6b;
+  --focus-ring: #ffff00;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg: #12101f;
+    --fg: #f1eeff;
+    --surface: #1d1a33;
+    --border: #7b74ad;
+    --primary: #6c4bff;
+    --primary-hover: #5a3cf0;
+    --on-primary: #ffffff;
+    --link: #b9aaff;
+    --danger: #f87171;
+    --focus-ring: #b9aaff;
+  }
+}
+@media (prefers-contrast: more) {
+  :root:not([data-theme]) {
+    --bg: #000000;
+    --fg: #ffffff;
+    --surface: #1a1a1a;
+    --border: #ffffff;
+    --primary: #ffff00;
+    --primary-hover: #ffff80;
+    --on-primary: #000000;
+    --link: #ffff00;
+    --danger: #ff6b6b;
+    --focus-ring: #ffff00;
+  }
+}
+
+html { font-size: 100%; }
+body { min-height: 100vh; min-height: 100dvh; display: flex; flex-direction: column; font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--fg); line-height: 1.5; }
+a { color: var(--link); }
+:focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+.skip-link { position: absolute; left: -9999px; top: 0; padding: .5rem; background: var(--bg); color: var(--link); }
+.skip-link:focus { left: 0; }
+
+button { font: inherit; font-size: .875rem; min-height: 24px; padding: .375rem .625rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); cursor: pointer; white-space: normal; }
+button:hover { background: var(--surface); }
+.btn-primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.btn-primary:hover { background: var(--primary-hover); }
+
+.login-screen { flex: 1 1 auto; display: flex; align-items: flex-start; justify-content: center; width: 100%; min-width: 0; padding: clamp(.5rem, 4vh, 3rem) .5rem; }
+.login-card { width: min(28rem, 100%); min-width: 0; padding: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.login-brand { font-size: .9rem; font-weight: 600; }
+.login-card h1 { font-size: 1.5rem; margin-bottom: .5rem; }
+.login-card h1:focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.login-footer { margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--border); }
+.account-body { margin-top: .75rem; }
+.account-form { display: flex; flex-direction: column; }
+.field { margin-bottom: .75rem; }
+.field label { display: block; margin-bottom: .25rem; font-size: .9rem; font-weight: 500; }
+.account-field input { width: 100%; min-height: 24px; padding: .4rem .5rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit; }
+.account-field input[aria-invalid="true"] { border: 2px solid var(--danger); }
+.field-hint { margin: .25rem 0 0; font-size: .85rem; color: var(--fg); }
+.account-form > .field-hint { margin: 0 0 .5rem; }
+.field-error, .account-message { margin: .25rem 0 0; padding-left: .5rem; border-left: 4px solid var(--danger); color: var(--fg); font-size: .875rem; font-weight: 600; overflow-wrap: anywhere; }
+.account-message { margin: 0 0 .5rem; padding: .35rem .5rem; }
+.field-error[hidden], .account-message[hidden] { display: none; }
+.account-switch { margin-top: .75rem; overflow-wrap: anywhere; }
+.dialog-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .25rem; }
+.login-retry { margin-bottom: .75rem; }

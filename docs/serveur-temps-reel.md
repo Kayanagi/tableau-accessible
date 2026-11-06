@@ -121,6 +121,18 @@ CREATE TABLE board_ops (                   -- journal de reprise, pas un histori
   PRIMARY KEY (board_id, rev),
   UNIQUE (board_id, client_id, client_seq)
 ) WITHOUT ROWID;
+
+CREATE TABLE board_invites (               -- migration 3 ; voir verrou-et-partage.md
+  id TEXT PRIMARY KEY,                     -- 'inv_' + 16 octets base64url
+  board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+  email TEXT NOT NULL,                     -- trim + minuscules + NFKC ; supprimé à l'acceptation, au refus ou à 30 jours
+  role TEXT NOT NULL CHECK (role IN ('editor','viewer')),
+  invited_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+  created_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,             -- 30 jours, renouvelés par une mise à jour
+  UNIQUE (board_id, email)
+);
+CREATE INDEX board_invites_email ON board_invites(email);
 ```
 
 Décisions associées :
@@ -136,9 +148,9 @@ Décisions associées :
 - **Mot de passe** : 12 à 128 caractères, sans règle de composition. Collage et gestionnaires autorisés (`autocomplete`), aucun captcha (WCAG 3.3.8).
 - **Inscription** : e-mail non vérifié au départ, désactivable par `BARO_INSCRIPTIONS=ferme`. L'unicité renvoie un 409 explicite : sans envoi d'e-mail, l'énumération n'est pas masquable, elle est freinée par le débit.
 - **Mot de passe oublié** : pas de parcours public au départ. `server/scripts/reset-password.mjs` en ligne de commande. Le parcours par e-mail (relais Postfix existant) est une version ultérieure.
-- **Session** : cookie `__Host-baro_sid`, `HttpOnly; Secure; SameSite=Strict; Path=/`, 32 octets aléatoires, seul le SHA-256 est en base. 30 jours glissants (`last_seen_at` écrit au plus une fois par heure). Nouveau jeton à la connexion, purge de toutes les sessions au changement de mot de passe.
-- **Strict est compatible avec un lien reçu par e-mail** : la page est statique, et ses appels `fetch` depuis la page ouverte sont de même site, donc le cookie part.
-- **CSRF, sans jeton** : `SameSite=Strict` + `Origin` strictement égal à `BARO_ORIGIN` sur toute méthode d'écriture **et sur l'upgrade WebSocket** + `Content-Type: application/json` obligatoire.
+- **Session** : cookie `__Host-baro_sid`, `HttpOnly; Secure; SameSite=Lax; Path=/`, 32 octets aléatoires, seul le SHA-256 est en base. 30 jours glissants (`last_seen_at` écrit au plus une fois par heure). Nouveau jeton à la connexion, purge de toutes les sessions au changement de mot de passe.
+- **Lax plutôt que Strict (arbitrage v1.10.0)** : depuis que nginx verrouille tout le site par `auth_request` (`verrou-et-partage.md`), c'est la navigation elle-même qui doit porter le cookie. Avec Strict, un lien externe vers un tableau afficherait la connexion à une personne déjà connectée. Lax n'envoie le cookie, depuis un autre site, que sur une navigation de premier niveau en GET ; aucune route GET de l'API ne modifie de données et l'autre site ne peut pas lire la réponse. Seul effet de bord d'un GET : le glissement horaire de la session.
+- **CSRF, sans jeton** : `SameSite=Lax` + `Origin` strictement égal à `BARO_ORIGIN` sur toute méthode d'écriture **et sur l'upgrade WebSocket** + `Content-Type: application/json` obligatoire. Depuis le passage à Lax, ce sont `Origin` et le JSON obligatoire qui portent la protection des écritures ; ils ne doivent jamais être assouplis.
 - **Débit** (mémoire, fenêtre glissante, 429 + `Retry-After`) :
 
 | Route | Limite |
@@ -149,6 +161,8 @@ Décisions associées :
 | Entrée par lien | 10 / min par IP |
 | Autres écritures HTTP | 120 / min par session |
 | Lecture d’un tableau | 60 / min par session |
+| Membres d’un tableau, invitations reçues | 60 / min par session, pour chacune des deux routes |
+| Création d’invitation | 20 / h par compte, mises à jour et refus non comptés |
 | Export du compte | 1 / 10 min par compte |
 
 - Connexion : message unique « E-mail ou mot de passe incorrect », calcul scrypt factice si le compte n'existe pas. Les 401 ne devraient déclencher aucune prison fail2ban (jails actives : `nginx-http-auth`, `nginx-botsearch`, `nginx-bad-request`) ; à confirmer au test de fumée.
@@ -158,7 +172,7 @@ Décisions associées :
   - **Règle de sûreté : jamais de suppression sans avertissement réussi d'au moins 30 jours.** Un envoi échoué ne pose aucune date et sera réessayé. Les conditions sont relues dans la transaction de suppression. La suppression suit la même logique que `DELETE /api/me` (`server/src/accounts.js`).
   - Envoi par `/usr/sbin/sendmail` (Postfix local, relais OVH), sans shell ni dépendance. Réussi signifie : code de sortie 0, donc message accepté par Postfix, pas forcément distribué. Une adresse que Postfix lirait autrement qu'une adresse unique et ASCII (virgule, guillemets, partie locale accentuée, retour à la ligne) est refusée : son compte n'est ni averti ni supprimé.
   - Configuration, sans secret : `BARO_INACTIVITY` (`actif` par défaut en production, `inactif` ailleurs ; `inactif` désactive tout) et `BARO_MAIL_FROM` (`contact@dwes.fr` par défaut). Les valeurs par défaut suffisent en production : `ecosystem.config.cjs` ne change pas (§0).
-- Quotas : 100 tableaux possédés et 100 Mio cumulés par compte. Le quota d’octets est configurable par `BARO_ACCOUNT_BOARD_QUOTA_BYTES` et s’applique aux créations et remplacements entiers ; dépassement : `403 quota_exceeded`.
+- Quotas : 100 tableaux possédés et 100 Mio cumulés par compte. Le quota d’octets est configurable par `BARO_ACCOUNT_BOARD_QUOTA_BYTES` et s’applique aux créations et remplacements entiers ; dépassement : `403 quota_exceeded`. Invitations : 50 en attente par tableau, même réponse au dépassement. Les invitations expirées sont purgées au démarrage et toutes les heures.
 
 ## 4. API HTTP (contrat, pour `api-designer`)
 
@@ -171,14 +185,21 @@ JSON uniquement. Erreurs : `{ "code": "...", "message": "texte français" }`. Le
 | `GET /api/me` | session | compte ou invité (`{guest, boardId}`) |
 | `PATCH /api/me`, `POST /api/me/password` | compte | nom ; ancien + nouveau mot de passe |
 | `DELETE /api/me` | compte + mot de passe | suppression (RGPD) |
-| `GET /api/me/export` | compte | archive JSON du compte et des tableaux possédés (RGPD), envoyée tableau par tableau avec contre-pression |
-| `GET /api/boards` | compte | métadonnées, rôle, `rev` |
+| `GET /api/me/export` | compte | archive JSON du compte et des tableaux possédés (RGPD), envoyée tableau par tableau avec contre-pression ; appartenances et invitations reçues en métadonnées (`boardId`, `role`, dates) |
+| `GET /api/boards` | compte | métadonnées, rôle, `rev`, `ownerName`, `memberCount` |
 | `POST /api/boards` | compte | `{name, icon, data}` : création ou envoi d'un tableau local ; applique `sanitizeIds` |
 | `GET /api/boards/:id` | membre / invité | `{rev, role, board}` |
 | `PUT /api/boards/:id/data` | editor+ | `{baseRev, data}` : remplacement entier, 409 si `baseRev` périmé |
 | `PATCH /api/boards/:id` | editor+ | `{name?, icon?}` |
 | `DELETE /api/boards/:id` | owner | |
-| `GET /api/boards/:id/members`, `PATCH`/`DELETE .../members/:userId` | owner | rôle, retrait |
+| `GET /api/boards/:id/members` | compte, membre | `{role, members: [{userId, displayName, role}], invites?}` ; `invites` pour `owner` seulement |
+| `POST /api/boards/:id/invites` | compte, owner | `{email, role}` → 201 si créée, 200 si mise à jour, `{invite}` ; même réponse avec ou sans compte |
+| `DELETE /api/boards/:id/invites/:inviteId` | compte, owner | 204 |
+| `PATCH /api/boards/:id/members/:userId` | compte, owner | `{role}` → `{userId, displayName, role}` ; propriétaire : `403 owner_protected` |
+| `DELETE /api/boards/:id/members/:userId` | compte, owner ou soi-même | 204 ; propriétaire : `403 owner_protected` |
+| `GET /api/invites` | compte | `{invites: [{id, boardId, boardName, invitedByName, role, createdAt, expiresAt}]}`, 100 au plus |
+| `POST /api/invites/:id/accept` | compte invité | `{boardId, role}` ; autre compte, invitation expirée ou inconnue : 404 |
+| `POST /api/invites/:id/decline` | compte invité | 204 ; mêmes 404 |
 | `GET`/`POST /api/boards/:id/links`, `DELETE .../links/:linkId` | owner | liste, création, révocation |
 | `POST /api/share/join` | public | `{token, guestName?}` → `{boardId, role}` |
 | `GET /api/ws?board=:id` | upgrade | §5 |
@@ -318,7 +339,7 @@ Règles qui vont au-delà de `sanitizeIds`/`normalizeLine`, chacune liée à un 
 - **Cycles `parentNode` refusés, profondeur limitée à 64** : `mindLevel` et `mindRoot` bouclent à l'infini, `mindDescendants` déborde la pile. Un seul client malveillant gèlerait tous les onglets. L’import historique détache les nœuds au-delà de 64 ; la validation stricte les rejette. Autoréférences refusées sur tous les `ID_REFS`.
 - **Champs structurels requis et non supprimables** : `columns`, `rows`, `messages`, sinon `normalizeItem` génère des identifiants aléatoires **différents sur chaque client** via `O.defaults`.
 - **Nombres** : finis, entre -10^7 et 10^7 ; `width`/`height` entre 0 et 10^5. `type` immuable par `set`.
-- **Audit `security-auditor` avant la v1.10.0** : tous les chemins des données vers le DOM. Lecture préliminaire : le contenu passe par `textContent` ou `escapeHtml`, et `insertAdjacentHTML` d'`icons.js` reçoit un nom normalisé. La CSP reste le second rempart.
+- **Audit `security-auditor` avant la v1.10.0, première version où le contenu d’un autre compte atteint le DOM** : tous les chemins des données vers le DOM. Lecture préliminaire : le contenu passe par `textContent` ou `escapeHtml`, et `insertAdjacentHTML` d'`icons.js` reçoit un nom normalisé. La CSP reste le second rempart.
 
 ## 10. Phases et fichiers
 
@@ -337,7 +358,7 @@ server/src/accounts.js, inactivity.js, mail.js (comptes inactifs, §3)
 server/src/routes/auth.js, me.js, boards.js
 server/src/validate.js
 server/scripts/reset-password.mjs, backup.mjs
-server/deploy/baro.nginx.conf.example, baro-backup.service, baro-backup.timer
+server/deploy/baro.nginx.conf.example, nginx-baro.dwes.fr.conf, baro-backup.service, baro-backup.timer
 server/tests/auth.test.js, boards.test.js, validate.test.js, inactivity.test.js
 js/model-rules.js            (nouveau)
 js/sync/api.js               (nouveau)
@@ -348,7 +369,15 @@ tests/e2e-compte.mjs, tests/helpers/app-server.mjs  (nouveaux)
 
 Modifiés : `js/state.js` (extraction), `js/store/boards.js` (`get`/`getAll` fusionnés, `save()` qui rend compte de l'échec), `js/app.js` (`showBoard` asynchrone avec garde de course, refus d'import dans un tableau distant), `js/router.js` (`#/compte`), `js/views/dashboard.js`, `js/views/board-actions.js`, `index.html`, `css/`, `.gitignore`, `README.md`, `CHANGELOG.md`.
 
-### v1.10.0 : synchronisation temps réel
+### v1.10.0 : verrou, import et partage par tableau
+
+Livré : `docs/verrou-et-partage.md`. Côté serveur : `server/src/routes/members.js`, migration 3, `server/tests/members.test.js`.
+
+### v1.11.0 : équipes
+
+À spécifier.
+
+### v1.12.0 : synchronisation temps réel
 
 Livré : §5 et §8 hors présence. Plusieurs onglets ou appareils d'un même compte collaborent déjà : testable sans le partage. `PUT .../data` n'est plus utilisé par le client.
 
@@ -364,12 +393,12 @@ tests/e2e-synchro.mjs        (nouveau)
 
 Modifiés : `js/state.js` (`applyRemote`, préfixe d'identifiants, `undo`/`redo` déléguées), `js/store/history.js`, `js/app.js`, `js/views/outline.js`, `table.js`, `canvas.js`, `comments-panel.js` (rendu différé), `js/preferences.js`, `js/views/preferences-menu.js`, `js/views/board-actions.js` (renommage par `meta`), `index.html`, `css/`.
 
-### v1.11.0 : curseurs et partage
+### v1.13.0 : curseurs et lien de partage
 
-Livré : §6, §7, rôles appliqués dans l'interface, invités.
+Livré : §6, §7, invités. Les rôles et le partage par invitation arrivent en v1.10.0.
 
 ```
-server/src/routes/links.js, members.js
+server/src/routes/links.js
 server/src/ws/presence.js
 server/tests/share.test.js, presence.test.js
 js/views/share-dialog.js, presence-panel.js, remote-cursors.js  (nouveaux)
@@ -395,7 +424,7 @@ Environnement : `node:test` côté serveur, base temporaire, sur port éphémèr
 9. Miroir plein : tableau local toujours enregistré, message affiché.
 10. Parcours compte au clavier seul, axe-core, 320 à 1280 px.
 
-**v1.10.0**
+**v1.12.0**
 
 1. Convergence : test à graine fixe, N clients virtuels, opérations aléatoires, coupures, réordonnancements ; états finaux identiques au serveur.
 2. Idempotence : lot rejoué, une seule `rev`.
@@ -410,7 +439,7 @@ Environnement : `node:test` côté serveur, base temporaire, sur port éphémèr
 11. Focus dans le plan ou la table : DOM inchangé tant que le focus reste, rendu à la sortie.
 12. Annonces : rafale de 50 lots en 5 s, au plus 1 annonce dans la région ; préférence « aucune » respectée ; `#announcer` jamais écrasé.
 
-**v1.11.0**
+**v1.13.0**
 
 1. Présence : 100 mouvements en 1 s, au plus 10 messages émis, diffusion groupée à 100 ms.
 2. `#remote-cursors` : `aria-hidden`, aucun élément focalisable, absent des exports SVG et PNG.
@@ -432,13 +461,13 @@ Environnement : `node:test` côté serveur, base temporaire, sur port éphémèr
 | Risque | Gravité | Traitement |
 |---|---|---|
 | `server/` publié avant le `location` 404 | Élevée | Préalable bloquant du §10, test de fumée. Base hors racine de toute façon |
-| Comparaison lancée sur un état vide : suppressions en masse | Élevée | §5 (référence préalable), test 10 de la v1.10.0 |
+| Comparaison lancée sur un état vide : suppressions en masse | Élevée | §5 (référence préalable), test 10 de la v1.12.0 |
 | Un éditeur efface tout le tableau (invités compris), sans historique de versions côté serveur | Moyenne | Lien en lecture par défaut, sauvegarde quotidienne. Historique de versions : version ultérieure |
 | Pas de vérification d'e-mail, inscription ouverte : abus de stockage | Moyenne | Débit, quotas, `BARO_INSCRIPTIONS=ferme` |
 | Comptes inactifs : avertissement accepté par Postfix puis jamais reçu (adresse non vérifiée, rebond) : suppression quand même au bout de 30 jours | Moyenne | Connaissance des rebonds hors périmètre. Sauvegarde quotidienne, 14 jours conservés |
 | Mot de passe oublié sans parcours public | Moyenne | Commande d'administration ; parcours e-mail à planifier |
 | Mémoire : 1,1 Go disponible, pas de swap | Moyenne | 2 scrypt simultanés, 400 Mo PM2, une seule instance |
-| 5 000 objets : `notify()` déclenche déjà snapshot et rendu complet à chaque changement ; les lots distants les multiplient | Moyenne | Application groupée par trame (une seule `notify`), miroir à 1 s, mesure par `performance-engineer` avant la v1.10.0. Rendu incrémental si nécessaire |
+| 5 000 objets : `notify()` déclenche déjà snapshot et rendu complet à chaque changement ; les lots distants les multiplient | Moyenne | Application groupée par trame (une seule `notify`), miroir à 1 s, mesure par `performance-engineer` avant la v1.12.0. Rendu incrémental si nécessaire |
 | `columns`, `rows`, `reactions` en dernier écrivain : perte possible à l'écriture simultanée | Faible à moyenne | Annonce de modification simultanée. Fusion fine ultérieure si l'usage le demande |
 | Processus unique : pas de haute disponibilité | Faible | Reprise automatique du client, redémarrage en `1012`. Volontaire |
 | **Nouveau traitement de données personnelles** (e-mails, contenus, invités) | Obligation | **Avant l'ouverture publique** : ligne au registre RGPD DWES, mentions d'information, durées (sessions, journal à 30 jours), export et suppression prévus au §4 |

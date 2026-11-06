@@ -94,6 +94,7 @@ function renderFrames() {
       if (matchMedia('(max-width: 640px)').matches) closeFrames();
     });
     const move = direction => {
+      if (state.isReadOnly()) return;
       state.moveFrame(frame.id, direction);
       list.querySelector(`[data-frame="${CSS.escape(frame.id)}"][data-action="visit"]`)?.focus();
       announce(`Cadre ${name(frame)}, position ${state.getFrames().findIndex(f => f.id === frame.id) + 1}`);
@@ -107,9 +108,10 @@ function renderFrames() {
       if (state.updateItem(frame.id, { content: value })) announce(`Cadre renommé : ${value}`);
       list.querySelector(`[data-frame="${CSS.escape(frame.id)}"][data-action="visit"]`)?.focus();
     }));
-    rename.disabled = state.isLocked(frame.id);
+    rename.disabled = !state.isReadOnly() && state.isLocked(frame.id);
     [visit, up, down, rename].forEach((b, i) => { b.dataset.frame = frame.id; b.dataset.action = ['visit', 'up', 'down', 'rename'][i]; b.setAttribute('aria-label', `${b.textContent}${i ? ` : ${name(frame)}` : ''}`); });
-    row.append(visit, up, down, rename); list.append(row);
+    if (state.isReadOnly()) row.append(visit); else row.append(visit, up, down, rename);
+    list.append(row);
   });
   if (!frames.length) { const empty = document.createElement('li'); empty.textContent = 'Aucun cadre. Créez-en un avec l’outil Cadre (F).'; list.append(empty); }
   if (id) list.querySelector(`[data-frame="${CSS.escape(id)}"][data-action="${action}"]`)?.focus();

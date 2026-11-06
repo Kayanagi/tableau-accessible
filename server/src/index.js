@@ -9,6 +9,7 @@ import { createSendmail } from './mail.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerBoardRoutes } from './routes/boards.js';
+import { registerMemberRoutes } from './routes/members.js';
 
 const HOST = '127.0.0.1';
 const WRITES_PER_MINUTE = 120;
@@ -17,12 +18,14 @@ const HOUR = 60 * MINUTE;
 
 export function createApp(config) {
   const db = openDb(config.dbPath);
+  const expiredInvites = db.prepare('DELETE FROM board_invites WHERE expires_at <= ?');
   const app = {
     config,
     db,
     passwords: createPasswords(config.scrypt),
     sessions: createSessions(db, config),
     limiter: createRateLimiter(),
+    purgeExpiredInvites: () => expiredInvites.run(Date.now()).changes,
     /* Les limites IP de route sont appliquées avant toute lecture du corps. */
     prepare(ctx, options) {
       if (options.ipRate) {
@@ -51,14 +54,17 @@ export function createApp(config) {
   registerAuthRoutes(router, app);
   registerMeRoutes(router, app);
   registerBoardRoutes(router, app);
+  registerMemberRoutes(router, app);
 
   const server = http.createServer(createHandler(router, app));
   server.requestTimeout = 30 * 1000;
   server.headersTimeout = 15 * 1000;
 
   app.sessions.purgeExpired();
+  app.purgeExpiredInvites();
   const sweep = setInterval(() => {
     app.sessions.purgeExpired();
+    app.purgeExpiredInvites();
     app.limiter.sweep();
   }, HOUR);
   sweep.unref();

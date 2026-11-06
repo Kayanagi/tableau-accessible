@@ -37,6 +37,7 @@ function unlockAll() {
 }
 
 function backgroundEntries(point) {
+  if (state.isReadOnly()) return readOnlyEntries();
   const add = (label, tool) => ({ label, run: () => canvas.createAt(tool, point) });
   const letters = prefs.getPref('singleKey');
   return [
@@ -55,7 +56,24 @@ function backgroundEntries(point) {
   ];
 }
 
+/* Lecture seule : rien qui écrive, seulement la vue et ce qui copie vers l'extérieur. */
+function readOnlyEntries(ids = []) {
+  const letters = prefs.getPref('singleKey');
+  return [
+    ...(ids.length ? [[{ ...ACTIONS.copy, run: () => ACTIONS.copy.run(ids) }]] : []),
+    [
+      prefEntry('grid', letters ? 'G' : '', letters ? 'G' : ''),
+      { role: 'menuitemcheckbox', label: 'Afficher les commentaires', shortcut: letters ? 'Maj+C' : '', keys: letters ? 'Shift+C' : '', checked: () => commentsPanel.isOpen(), run: () => commentsPanel.toggle() }
+    ],
+    [
+      { label: 'Souris ou pavé tactile…', run: pointerSettings.open },
+      { label: 'Tout afficher', shortcut: 'Alt+1', keys: 'Alt+1', run: () => canvas.zoomToFit() }
+    ]
+  ];
+}
+
 function objectEntries(ids) {
+  if (state.isReadOnly()) return readOnlyEntries(ids);
   const items = ids.map(state.getItem).filter(Boolean);
   const onlyLines = items.every(i => i.type === 'connector');
   const onlyComments = items.every(i => i.type === 'comment');

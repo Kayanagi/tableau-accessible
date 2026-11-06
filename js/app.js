@@ -24,11 +24,16 @@ import * as prefsMenu from './views/preferences-menu.js';
 import * as canvasMenu from './views/canvas-menu.js';
 import { duplicate } from './views/selection-actions.js';
 import * as account from './store/account.js';
-import { showNotice, clearNotice } from './ui/notice.js';
+import { showNotice, clearNotice, clearAllNotices } from './ui/notice.js';
+import * as loginScreen from './views/login-screen.js';
+import { openLeaveDialog, openShareDialog } from './views/share-dialog.js';
+import * as localImport from './store/local-import.js';
 
 const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-line': 'line', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
 const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', l: 'line', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
 const MORE_TOOLS = ['pen', 'eraser', 'comment', 'mindmap', 'kanban', 'datatable', 'code', 'flipcard'];
+// Ce qui ne sert qu'à écrire disparaît en lecture seule : zoom, recherche, cadres et exports restent.
+const READ_ONLY_HIDDEN = ['btn-sticky', 'btn-shape', 'btn-line', 'btn-text', 'btn-card', 'btn-frame', 'btn-more-tools', 'btn-link', 'board-group-organize', 'board-group-history', 'btn-import'];
 
 let currentView = 'canvas';
 let editingId = null;
@@ -39,6 +44,10 @@ let boardTicket = 0;
 let suppressAutoSave = false;
 let returnHash = '/';
 let closeAccount = null;
+// Tant que c'est vrai, aucune route ne rend quoi que ce soit : seul l'écran de connexion est dans la page.
+let locked = true;
+let lockNotice = null;
+let importAsked = false;
 
 document.addEventListener('DOMContentLoaded', () => {
   announcer.init();
@@ -51,18 +60,103 @@ document.addEventListener('DOMContentLoaded', () => {
   setupDashboardDialogs();
 
   boards.onSaveFailure(onLocalSaveFailure);
-  account.subscribe(() => dashboard.refresh());
+  account.subscribe(onAccountChange);
   account.onEvent(onAccountEvent);
-  // Sans indicateur de session, start() ne fait rien : aucune requête et aucun module de synchro.
-  account.start();
-
   router.subscribe(onRouteChange);
   router.init();
+  // GET /api/me décide de tout : le contenu n'est rendu qu'une fois la session confirmée.
+  account.start();
 });
+
+function onAccountChange() {
+  const status = account.getStatus();
+  if (status === 'loading') return;
+  if (status === 'signed-in' || status === 'offline') {
+    if (locked) unlock();
+    applyBoardAccess();
+    dashboard.refresh();
+    promptImport();
+    return;
+  }
+  lock(status);
+}
+
+function lockView(status) {
+  if (status === 'unreachable') {
+    return { notice: 'Serveur injoignable : la connexion n’est pas possible pour le moment et aucune copie de vos tableaux n’est enregistrée sur cet appareil. Vérifiez votre connexion, puis réessayez.', retry: () => account.start() };
+  }
+  return { notice: lockNotice };
+}
+
+/* Ferme tout ce qui montrait du contenu, puis affiche la connexion. L'adresse demandée reste dans le hash. */
+function lock(status) {
+  const view = lockView(status);
+  const gate = document.getElementById('app-gate');
+  if (locked && loginScreen.isShown()) {
+    loginScreen.update(view);
+    return;
+  }
+  const wasOpen = !locked;
+  locked = true;
+  boardTicket++;
+  importAsked = false;
+  if (wasOpen) tearDown();
+  document.title = 'Connexion — Tableau blanc accessible';
+  loginScreen.show(gate, view);
+  // Un message est une alerte qui reçoit le focus : il se lit tout seul. Sinon, dire où l'on est.
+  if (!view.notice) announcer.announce('Connexion requise');
+}
+
+function tearDown() {
+  closeOpenBoard();
+  closeAccount?.();
+  document.querySelectorAll('dialog[open]').forEach(d => d.close());
+  clearAllNotices();
+  clipboard.reset();
+  if (boardInitialized) {
+    navigation.reset();
+    editor.commit(false);
+    editor.commitField(false);
+    toolsPanel.close(false);
+    commentsPanel.close(false);
+    state.setReadOnly(false);
+    suppressAutoSave = true;
+    try { state.loadBoard({ name: 'Tableau', items: [] }); }
+    finally { suppressAutoSave = false; }
+    document.getElementById('board-title').textContent = 'Tableau';
+  }
+  document.getElementById('app-board').hidden = true;
+  document.querySelector('.board-main')?.removeAttribute('id');
+  dashboard.clear();
+}
+
+function unlock() {
+  locked = false;
+  lockNotice = null;
+  loginScreen.hide(document.getElementById('app-gate'));
+  if (account.getStatus() === 'offline') showServerNotice();
+  onRouteChange(router.getRoute(), null);
+}
+
+/* Une seule fois par session : ensuite, le dialogue reste accessible depuis « Mon compte ». */
+async function promptImport() {
+  if (importAsked || account.getStatus() !== 'signed-in') return;
+  const userId = account.getUser()?.id;
+  if (!userId) return;
+  importAsked = true;
+  if (!localImport.shouldPrompt(userId)) return;
+  const { openImportDialog } = await import('./views/import-dialog.js');
+  // Après le rendu de la route, pour que le focus revienne au bon endroit à la fermeture.
+  requestAnimationFrame(() => requestAnimationFrame(() => { if (!locked && !document.querySelector('dialog[open]')) openImportDialog(); }));
+}
+
+function showServerNotice() {
+  notify('server', 'Serveur injoignable : la copie de vos tableaux sur cet appareil reste utilisable. Vos modifications sont gardées ici et seront envoyées au retour de la connexion.', { actions: [{ label: 'Réessayer', run: () => account.start() }] });
+}
 
 function onLocalSaveFailure(error) {
   if (!error) { clearNotice('local-save'); return; }
-  const message = 'Enregistrement impossible : le stockage de cet appareil est plein. Exportez vos tableaux pour ne rien perdre.';
+  const message = 'Enregistrement impossible : le stockage de cet appareil est plein. Libérez de la place pour ne rien perdre.';
   showNotice('local-save', message, { tone: 'error' });
   announcer.announce(message);
 }
@@ -75,14 +169,19 @@ function notify(key, message, options) {
 function onAccountEvent(event) {
   const { type, entry } = event;
   if (type === 'offline') {
-    notify('server', 'Serveur injoignable : les tableaux de cet appareil restent utilisables. Vos modifications sont gardées ici et seront envoyées au retour de la connexion.', { actions: [{ label: 'Réessayer', run: () => account.start() }] });
+    if (!locked) showServerNotice();
   } else if (type === 'online') {
     clearNotice('server');
     announcer.announce('Connexion au serveur rétablie');
-  } else if (type === 'signed-in') {
-    clearNotice('session');
   } else if (type === 'expired') {
-    notify('session', event.otherTab ? 'Cette session a pris fin dans un autre onglet. Reconnectez-vous pour retrouver vos tableaux et envoyer vos modifications.' : 'Votre session a expiré. Reconnectez-vous pour retrouver vos tableaux et envoyer vos modifications.', { tone: 'error', actions: [{ label: 'Se connecter', run: () => router.navigate('/compte') }] });
+    // L'état affiché part à la fermeture : ce qui était en cours de saisie doit d'abord rejoindre le miroir.
+    flushEditing();
+    lockNotice = event.otherTab
+      ? 'Cette session a pris fin dans un autre onglet. Reconnectez-vous : vos modifications non envoyées restent sur cet appareil.'
+      : 'Votre session a expiré. Reconnectez-vous : vos modifications non envoyées restent sur cet appareil.';
+  } else if (type === 'signed-out') {
+    returnHash = '/';
+    lockNotice = null;
   } else if (type === 'mirror-full') {
     if (entry.sortants) notify(`save-${entry.id}`, `« ${entry.nom} » ne tient pas sur cet appareil et vos dernières modifications ne sont pas encore sur le serveur. Gardez cet onglet ouvert jusqu’à leur envoi.`, { tone: 'error' });
     else notify(`mirror-${entry.id}`, `« ${entry.nom} » ne tient pas dans la copie de cet appareil : pas d’accès hors ligne pour ce tableau. Il reste enregistré sur votre compte.`);
@@ -93,7 +192,7 @@ function onAccountEvent(event) {
   } else if (type === 'sent') {
     clearNotice(`save-${entry.id}`);
   } else if (type === 'copy-failed') {
-    notify(`save-${entry.id}`, `Les modifications non envoyées de « ${entry.nom} » appartiennent à un autre compte et n’ont pas pu être copiées : le stockage est plein. Elles restent sur cet appareil ; libérez de la place, puis choisissez « Garder une copie locale ».`, { tone: 'error' });
+    notify('copy-failed', 'Des modifications non envoyées d’un autre compte n’ont pas pu être mises de côté : le stockage de cet appareil est plein. Elles restent gardées ; libérez de la place, puis rechargez la page.', { tone: 'error' });
   } else if (type === 'owner-changed') {
     if (currentBoardId === event.id) {
       closeOpenBoard();
@@ -103,10 +202,10 @@ function onAccountEvent(event) {
   } else if (type === 'conflict-flush') {
     // Un texte en cours de saisie doit partir dans la copie, pas disparaître au rechargement.
     if (currentBoardId === entry.id) flushEditing();
-  } else if (type === 'read-only') {
-    notify(`board-${entry.id}`, `« ${entry.nom} » est en lecture seule : vos modifications ne seront pas enregistrées.`);
+  } else if (type === 'role-lost') {
+    onAccessLost(entry, `Vous ne pouvez plus modifier « ${entry.nom} » : il est passé en lecture seule.`);
   } else if (type === 'lost') {
-    notify(`board-${entry.id}`, `Vous n’avez plus accès à « ${entry.nom} ».`, { tone: 'error', actions: [{ label: 'Garder une copie locale', run: () => keepLostCopy(entry.id) }] });
+    onAccessLost(entry, `Vous n’avez plus accès à « ${entry.nom} ».`);
   } else if (type === 'conflict') {
     onConflict(event);
   }
@@ -133,17 +232,57 @@ function reloadOpenBoard(entry) {
   if (!active || active === document.body) document.getElementById('board-title').focus();
 }
 
+/*
+ * Droit d'écrire ou accès retiré : plus aucune modification possible, et le travail non envoyé part dans une copie
+ * sur le compte, comme pour un conflit. Sans travail à sauver, la copie reste un choix.
+ */
+async function onAccessLost(entry, reason) {
+  const isOpen = currentBoardId === entry.id;
+  if (isOpen) flushEditing();
+  applyBoardAccess();
+  if (!entry.sortants || !entry.données) {
+    const actions = entry.perdu ? [{ label: 'Garder une copie', run: () => keepLostCopy(entry.id) }] : [];
+    notify(`board-${entry.id}`, reason, { tone: 'error', actions });
+    return;
+  }
+  try {
+    const copy = await boards.remoteStore().keepCopy(entry.id);
+    notify(`board-${entry.id}`, `${reason} Vos modifications sont gardées dans la copie « ${copy.nom} ».`, { tone: 'error', actions: [{ label: 'Ouvrir la copie', run: () => router.navigate(`/tableau/${copy.id}`) }] });
+    dashboard.refresh();
+  } catch (err) {
+    if (err.name !== 'ApiError') throw err;
+    notify(`board-${entry.id}`, `${reason} ${err.message} Vos modifications restent sur cet appareil.`, { tone: 'error', actions: [{ label: 'Garder une copie', run: () => keepLostCopy(entry.id) }] });
+  }
+}
+
 async function keepLostCopy(id) {
   try {
-    if (currentBoardId === id) boards.remoteStore().setData(id, state.getSnapshot());
-    const copy = await boards.remoteStore().keepLocalCopy(id);
-    if (!copy) { notify('board-action', 'Stockage de cet appareil plein : la copie locale n’a pas pu être créée.', { tone: 'error' }); return; }
-    announcer.announce(`Copie locale créée : ${copy.nom}`);
+    const copy = await boards.remoteStore().keepCopy(id);
+    announcer.announce(`Copie créée : ${copy.nom}`);
     router.navigate(`/tableau/${copy.id}`);
   } catch (err) {
     if (err.name !== 'ApiError') throw err;
     notify('board-action', err.message, { tone: 'error' });
   }
+}
+
+/* Lecture seule et actions du tableau ouvert : suit le rôle, qui peut changer pendant qu'il est ouvert. */
+function applyBoardAccess() {
+  if (!currentBoardId || !boardInitialized) return;
+  const entry = boards.get(currentBoardId);
+  if (!entry) return;
+  const readOnly = entry.role === 'viewer' || !!entry.perdu;
+  const changedMode = readOnly !== state.isReadOnly();
+  if (changedMode && readOnly) flushEditing();
+  state.setReadOnly(readOnly);
+  document.getElementById('board-readonly').hidden = !readOnly;
+  for (const id of READ_ONLY_HIDDEN) document.getElementById(id).hidden = readOnly;
+  document.getElementById('btn-share').hidden = entry.role !== 'owner' || !!entry.perdu;
+  document.getElementById('btn-leave').hidden = entry.role === 'owner' || !!entry.perdu;
+  boardActions.syncTitle();
+  if (!changedMode) return;
+  if (readOnly) canvas.setTool('select');
+  state.touch();
 }
 
 async function showAccount(route, oldRoute) {
@@ -162,6 +301,7 @@ async function showAccount(route, oldRoute) {
 }
 
 function onRouteChange(route, oldRoute) {
+  if (locked) return;
   if (oldRoute && route.view === oldRoute.view && route.boardId === oldRoute.boardId && route.spaceId === oldRoute.spaceId) return;
   if (route.view !== 'compte') closeAccount?.();
   if (route.view === 'compte') {
@@ -226,14 +366,11 @@ function showDashboard(route, fromAccount = false) {
 }
 
 /*
- * Un tableau local s'ouvre sans attente, comme avant. Un tableau du compte attend son état distant :
- * le ticket écarte une réponse arrivée après une autre navigation, et sans état valide rien n'est chargé.
+ * Un tableau attend son état distant : le ticket écarte une réponse arrivée après une autre navigation,
+ * et sans état valide rien n'est chargé.
  */
 async function showBoard(boardId) {
   const ticket = ++boardTicket;
-  const local = boards.getLocal(boardId);
-  if (local) { displayBoard(local); return; }
-  if (!account.hasSession() && !boards.remoteStore()?.has(boardId)) { router.navigate('/'); return; }
 
   closeOpenBoard();
   hideBoardView();
@@ -249,7 +386,7 @@ async function showBoard(boardId) {
   if (ticket !== boardTicket) return;
   if (result.status !== 'ok') { showRemoteProblem(boardId, result); return; }
 
-  displayBoard(result.entry, true);
+  displayBoard(result.entry);
   if (result.offline) {
     const reason = result.error?.status ? result.error.message : 'Serveur injoignable.';
     notify('server', `${reason} Voici la copie de cet appareil. Vos modifications sont gardées ici et seront envoyées au retour de la connexion.`, { actions: [{ label: 'Réessayer', run: () => account.start() }] });
@@ -263,13 +400,12 @@ function hideBoardView() {
 }
 
 function showRemoteProblem(boardId, result) {
+  if (locked) return;
   hideBoardView();
   const retry = { label: 'Réessayer', run: () => showBoard(boardId).catch(err => console.error(err)) };
   let view;
   if (result.status === 'lost') {
-    view = { title: 'Tableau inaccessible', message: 'Ce tableau n’existe plus ou vous n’y avez plus accès.', actions: result.entry ? [{ label: 'Garder une copie locale', run: () => keepLostCopy(boardId) }] : [] };
-  } else if (result.status === 'expired') {
-    view = { title: 'Connexion requise', message: 'Connectez-vous pour ouvrir ce tableau enregistré sur un compte.', actions: [{ label: 'Se connecter', run: () => router.navigate('/compte') }] };
+    view = { title: 'Tableau inaccessible', message: 'Ce tableau n’existe plus ou vous n’y avez plus accès.', actions: result.entry ? [{ label: 'Garder une copie', run: () => keepLostCopy(boardId) }] : [] };
   } else {
     view = { title: 'Tableau indisponible', message: `Ce tableau n’a pas pu être chargé. ${result.error?.message || ''} Rien n’a été modifié.`.trim(), actions: [retry] };
   }
@@ -278,7 +414,7 @@ function showRemoteProblem(boardId, result) {
   announcer.announce(`${view.title}. ${view.message}`);
 }
 
-function displayBoard(board, distant = false) {
+function displayBoard(board) {
   const boardId = board.id;
   closeOpenBoard();
   boards.touchOpened(boardId);
@@ -303,13 +439,17 @@ function displayBoard(board, distant = false) {
   editor.commitField(false);
   toolsPanel.close(false);
   commentsPanel.close(false);
+  // Avant le chargement : les vues se rendent aussitôt, sans les actions d'écriture si besoin.
+  state.setReadOnly(false);
+  applyBoardAccess();
   canvas.setTool('select');
   // Une copie : l'entrée du miroir ne doit changer que par edit(), jamais par mutation directe de l'état.
-  state.loadBoard(distant ? JSON.parse(JSON.stringify(board.données)) : board.données || { name: board.nom, items: [] });
-  if (distant) boards.remoteStore().setBaseline(boardId, state.getSnapshot());
+  state.loadBoard(JSON.parse(JSON.stringify(board.données)));
+  boards.remoteStore().setBaseline(boardId, state.getSnapshot());
 
+  // En lecture seule, rien ne part : retourner une carte ou replier une branche n'est pas une modification.
   unsubAutoSave = state.subscribe(() => {
-    if (currentBoardId && !suppressAutoSave) boards.saveData(currentBoardId, state.getSnapshot());
+    if (currentBoardId && !suppressAutoSave && !state.isReadOnly()) boards.saveData(currentBoardId, state.getSnapshot());
   });
 
   setBoardLabel(document.getElementById('board-title'), board);
@@ -320,7 +460,7 @@ function displayBoard(board, distant = false) {
     const h1 = document.getElementById('board-title');
     if (h1) h1.focus();
   });
-  announcer.announce(`Tableau ouvert : ${board.nom}`);
+  announcer.announce(state.isReadOnly() ? `Tableau ouvert en lecture seule : ${board.nom}` : `Tableau ouvert : ${board.nom}`);
 }
 
 function initBoardView() {
@@ -347,6 +487,9 @@ function initBoardView() {
     document.getElementById('board-tools').classList.toggle('is-open', open);
   });
   setupShortcuts();
+  const current = () => boards.get(currentBoardId);
+  document.getElementById('btn-share').addEventListener('click', () => { if (current()) openShareDialog(current()); });
+  document.getElementById('btn-leave').addEventListener('click', () => { if (current()) openLeaveDialog(current(), () => router.navigate('/')); });
 }
 
 function setupTabs() {
@@ -459,7 +602,6 @@ function setupToolbar() {
 
 /* Importer remplacerait la version du serveur, sans confirmation possible et sans historique à restaurer. */
 function refuseRemoteImport() {
-  if (!boards.get(currentBoardId)?.distant) return false;
   notify('board-action', 'Import refusé : ce tableau est enregistré sur votre compte et serait remplacé. Importez le fichier dans un nouveau tableau, depuis l’accueil.', { tone: 'error' });
   return true;
 }
@@ -674,6 +816,7 @@ function setupDashboardDialogs() {
 function setupShortcuts() {
   document.addEventListener('keydown', (e) => {
     if (e.defaultPrevented) return;
+    if (locked) return;
     if (e.target.closest('dialog[open]') || e.target.closest('input, textarea, select, [contenteditable], .comments-panel, .tools-panel, .frames-panel, .board-search')) return;
     const boardVisible = !document.getElementById('app-board').hidden;
     if (!boardVisible) return;

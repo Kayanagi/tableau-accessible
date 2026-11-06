@@ -82,6 +82,19 @@ export const MIGRATIONS = [
   ALTER TABLE users ADD COLUMN last_active_at INTEGER;
   ALTER TABLE users ADD COLUMN inactivity_warned_at INTEGER;
   UPDATE users SET last_active_at = MAX(created_at, COALESCE((SELECT MAX(last_seen_at) FROM sessions WHERE sessions.user_id = users.id), created_at));
+  `,
+  `
+  CREATE TABLE board_invites (
+    id TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+    email TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('editor','viewer')),
+    invited_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    UNIQUE (board_id, email)
+  );
+  CREATE INDEX board_invites_email ON board_invites(email);
   `
 ];
 

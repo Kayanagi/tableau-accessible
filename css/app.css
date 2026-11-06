@@ -1606,3 +1606,43 @@ body:has(.notice) #app-board:not([hidden]) { height: auto; flex: 1 1 0; min-heig
 }
 
 .board-actions a { color: var(--link); }
+
+/* === Écran de connexion === */
+#app-gate[hidden] { display: none; }
+#app-gate:not([hidden]) { flex: 1 1 auto; display: flex; min-height: 100vh; min-height: 100dvh; }
+.login-screen { flex: 1 1 auto; display: flex; align-items: flex-start; justify-content: center; width: 100%; min-width: 0; height: auto; overflow: visible; padding: clamp(.5rem, 4vh, 3rem) .5rem; }
+.login-loading { margin: 2rem auto; }
+.login-card { width: min(28rem, 100%); min-width: 0; padding: 1rem; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+.login-brand { font-size: .9rem; font-weight: 600; }
+.login-card h1 { font-size: 1.5rem; margin-bottom: .5rem; }
+.login-card h1:focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.login-footer { margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--border); }
+.login-retry { margin-bottom: .75rem; }
+.login-card .dialog-actions button { white-space: normal; text-align: center; }
+.login-card .account-switch button, .account-switch button { white-space: normal; }
+
+/* === Lecture seule === */
+.board-readonly { flex: none; padding: .1rem .5rem; border: 2px solid var(--fg); border-radius: 4px; font-size: .85rem; font-weight: 700; white-space: nowrap; }
+.board-readonly[hidden], #btn-share[hidden], #btn-leave[hidden], #board-group-organize[hidden], #board-group-history[hidden] { display: none; }
+#app-board .toolbar button[hidden] { display: none; }
+
+/* === Partage et invitations === */
+.invites-banner { margin: .75rem 0 1rem; padding: .75rem 1rem; border: 2px solid var(--primary); border-radius: 6px; background: var(--surface); }
+.invites-banner h2 { font-size: 1.05rem; }
+.invites-list { list-style: none; margin-top: .5rem; display: flex; flex-direction: column; gap: .5rem; }
+.invites-list li { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
+.invites-list p { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
+.invite-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.board-badge-viewer, .board-badge-editor, .board-badge-owner { border: 2px solid var(--primary); font-weight: 600; }
+.board-badge-lost { border: 2px solid var(--danger); font-weight: 600; }
+.board-owner { display: block; margin-top: .15rem; font-size: .85rem; overflow-wrap: anywhere; }
+.share-notice { margin-bottom: .75rem; padding: .5rem .75rem; border-left: 4px solid var(--primary); background: var(--surface); }
+.share-list, .import-list { list-style: none; display: flex; flex-direction: column; gap: .5rem; margin-top: .25rem; }
+.share-list li, .import-list li { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+.share-name, .import-name { flex: 1 1 10rem; min-width: 0; overflow-wrap: anywhere; }
+.share-dialog select { min-height: 24px; max-width: 100%; }
+.share-dialog .account-field select { display: block; width: 100%; padding: .35rem; }
+.import-choice { border: 1px solid var(--border); border-radius: 4px; padding: .5rem .75rem; min-width: 0; }
+.import-option { display: flex; gap: .4rem; align-items: flex-start; min-height: 24px; overflow-wrap: anywhere; margin-top: .25rem; }
+.import-option input { flex: none; width: 1.1rem; height: 1.1rem; margin-top: .2rem; }
+.import-results .is-refused .import-name { font-weight: 600; }

@@ -9,6 +9,26 @@ function notFound() {
   return new HttpError(404, 'board_not_found', 'Tableau introuvable.');
 }
 
+/* Contrôle commun aux routes de tableau et de partage, sur le paramètre :id. */
+export function createBoardAccess(db) {
+  const memberRole = db.prepare('SELECT role FROM board_members WHERE board_id = ? AND user_id = ?');
+
+  function roleOf(session, boardId) {
+    if (session.guest) return session.boardId === boardId ? session.role : null;
+    return memberRole.get(boardId, session.userId)?.role ?? null;
+  }
+
+  /* Un tableau hors d'atteinte répond 404 : son existence n'est pas révélée. */
+  function requireRole(ctx, minimum) {
+    const role = roleOf(ctx.session, ctx.params.id);
+    if (!role) throw notFound();
+    if (RANK[role] < RANK[minimum]) throw new HttpError(403, 'forbidden', 'Votre rôle sur ce tableau ne permet pas cette action.');
+    return role;
+  }
+
+  return { requireRole };
+}
+
 function invalid(err) {
   if (err instanceof ValidationError) return new HttpError(400, err.code, err.message, { extra: { path: err.path } });
   return err;
@@ -34,7 +54,7 @@ function writeItems(db, boardId, items, rev) {
 
 export function registerBoardRoutes(router, app) {
   const { db, config } = app;
-  const memberRole = db.prepare('SELECT role FROM board_members WHERE board_id = ? AND user_id = ?');
+  const { requireRole } = createBoardAccess(db);
   const countOwned = db.prepare("SELECT COUNT(*) AS n FROM board_members WHERE user_id = ? AND role = 'owner'");
   const ownerOf = db.prepare("SELECT user_id AS userId FROM board_members WHERE board_id = ? AND role = 'owner'");
   const ownedBytes = db.prepare(`SELECT COALESCE(SUM(
@@ -57,22 +77,10 @@ export function registerBoardRoutes(router, app) {
     }
   }
 
-  function roleOf(session, boardId) {
-    if (session.guest) return session.boardId === boardId ? session.role : null;
-    return memberRole.get(boardId, session.userId)?.role ?? null;
-  }
-
-  /* Un tableau hors d'atteinte répond 404 : son existence n'est pas révélée. */
-  function requireRole(ctx, minimum) {
-    const role = roleOf(ctx.session, ctx.params.id);
-    if (!role) throw notFound();
-    if (RANK[role] < RANK[minimum]) throw new HttpError(403, 'forbidden', 'Votre rôle sur ce tableau ne permet pas cette action.');
-    return role;
-  }
-
   router.add('GET', '/api/boards', ctx => {
     const rows = db.prepare(`SELECT b.id, b.name, b.icon, b.rev, b.created_at AS createdAt, b.updated_at AS updatedAt, m.role,
-        (SELECT COUNT(*) FROM board_members x WHERE x.board_id = b.id) AS memberCount
+        (SELECT COUNT(*) FROM board_members x WHERE x.board_id = b.id) AS memberCount,
+        (SELECT u.display_name FROM board_members o JOIN users u ON u.id = o.user_id WHERE o.board_id = b.id AND o.role = 'owner') AS ownerName
       FROM board_members m JOIN boards b ON b.id = m.board_id
       WHERE m.user_id = ? ORDER BY b.updated_at DESC`).all(ctx.session.userId);
     return { body: { boards: rows } };

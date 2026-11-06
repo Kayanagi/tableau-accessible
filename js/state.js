@@ -11,6 +11,7 @@ export const LINE_TYPES = L.LINE_TYPES;
 let board = { name: 'Nouveau tableau', items: [] };
 let selected = [];
 let nextId = 1;
+let readOnly = false;
 const listeners = new Set();
 
 export const STICKY_SIZES = { s: 100, m: 150, l: 220 };
@@ -75,6 +76,35 @@ export function syncDerived() {
 }
 
 export { COLORS, SHAPES, TYPES };
+
+/*
+ * Lecture seule : tout passe par ici pour écrire dans le tableau, donc tout s'arrête ici.
+ * Seuls la sélection, la vue et ce qui sert à lire (retourner une carte, replier une branche) restent permis.
+ */
+export function setReadOnly(on) {
+  readOnly = !!on;
+}
+
+export function isReadOnly() {
+  return readOnly;
+}
+
+function refused() {
+  if (!readOnly) return false;
+  announce('Lecture seule : ce tableau ne peut pas être modifié.');
+  return true;
+}
+
+/* Pour lire : le changement reste à l'écran, hors historique, et rien n'est enregistré en lecture seule (voir app.js). */
+export function viewToggle(id, fn, message) {
+  if (!readOnly) return mutateItem(id, fn, message);
+  const item = getItem(id);
+  if (!item) return null;
+  const result = fn(item);
+  notify();
+  if (message) announce(typeof message === 'function' ? message(result) : message);
+  return result;
+}
 
 export function subscribe(fn) {
   listeners.add(fn);
@@ -220,6 +250,7 @@ export function getItemLabel(item) {
 }
 
 export function isLocked(id) {
+  if (refused()) return true;
   if (!getItem(id)?.locked) return false;
   announce('Élément verrouillé');
   return true;
@@ -246,6 +277,7 @@ export function duplicateItems(ids) {
 }
 
 export function pasteItems(source, offset, speak = true) {
+  if (refused()) return [];
   const map = new Map();
   const copies = [];
   history.pushState(snapshot());
@@ -310,6 +342,7 @@ export function collectForCopy(ids) {
 }
 
 function editable(ids) {
+  if (refused()) return [];
   const items = ids.map(getItem).filter(Boolean);
   const free = items.filter(i => !i.locked);
   if (items.length && !free.length) announce(items.length === 1 ? 'Élément verrouillé' : 'Éléments verrouillés');
@@ -321,6 +354,7 @@ export function toggleLocked(id) {
 }
 
 export function toggleLockedMany(ids) {
+  if (refused()) return;
   const items = ids.map(getItem).filter(Boolean);
   if (!items.length) return;
   const lock = !items.every(i => i.locked);
@@ -377,6 +411,7 @@ export function setItemBox(item, box) {
 }
 
 export function frameAround(ids) {
+  if (refused()) return null;
   const all = ids.map(getItem).filter(Boolean);
   const items = all.filter(i => i.type !== 'connector');
   const boxes = items.length
@@ -429,6 +464,7 @@ export function getItemAriaLabel(item) {
 }
 
 export function addItem(item) {
+  if (refused()) return null;
   history.pushState(snapshot());
   item.id = generateId();
   board.items.push(normalizeItem(item));
@@ -508,6 +544,7 @@ export function removeItems(ids) {
 }
 
 export function undo() {
+  if (refused()) return false;
   const prev = history.undo(snapshot());
   if (!prev) return false;
   board = prev;
@@ -519,6 +556,7 @@ export function undo() {
 }
 
 export function redo() {
+  if (refused()) return false;
   const next = history.redo(snapshot());
   if (!next) return false;
   board = next;
@@ -611,6 +649,7 @@ export function movableIds(ids) {
 }
 
 export function transact(fn, message) {
+  if (refused()) return null;
   history.pushState(snapshot());
   const result = fn({ newId: generateId });
   board.items.forEach(normalizeItem);
@@ -741,7 +780,10 @@ export function addMindNode(refId, asChild) {
 export function setMindCollapsed(id, collapsed) {
   const item = getItem(id);
   if (item?.type !== 'mindmap' || !mindChildren(id).length || !!item.collapsed === collapsed) return false;
-  transact(() => { item.collapsed = collapsed; layoutMind(mindRoot(id).id); }, collapsed ? 'Branche repliée' : 'Branche dépliée');
+  const change = () => { item.collapsed = collapsed; layoutMind(mindRoot(id).id); };
+  const message = collapsed ? 'Branche repliée' : 'Branche dépliée';
+  if (readOnly) viewToggle(id, change, message);
+  else transact(change, message);
   return true;
 }
 
@@ -847,6 +889,7 @@ export function getContentSummary(item) {
 }
 
 export function moveFrame(id, direction) {
+  if (refused()) return;
   const ids = getFrames().map(f => f.id);
   const from = ids.indexOf(id), to = from + direction;
   if (from < 0 || to < 0 || to >= ids.length) return;

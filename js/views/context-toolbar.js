@@ -293,7 +293,7 @@ function menuEntries(kind) {
 function update() {
   const items = selection();
   const hadFocus = bar.contains(document.activeElement);
-  if (!items.length) {
+  if (!items.length || state.isReadOnly()) {
     if (hadFocus) canvas.getSvgElement().querySelector('.canvas-item[tabindex="0"]')?.focus();
     closeMenu(false);
     bar.hidden = true;

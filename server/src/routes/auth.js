@@ -95,4 +95,10 @@ export function registerAuthRoutes(router, app) {
     sessions.destroy(ctx.session.hash);
     return { status: 204, headers: { 'Set-Cookie': sessions.clearCookie() } };
   }, { auth: 'session', bodyLimit: 4 * 1024 });
+
+  /*
+   * Interrogée par auth_request à chaque requête statique du site : ni corps, ni limite de débit,
+   * ni glissement de session (nginx ne transmettrait pas le Set-Cookie au navigateur).
+   */
+  router.add('GET', '/api/session', ctx => ({ status: sessions.isAccountSession(ctx.req) ? 204 : 401 }));
 }

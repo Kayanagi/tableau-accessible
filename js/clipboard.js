@@ -11,6 +11,13 @@ function count(n, one, many) {
   return n === 1 ? one : `${n} ${many}`;
 }
 
+/* À la fermeture de session : ce qui a été copié ne doit pas passer au compte suivant. */
+export function reset() {
+  clip = null;
+  style = null;
+  pasteCount = 0;
+}
+
 export function copy(ids = state.getSelectedIds()) {
   const items = state.collectForCopy(ids);
   if (!items.length) { announce('Rien à copier'); return false; }

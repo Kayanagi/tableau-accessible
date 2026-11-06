@@ -9,6 +9,7 @@ import * as prefsMenu from './preferences-menu.js';
 import { getPref } from '../preferences.js';
 import * as account from '../store/account.js';
 import { showNotice } from '../ui/notice.js';
+import { openLeaveDialog, openShareDialog, ROLE_LABELS } from './share-dialog.js';
 
 let navExpanded = !matchMedia('(max-width: 640px)').matches;
 let container = null;
@@ -19,6 +20,8 @@ let gridView = false;
 let lastSection = null;
 let lastRoute = null;
 let lastSignature = '';
+let lastMain = null;
+let creating = false;
 
 export function init(el) {
   container = el;
@@ -73,7 +76,7 @@ export function render(route) {
 
   const accountBtn = document.createElement('button');
   accountBtn.id = 'btn-account';
-  accountBtn.textContent = accountLabel();
+  accountBtn.textContent = 'Mon compte';
   accountBtn.addEventListener('click', () => router.navigate('/compte'));
   actions.appendChild(accountBtn);
 
@@ -130,6 +133,8 @@ export function render(route) {
   const main = document.createElement('main');
   main.id = 'main-content';
   main.setAttribute('tabindex', '-1');
+  lastMain = main;
+  renderInvites(main);
 
   if (route.view === 'accueil') {
     const tplSection = document.createElement('section');
@@ -218,8 +223,8 @@ export function render(route) {
 
   lastSection = boardsSection;
   lastRoute = route;
-  updateBoardsList(boardsSection, route);
   main.appendChild(boardsSection);
+  updateBoardsList(boardsSection, route);
   container.appendChild(main);
 
   const footer = document.createElement('footer');
@@ -231,26 +236,107 @@ export function render(route) {
   container.appendChild(footer);
 }
 
-const accountLabel = () => (account.hasSession() ? 'Mon compte' : 'Se connecter');
-
 function signature() {
   const connected = account.isConnected();
-  return JSON.stringify([connected, boards.getAll().map(b => [b.id, b.nom, b.icon, b.favori, b.espaceId, b.dernièreOuverture, !!b.distant, b.role, b.perdu, b.données?.items?.length ?? b.nbÉléments])]);
+  return JSON.stringify([connected, account.getInvites().map(i => [i.id, i.boardName, i.invitedByName, i.role]), boards.getAll().map(b => [b.id, b.nom, b.icon, b.favori, b.espaceId, b.dernièreOuverture, b.role, b.perdu, b.memberCount, b.ownerName, b.données?.items?.length ?? b.nbÉléments])]);
+}
+
+/* Fermeture de session : rien de ce qui était affiché ne reste dans la page. */
+export function clear() {
+  if (container) { container.innerHTML = ''; container.hidden = true; }
+  lastSection = lastRoute = lastMain = null;
+  lastSignature = '';
+  searchQuery = '';
+}
+
+/* ---- Invitations reçues : nom du tableau et de l'invitant choisis par un autre compte, en textContent seulement ---- */
+
+const inviteCount = n => `${n} invitation${n > 1 ? 's' : ''} en attente`;
+
+function renderInvites(main) {
+  let section = main.querySelector('#invites-section');
+  const hadFocus = !!section?.contains(document.activeElement);
+  const label = hadFocus ? document.activeElement.getAttribute('aria-label') : null;
+  const invites = account.getInvites();
+  if (!invites.length) {
+    section?.remove();
+    if (hadFocus) document.getElementById('dashboard-title')?.focus();
+    return;
+  }
+  if (!section) {
+    section = document.createElement('section');
+    section.id = 'invites-section';
+    section.className = 'invites-banner';
+    section.setAttribute('aria-labelledby', 'invites-title');
+    const h2 = document.createElement('h2');
+    h2.id = 'invites-title';
+    h2.textContent = 'Invitations';
+    const status = document.createElement('p');
+    status.id = 'invites-count';
+    status.setAttribute('role', 'status');
+    const list = document.createElement('ul');
+    list.className = 'invites-list';
+    section.append(h2, status, list);
+    main.prepend(section);
+  }
+  section.querySelector('#invites-count').textContent = inviteCount(invites.length);
+  const list = section.querySelector('.invites-list');
+  list.replaceChildren();
+  for (const invite of invites) {
+    const li = document.createElement('li');
+    const text = document.createElement('p');
+    const name = document.createElement('strong');
+    name.textContent = invite.boardName;
+    const inviter = invite.invitedByName ? `, par ${invite.invitedByName}` : '';
+    text.append(name, ` (${ROLE_LABELS[invite.role]}${inviter})`);
+    const actions = document.createElement('div');
+    actions.className = 'invite-actions';
+    const accept = document.createElement('button');
+    accept.className = 'btn-sm btn-primary';
+    accept.textContent = 'Accepter';
+    accept.setAttribute('aria-label', `Accepter l’invitation : ${invite.boardName}`);
+    accept.addEventListener('click', () => answerInvite(invite, true));
+    const decline = document.createElement('button');
+    decline.className = 'btn-sm';
+    decline.textContent = 'Refuser';
+    decline.setAttribute('aria-label', `Refuser l’invitation : ${invite.boardName}`);
+    decline.addEventListener('click', () => answerInvite(invite, false));
+    actions.append(accept, decline);
+    li.append(text, actions);
+    list.append(li);
+  }
+  if (hadFocus) ([...section.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === label) || section.querySelector('button'))?.focus();
+}
+
+async function answerInvite(invite, yes) {
+  try {
+    const res = yes ? await account.acceptInvite(invite.id) : await account.declineInvite(invite.id);
+    if (!lastMain?.isConnected) return;
+    renderInvites(lastMain);
+    updateBoardsList(lastSection, lastRoute);
+    announce(yes ? `Invitation acceptée : ${invite.boardName}` : `Invitation refusée : ${invite.boardName}`);
+    const next = yes ? lastMain.querySelector(`[data-board-id="${CSS.escape(res.boardId)}"] a`) : null;
+    (next || lastMain.querySelector('#invites-section button') || document.getElementById('dashboard-title'))?.focus();
+  } catch (err) {
+    if (err.name !== 'ApiError') throw err;
+    // Invitation expirée ou annulée entre-temps : la liste est relue.
+    if (err.notFound) account.refreshBoards();
+    reportError('invites', err);
+  }
 }
 
 /* Après un changement côté compte : met la liste à jour en place, sans perdre le focus ni le titre. */
 export function refresh() {
   if (!container || container.hidden || !lastSection?.isConnected) return;
-  const btn = document.getElementById('btn-account');
-  if (btn) btn.textContent = accountLabel();
   if (signature() === lastSignature) return;
   const active = document.activeElement;
-  const row = lastSection.contains(active) ? active.closest('[data-board-id]') : null;
+  const row = lastMain.contains(active) ? active.closest('[data-board-id]') : null;
   const rowId = row?.dataset.boardId;
   const label = active?.getAttribute?.('aria-label') || active?.textContent;
+  renderInvites(lastMain);
   updateBoardsList(lastSection, lastRoute);
   if (!rowId) return;
-  const next = lastSection.querySelector(`[data-board-id="${CSS.escape(rowId)}"]`);
+  const next = lastMain.querySelector(`[data-board-id="${CSS.escape(rowId)}"]`);
   if (!next) { document.getElementById('boards-title')?.focus(); return; }
   const same = [...next.querySelectorAll('a, button, select')].find(el => (el.getAttribute('aria-label') || el.textContent) === label);
   (same || next.querySelector('a'))?.focus();
@@ -260,18 +346,53 @@ function itemCount(board) {
   return board.données?.items?.length ?? board.nbÉléments ?? null;
 }
 
+const isShared = board => board.role === 'viewer' || board.role === 'editor';
+
+/* Le rôle en clair ; rien pour un tableau à soi qui n'est partagé avec personne. */
+function badgeText(board) {
+  if (board.perdu) return 'Accès perdu';
+  if (board.role === 'viewer') return 'Lecture seule';
+  if (board.role === 'editor') return 'Peut modifier';
+  return board.memberCount > 1 ? 'Partagé' : null;
+}
+
 function addBadge(el, board) {
-  if (!account.isConnected() && !board.distant) return;
+  const text = badgeText(board);
+  if (!text) return;
   const badge = document.createElement('span');
-  badge.className = `board-badge ${board.distant ? 'board-badge-account' : 'board-badge-device'}`;
-  badge.textContent = board.perdu ? 'Accès perdu' : board.distant ? 'Sur mon compte' : 'Sur cet appareil';
+  badge.className = `board-badge board-badge-${board.perdu ? 'lost' : board.role}`;
+  badge.textContent = text;
   el.appendChild(badge);
+  if (isShared(board) && board.ownerName) {
+    const owner = document.createElement('span');
+    owner.className = 'board-owner';
+    owner.textContent = `De ${board.ownerName}`;
+    el.appendChild(owner);
+  }
 }
 
 function reportError(key, err) {
   if (err.name !== 'ApiError') throw err;
   showNotice(key, err.message, { tone: 'error' });
   announce(err.message);
+}
+
+/* Section « Partagés avec moi », juste après celle des tableaux. Elle n'existe que si elle a quelque chose à montrer. */
+function renderSharedSection(section, list, route) {
+  const main = section.parentElement || lastMain;
+  main?.querySelector('#shared-section')?.remove();
+  if (!list.length) return;
+  const shared = document.createElement('section');
+  shared.id = 'shared-section';
+  shared.className = 'boards-section';
+  shared.setAttribute('aria-labelledby', 'shared-title');
+  const h2 = document.createElement('h2');
+  h2.id = 'shared-title';
+  h2.textContent = 'Partagés avec moi';
+  shared.append(h2);
+  if (gridView) renderGrid(shared, list);
+  else renderTable(shared, list, route);
+  section.after(shared);
 }
 
 function updateBoardsList(section, route) {
@@ -309,11 +430,17 @@ function updateBoardsList(section, route) {
     return 0;
   });
 
-  if (sorted.length === 0) {
+  // Favoris et espaces mélangent tout ce qu'on a choisi d'y mettre ; ailleurs, ce qui est à moi et ce qu'on m'a partagé se distinguent.
+  const splitShared = route.view === 'accueil' || route.view === 'parcourir';
+  const mine = splitShared ? sorted.filter(b => !isShared(b)) : sorted;
+  const shared = splitShared ? sorted.filter(isShared) : [];
+  renderSharedSection(section, shared, route);
+
+  if (mine.length === 0) {
     const empty = document.createElement('p');
     empty.classList.add('boards-empty');
     if (searchQuery.trim()) {
-      empty.textContent = 'Aucun tableau ne correspond à la recherche.';
+      empty.textContent = sorted.length ? 'Aucun de vos tableaux ne correspond à la recherche.' : 'Aucun tableau ne correspond à la recherche.';
     } else if (route.view === 'favoris') {
       empty.textContent = 'Aucun tableau en favori.';
     } else {
@@ -324,9 +451,9 @@ function updateBoardsList(section, route) {
   }
 
   if (gridView) {
-    renderGrid(section, sorted);
+    renderGrid(section, mine);
   } else {
-    renderTable(section, sorted, route);
+    renderTable(section, mine, route);
   }
 }
 
@@ -360,7 +487,7 @@ function renderTable(section, boardsList, route) {
     btn.addEventListener('click', () => {
       if (sortCol === col.key) { sortAsc = !sortAsc; }
       else { sortCol = col.key; sortAsc = col.key === 'nom'; }
-      updateBoardsList(section, route);
+      updateBoardsList(lastSection, route);
     });
     th.appendChild(btn);
     tr.appendChild(th);
@@ -405,7 +532,7 @@ function renderTable(section, boardsList, route) {
 
     const countTd = document.createElement('td');
     countTd.setAttribute('data-label', 'Éléments');
-    countTd.textContent = itemCount(board) ?? (board.distant ? '-' : 0);
+    countTd.textContent = itemCount(board) ?? '-';
     row.appendChild(countTd);
 
     const favTd = document.createElement('td');
@@ -444,13 +571,14 @@ function renderTable(section, boardsList, route) {
     dupBtn.classList.add('btn-sm');
     dupBtn.textContent = 'Dupliquer';
     dupBtn.addEventListener('click', async () => {
-      try { if (board.distant) await boards.remoteStore().ensureData(board.id); }
-      catch (err) { reportError('board-action', err); return; }
-      const copy = boards.duplicate(board.id);
-      if (copy) {
-        announce(`Tableau dupliqué : ${copy.nom}`);
-        render(router.getRoute());
-      }
+      try {
+        await boards.remoteStore().ensureData(board.id);
+        const copy = await boards.duplicate(board.id);
+        if (copy) {
+          announce(`Tableau dupliqué : ${copy.nom}`);
+          render(router.getRoute());
+        }
+      } catch (err) { reportError('board-action', err); }
     });
     actTd.appendChild(dupBtn);
 
@@ -492,7 +620,7 @@ function renderGrid(section, boardsList) {
     addBadge(link, board);
     const meta = document.createElement('span');
     meta.classList.add('board-card-meta');
-    meta.textContent = itemCount(board) === null && board.distant ? 'Éléments : non chargés' : `${itemCount(board) || 0} élément(s)`;
+    meta.textContent = itemCount(board) === null ? 'Éléments : non chargés' : `${itemCount(board) || 0} élément(s)`;
     link.appendChild(meta);
     if (board.dernièreOuverture) {
       const time = document.createElement('time');
@@ -533,14 +661,27 @@ function renderGrid(section, boardsList) {
   section.appendChild(grid);
 }
 
+/* Un tableau naît sur le compte. Hors ligne ou refusé : le message du serveur, et rien de créé. */
+async function createAndOpen(nom, données) {
+  if (creating) return;
+  creating = true;
+  try {
+    const board = await boards.create(nom, données);
+    if (router.getRoute().spaceId) boards.moveToSpace(board.id, router.getRoute().spaceId);
+    announce(`Tableau créé : ${board.nom}`);
+    router.navigate(`/tableau/${board.id}`);
+  } catch (err) {
+    reportError('board-action', err);
+  } finally {
+    creating = false;
+  }
+}
+
 function createFromTemplate(templateId) {
   const tpl = getTemplate(templateId);
   if (!tpl) return;
   const données = tpl.données();
-  const board = boards.create(données.name || tpl.nom, données);
-  if (router.getRoute().spaceId) boards.moveToSpace(board.id, router.getRoute().spaceId);
-  announce(`Tableau créé : ${board.nom}`);
-  router.navigate(`/tableau/${board.id}`);
+  createAndOpen(données.name || tpl.nom, données);
 }
 
 function startCreation() {
@@ -562,11 +703,8 @@ export function handleCreateSubmit() {
   const templateId = fd.get('board-template') || 'vierge';
   const tpl = getTemplate(templateId);
   const données = tpl ? tpl.données() : { name: nom, items: [] };
-  const board = boards.create(nom, données);
   dialog.close();
-  if (router.getRoute().spaceId) boards.moveToSpace(board.id, router.getRoute().spaceId);
-  announce(`Tableau créé : ${board.nom}`);
-  router.navigate(`/tableau/${board.id}`);
+  createAndOpen(nom, données);
 }
 
 function openRenameDialog(board) {
@@ -584,20 +722,12 @@ export function handleRenameSubmit() {
   const fd = new FormData(dialog.querySelector('form'));
   const id = fd.get('rename-id');
   const nom = (fd.get('rename-name') || '').trim();
-  if (id && nom && boards.get(id)?.distant) {
-    dialog.close();
-    boards.remoteStore().rename(id, nom).then(() => {
-      announce(`Tableau renommé : ${nom}`);
-      render(router.getRoute());
-    }).catch(err => reportError('board-action', err));
-    return;
-  }
-  if (id && nom) {
-    boards.rename(id, nom);
+  dialog.close();
+  if (!id || !nom) return;
+  boards.remoteStore().rename(id, nom).then(() => {
     announce(`Tableau renommé : ${nom}`);
     render(router.getRoute());
-  }
-  dialog.close();
+  }).catch(err => reportError('board-action', err));
 }
 
 function openDeleteDialog(board) {
@@ -611,38 +741,33 @@ function openDeleteDialog(board) {
 export function handleDeleteConfirm() {
   const dialog = document.getElementById('dialog-delete-board');
   const id = dialog.querySelector('[name="delete-id"]').value;
-  if (id && boards.get(id)?.distant) {
-    const nom = boards.get(id).nom;
-    dialog.close();
-    boards.remoteStore().remove(id).then(() => {
-      announce(`${nom} supprimé`);
-      render(router.getRoute());
-    }).catch(err => reportError('board-action', err));
-    return;
-  }
-  if (id) {
-    const board = boards.get(id);
-    const nom = board ? board.nom : 'Tableau';
-    boards.remove(id);
+  dialog.close();
+  if (!id || !boards.get(id)) return;
+  const nom = boards.get(id).nom;
+  boards.remoteStore().remove(id).then(() => {
     announce(`${nom} supprimé`);
     render(router.getRoute());
-  }
-  dialog.close();
+  }).catch(err => reportError('board-action', err));
 }
 
 function importBoardFromFile(file) {
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
+    let obj;
     try {
-      const obj = JSON.parse(reader.result);
+      obj = JSON.parse(reader.result);
       if (!obj.items || !Array.isArray(obj.items)) throw new Error('Format invalide');
-      const nom = obj.name || 'Tableau importé';
-      const board = boards.create(nom, obj);
-      announce(`Tableau importé : ${board.nom}`);
-      render(router.getRoute());
     } catch (e) {
       announce('Erreur lors de l\'import');
       console.error(e);
+      return;
+    }
+    try {
+      const board = await boards.create(obj.name || 'Tableau importé', obj);
+      announce(`Tableau importé : ${board.nom}`);
+      render(router.getRoute());
+    } catch (err) {
+      reportError('board-action', err);
     }
   };
   reader.onerror = () => announce('Erreur lors de la lecture du fichier');
@@ -650,7 +775,7 @@ function importBoardFromFile(file) {
 }
 
 async function exportBoardJSON(board) {
-  try { if (board.distant) await boards.remoteStore().ensureData(board.id); }
+  try { await boards.remoteStore().ensureData(board.id); }
   catch (err) { reportError('board-action', err); return; }
   const json = JSON.stringify(board.données, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
@@ -679,10 +804,8 @@ function addBoardActions(el, board) {
   icon.value = board.icon || 'board';
   icon.disabled = !canEdit(board);
   icon.onchange = async () => {
-    if (board.distant) {
-      try { await boards.remoteStore().setIcon(board.id, icon.value); }
-      catch (err) { icon.value = board.icon; reportError('board-action', err); return; }
-    } else boards.setIcon(board.id, icon.value);
+    try { await boards.remoteStore().setIcon(board.id, icon.value); }
+    catch (err) { icon.value = board.icon; reportError('board-action', err); return; }
     const link = el.closest('tr, li').querySelector('.board-link, .board-card-title');
     setBoardLabel(link, board);
     announce('Image du tableau modifiée');
@@ -700,60 +823,41 @@ function addBoardActions(el, board) {
   addAccountAction(el, board);
 }
 
-const canEdit = board => !board.distant || (board.role !== 'viewer' && !board.perdu);
-const canDelete = board => !board.distant || (board.role === 'owner' && !board.perdu);
+const canEdit = board => board.role !== 'viewer' && !board.perdu;
+const canDelete = board => board.role === 'owner' && !board.perdu;
 
-function focusRow(id) {
-  lastSection?.querySelector(`[data-board-id="${CSS.escape(id)}"] a`)?.focus();
-}
-
-/* Passage explicite d'un côté à l'autre : jamais de migration automatique. */
+/* Partager (propriétaire), quitter (invité), récupérer le contenu d'un tableau perdu. */
 function addAccountAction(el, board) {
-  if (!account.isConnected()) return;
+  if (board.perdu) {
+    const keep = document.createElement('button');
+    keep.classList.add('btn-sm', 'btn-account-action');
+    keep.textContent = 'Garder une copie';
+    keep.setAttribute('aria-label', `Garder une copie : ${board.nom}`);
+    keep.addEventListener('click', () => keepCopy(board));
+    el.append(keep);
+    return;
+  }
+  const owner = board.role === 'owner';
   const action = document.createElement('button');
   action.classList.add('btn-sm', 'btn-account-action');
-  action.textContent = board.distant ? 'Garder une copie locale' : 'Enregistrer sur mon compte';
+  action.textContent = owner ? 'Partager…' : 'Quitter le tableau';
   action.setAttribute('aria-label', `${action.textContent} : ${board.nom}`);
-  let busy = false;
-  action.addEventListener('click', async () => {
-    if (busy) return;
-    busy = true;
-    action.setAttribute('aria-disabled', 'true');
-    try {
-      if (board.distant) await keepCopy(board);
-      else await upload(board);
-    } catch (err) {
-      reportError('board-action', err);
-    } finally {
-      busy = false;
-      action.removeAttribute('aria-disabled');
-    }
+  action.addEventListener('click', () => {
+    if (owner) openShareDialog(board);
+    else openLeaveDialog(board, () => render(router.getRoute()));
   });
   el.append(action);
 }
 
-async function upload(board) {
-  announce(`Enregistrement de ${board.nom} sur votre compte…`);
-  const { entry, mirrored } = await boards.remoteStore().upload(board);
-  render(router.getRoute());
-  focusRow(entry.id);
-  if (mirrored) { announce(`${entry.nom} est maintenant sur votre compte.`); return; }
-  const message = `${entry.nom} est enregistré sur votre compte, mais il est trop volumineux pour la copie hors ligne. La version de cet appareil est conservée.`;
-  showNotice(`mirror-${entry.id}`, message, { tone: 'info' });
-  announce(message);
-}
-
 async function keepCopy(board) {
-  const copy = await boards.remoteStore().keepLocalCopy(board.id);
-  if (!copy) {
-    const message = 'Stockage de cet appareil plein : la copie locale n’a pas pu être créée.';
-    showNotice('board-action', message, { tone: 'error' });
-    announce(message);
-    return;
+  try {
+    const copy = await boards.remoteStore().keepCopy(board.id);
+    render(router.getRoute());
+    lastMain?.querySelector(`[data-board-id="${CSS.escape(copy.id)}"] a`)?.focus();
+    announce(`Copie créée : ${copy.nom}`);
+  } catch (err) {
+    reportError('board-action', err);
   }
-  render(router.getRoute());
-  focusRow(copy.id);
-  announce(`Copie locale créée : ${copy.nom}`);
 }
 
 /* Tableau distant impossible à afficher : un message et un retour, jamais un tableau vide. */

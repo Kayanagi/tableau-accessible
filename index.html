@@ -10,15 +10,25 @@
 <body>
   <a href="#main-content" class="skip-link">Aller au contenu principal</a>
 
-  <div id="app-dashboard"></div>
+  <!-- Rien du tableau de bord ni des tableaux n'est rendu tant que la session n'est pas confirmée. -->
+  <div id="app-gate">
+    <main id="main-content" class="login-screen">
+      <p class="login-loading" role="status">Chargement…</p>
+    </main>
+  </div>
+
+  <div id="app-dashboard" hidden></div>
 
   <div id="app-board" hidden>
     <header role="banner">
       <div class="board-header-top">
         <a href="#/" class="btn-back" aria-label="← Tableaux : retour au tableau de bord">&larr; Tableaux</a>
         <h1 id="board-title" tabindex="-1">Tableau</h1>
+        <p id="board-readonly" class="board-readonly" hidden>Lecture seule</p>
         <button id="btn-search" type="button" aria-keyshortcuts="Control+f">Rechercher</button>
         <button id="btn-present" type="button">Présenter</button>
+        <button id="btn-share" type="button" hidden>Partager…</button>
+        <button id="btn-leave" type="button" hidden>Quitter le tableau</button>
         <div id="board-prefs" class="prefs-slot"></div>
       </div>
       <button id="btn-board-menu" type="button" aria-expanded="false" aria-controls="board-tools">Actions du tableau</button>
@@ -56,13 +66,13 @@
           <div class="pen-widths" role="radiogroup" aria-label="Épaisseur du trait"></div>
           <p id="pen-palette-hint" class="sr-only">Dessinez au pointeur sur le canevas. Échap pour quitter le stylo.</p>
         </fieldset>
-        <div class="toolbar-group" role="group" aria-label="Organisation">
+        <div id="board-group-organize" class="toolbar-group" role="group" aria-label="Organisation">
           <button id="btn-duplicate" type="button" aria-keyshortcuts="Control+d">Dupliquer</button>
           <button id="btn-lock" type="button" aria-keyshortcuts="Control+Shift+l">Verrouiller / déverrouiller</button>
           <button id="btn-front" type="button" aria-keyshortcuts="PageUp">Premier plan</button>
           <button id="btn-backward" type="button" aria-keyshortcuts="PageDown">Arrière-plan</button>
         </div>
-        <div class="toolbar-group" role="group" aria-label="Historique">
+        <div id="board-group-history" class="toolbar-group" role="group" aria-label="Historique">
           <button id="btn-undo" type="button" disabled aria-label="Annuler (Ctrl+Z)" aria-keyshortcuts="Control+z">Annuler</button>
           <button id="btn-redo" type="button" disabled aria-label="R&eacute;tablir (Ctrl+Maj+Z)" aria-keyshortcuts="Control+Shift+z">R&eacute;tablir</button>
         </div>
@@ -351,11 +361,11 @@
     <p>Le tableau contient des &eacute;l&eacute;ments de types : post-it (texte + couleur), forme (rectangle, cercle, triangle, losange), texte libre, carte (titre + description), cadre (regroupement), ligne (extr&eacute;mit&eacute;s attach&eacute;es &agrave; un objet ou libres, points de pliage, texte), dessin &agrave; main lev&eacute;e, commentaire, carte mentale, kanban, tableau de donn&eacute;es, bloc de code et carte recto-verso. Post-its et cartes acceptent des &eacute;tiquettes ; tout objet accepte des r&eacute;actions.</p>
 
     <h3>Persistance</h3>
-    <p>Les tableaux sont sauvegard&eacute;s automatiquement dans le navigateur (localStorage). Vous pouvez aussi exporter en JSON (r&eacute;importable) ou en Markdown (lisible).</p>
+    <p>Les tableaux sont enregistr&eacute;s automatiquement sur votre compte, avec une copie sur cet appareil pour continuer hors ligne. Vous pouvez aussi exporter en JSON (r&eacute;importable) ou en Markdown (lisible).</p>
 
     <h3>Limites</h3>
     <ul>
-      <li>Pas de collaboration en temps r&eacute;el : l'&eacute;tat est local. Le format JSON est con&ccedil;u pour &ecirc;tre s&eacute;rialisable en vue d'un ajout futur de temps r&eacute;el.</li>
+      <li>Pas de collaboration en temps r&eacute;el : un tableau partag&eacute; se met &agrave; jour &agrave; son ouverture. Si deux personnes le modifient en m&ecirc;me temps, le travail de la seconde est gard&eacute; dans une copie.</li>
     </ul>
 
     <div class="dialog-actions">

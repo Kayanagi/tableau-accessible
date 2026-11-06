@@ -85,7 +85,9 @@ function render() {
   body.innerHTML = '';
   const who = document.createElement('div');
   who.className = 'comments-author';
-  if (author) {
+  if (state.isReadOnly()) {
+    who.textContent = 'Lecture seule : vous pouvez lire les commentaires sans en ajouter.';
+  } else if (author) {
     who.innerHTML = `<p>Vous commentez en tant que <strong></strong>. <button type="button" class="btn-sm" data-act="rename" data-focus-key="rename">Changer de nom</button></p>`;
     who.querySelector('strong').textContent = author;
   } else {
@@ -106,7 +108,7 @@ function render() {
   if (!shown.length) {
     const p = document.createElement('p');
     p.className = 'comments-empty';
-    p.textContent = all.length ? 'Tous les commentaires sont résolus.' : 'Aucun commentaire. Outil Commentaire (C) pour en ajouter.';
+    p.textContent = all.length ? 'Tous les commentaires sont résolus.' : state.isReadOnly() ? 'Aucun commentaire.' : 'Aucun commentaire. Outil Commentaire (C) pour en ajouter.';
     body.appendChild(p);
   } else body.appendChild(ol);
   if (restore) body.querySelector(restore)?.focus();
@@ -165,7 +167,8 @@ function thread(c) {
   form.querySelector('textarea').value = drafts.get(c.id) || '';
   const actions = document.createElement('div');
   actions.className = 'comment-actions';
-  for (const [act, text, cls] of [['goto', 'Aller à l’élément', 'btn-sm'], ['resolve', 'Résolu', 'btn-sm'], ['delete', 'Supprimer', 'btn-sm btn-danger']]) {
+  const readOnly = state.isReadOnly();
+  for (const [act, text, cls] of readOnly ? [['goto', 'Aller à l’élément', 'btn-sm']] : [['goto', 'Aller à l’élément', 'btn-sm'], ['resolve', 'Résolu', 'btn-sm'], ['delete', 'Supprimer', 'btn-sm btn-danger']]) {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = cls;
@@ -175,7 +178,8 @@ function thread(c) {
     if (act === 'resolve') b.setAttribute('aria-pressed', String(!!c.resolved));
     actions.appendChild(b);
   }
-  art.append(form, actions);
+  if (readOnly) art.append(actions);
+  else art.append(form, actions);
   li.appendChild(art);
   return li;
 }

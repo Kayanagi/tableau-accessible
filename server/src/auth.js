@@ -96,7 +96,7 @@ export function hashToken(token) {
 }
 
 export function sessionCookie({ name, secure }, token, maxAgeSeconds) {
-  const attrs = [`${name}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Strict', `Max-Age=${maxAgeSeconds}`];
+  const attrs = [`${name}=${token}`, 'Path=/', 'HttpOnly', 'SameSite=Lax', `Max-Age=${maxAgeSeconds}`];
   if (secure) attrs.splice(3, 0, 'Secure');
   return attrs.join('; ');
 }
@@ -116,6 +116,7 @@ export function createSessions(db, config) {
     removeUser: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
     touch: db.prepare('UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?'),
     markActive: db.prepare('UPDATE users SET last_active_at = ?, inactivity_warned_at = NULL WHERE id = ?'),
+    accountAlive: db.prepare('SELECT 1 FROM sessions WHERE token_hash = ? AND user_id IS NOT NULL AND expires_at > ?'),
     purge: db.prepare('DELETE FROM sessions WHERE expires_at <= ?')
   };
 
@@ -165,9 +166,16 @@ export function createSessions(db, config) {
     return { session, setCookie };
   }
 
+  /* Pour le verrou nginx : simple lecture. Aucun glissement, aucune activité, aucune suppression. */
+  function isAccountSession(req) {
+    const token = tokenOf(req);
+    return Boolean(token && queries.accountAlive.get(hashToken(token), Date.now()));
+  }
+
   return {
     create,
     resolve,
+    isAccountSession,
     tokenOf,
     destroy: hash => queries.remove.run(hash),
     destroyByToken: token => queries.remove.run(hashToken(token)),

@@ -1,172 +1,16 @@
 /*
- * Dialogue du compte : connexion, inscription, nom, mot de passe, export, déconnexion, suppression.
- * Chargé par import() dynamique à l'ouverture de #/compte : ouvrir ce dialogue n'émet aucune requête /api/
- * tant que personne n'est connecté.
+ * Dialogue du compte, une fois connecté : nom, mot de passe, export, tableaux de l'appareil, déconnexion, suppression.
+ * La connexion et l'inscription sont sur l'écran de connexion (views/login-screen.js).
  */
 import * as api from '../sync/api.js';
 import * as account from '../store/account.js';
 import * as boards from '../store/boards.js';
 import { dialog } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
+import { button, checkName, checkNewPassword, clean, formMessage, makeField, makeForm, PASSWORD_MAX, PASSWORD_MIN, privacyHint, setMessage } from './account-forms.js';
+import { openImportDialog } from './import-dialog.js';
 
-const PASSWORD_MIN = 12;
-const PASSWORD_MAX = 128;
-const FIELD_OF_CODE = {
-  invalid_email: 'email', email_taken: 'email', invalid_password: 'password', invalid_display_name: 'displayName',
-  wrong_password: 'password', bad_credentials: 'password'
-};
-
-let nextField = 0;
-let registrationsClosed = false;
-
-function makeField({ name, label, type = 'text', autocomplete, hint, value = '' }) {
-  const id = `account-field-${++nextField}`;
-  const wrap = document.createElement('div');
-  wrap.className = 'field account-field';
-  const lab = document.createElement('label');
-  lab.htmlFor = id;
-  lab.textContent = label;
-  const input = document.createElement('input');
-  Object.assign(input, { id, name, type, value });
-  input.autocomplete = autocomplete;
-  input.setAttribute('autocapitalize', 'none');
-  input.spellcheck = false;
-  // Le formulaire reste en noValidate : c'est l'état « obligatoire » qui est exposé, pas la bulle du navigateur.
-  input.required = true;
-  wrap.append(lab, input);
-  const described = [];
-  if (hint) {
-    const p = document.createElement('p');
-    p.id = `${id}-hint`;
-    p.className = 'field-hint';
-    p.textContent = hint;
-    wrap.append(p);
-    described.push(p.id);
-  }
-  const error = document.createElement('p');
-  error.id = `${id}-error`;
-  error.className = 'field-error';
-  error.hidden = true;
-  wrap.append(error);
-  if (described.length) input.setAttribute('aria-describedby', described.join(' '));
-  return { wrap, input, error, described, name };
-}
-
-function setFieldError(field, message) {
-  field.error.textContent = message || '';
-  field.error.hidden = !message;
-  if (message) {
-    field.input.setAttribute('aria-invalid', 'true');
-    field.input.setAttribute('aria-describedby', [...field.described, field.error.id].join(' '));
-  } else {
-    field.input.removeAttribute('aria-invalid');
-    if (field.described.length) field.input.setAttribute('aria-describedby', field.described.join(' '));
-    else field.input.removeAttribute('aria-describedby');
-  }
-}
-
-function formMessage() {
-  const p = document.createElement('p');
-  p.className = 'account-message';
-  p.tabIndex = -1;
-  p.hidden = true;
-  return p;
-}
-
-function setMessage(p, message, tone = 'error') {
-  p.textContent = message || '';
-  p.hidden = !message;
-  p.classList.toggle('is-error', tone === 'error');
-  p.classList.toggle('is-success', tone === 'success');
-}
-
-/*
- * Formulaire commun : validation locale, puis envoi. Les erreurs vont au champ concerné, le focus à la première,
- * et le bouton reste focalisable pendant l'envoi (aria-disabled plutôt que disabled).
- */
-function makeForm({ fields, submitLabel, submitClass = 'btn-primary', busyMessage, validate, send, done }) {
-  const form = document.createElement('form');
-  form.noValidate = true;
-  form.className = 'account-form';
-  const message = formMessage();
-  form.append(message);
-  if (fields.length > 1) {
-    const required = document.createElement('p');
-    required.className = 'field-hint';
-    required.textContent = 'Tous les champs sont obligatoires.';
-    form.append(required);
-  }
-  form.append(...fields.map(f => f.wrap));
-  const actions = document.createElement('div');
-  actions.className = 'dialog-actions';
-  const submit = document.createElement('button');
-  submit.type = 'submit';
-  submit.className = submitClass;
-  submit.textContent = submitLabel;
-  actions.append(submit);
-  form.append(actions);
-
-  let busy = false;
-  const showErrors = errors => {
-    fields.forEach(f => setFieldError(f, errors[f.name]));
-    const first = fields.find(f => errors[f.name]);
-    if (first) { first.input.focus(); announce(errors[first.name]); }
-    return !!first;
-  };
-  form.addEventListener('submit', async e => {
-    e.preventDefault();
-    if (busy) return;
-    setMessage(message, '');
-    const values = Object.fromEntries(fields.map(f => [f.name, f.input.value]));
-    if (showErrors(validate(values) || {})) return;
-    busy = true;
-    submit.setAttribute('aria-disabled', 'true');
-    announce(busyMessage);
-    try {
-      await done(await send(values), { form, message, fields });
-    } catch (err) {
-      if (err.name !== 'ApiError') throw err;
-      const fieldName = FIELD_OF_CODE[err.code] || err.path;
-      if (!fields.some(f => f.name === fieldName) || !showErrors({ [fieldName]: err.message })) {
-        setMessage(message, err.message);
-        message.focus();
-        announce(err.message);
-      }
-    } finally {
-      busy = false;
-      submit.removeAttribute('aria-disabled');
-    }
-  });
-  return { form, message, actions };
-}
-
-const checkEmail = v => (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? null : 'Saisissez une adresse e-mail valide, par exemple nom@exemple.fr.');
-const checkNewPassword = v => ([...v].length >= PASSWORD_MIN && [...v].length <= PASSWORD_MAX ? null : `Le mot de passe doit contenir de ${PASSWORD_MIN} à ${PASSWORD_MAX} caractères.`);
-const checkName = v => (v.trim() && [...v.trim()].length <= 50 ? null : 'Le nom affiché doit contenir de 1 à 50 caractères.');
-const clean = errors => Object.fromEntries(Object.entries(errors).filter(([, v]) => v));
-
-function button(label, run, className) {
-  const b = document.createElement('button');
-  b.type = 'button';
-  b.textContent = label;
-  if (className) b.className = className;
-  b.addEventListener('click', run);
-  return b;
-}
-
-function privacyHint({ age = false } = {}) {
-  const hint = document.createElement('p');
-  hint.className = 'field-hint';
-  if (age) hint.append('Réservé aux personnes de 15 ans et plus. Consultez la page ');
-  else hint.append('Consultez la page ');
-  const link = document.createElement('a');
-  link.href = 'confidentialite.html';
-  link.target = '_blank';
-  link.rel = 'noopener';
-  link.textContent = 'Confidentialité (nouvel onglet)';
-  hint.append(link, ' pour savoir quelles données Baro conserve.');
-  return hint;
-}
+let nextWarning = 0;
 
 export function openAccountDialog({ onClose } = {}) {
   let body;
@@ -178,11 +22,7 @@ export function openAccountDialog({ onClose } = {}) {
   });
   const heading = el.querySelector('h2');
   heading.tabIndex = -1;
-  // Session expirée pendant que le dialogue est ouvert : les formulaires du compte ne peuvent plus aboutir.
-  const stopListening = account.onEvent(event => {
-    if (event.type === 'expired') showLogin('Votre session a expiré. Reconnectez-vous pour continuer.');
-  });
-  el.addEventListener('close', () => { stopListening?.(); onClose?.(); });
+  el.addEventListener('close', () => onClose?.());
 
   let firstView = true;
   const show = (title, build) => {
@@ -194,69 +34,6 @@ export function openAccountDialog({ onClose } = {}) {
     if (!firstView && target.tagName === 'INPUT') announce(title);
     firstView = false;
   };
-
-  /* ---- Sans session ---- */
-
-  function showLogin(notice) {
-    show('Se connecter', root => {
-      const email = makeField({ name: 'email', label: 'Adresse e-mail', type: 'email', autocomplete: 'email' });
-      const password = makeField({ name: 'password', label: 'Mot de passe', type: 'password', autocomplete: 'current-password' });
-      const { form, message } = makeForm({
-        fields: [email, password], submitLabel: 'Se connecter', busyMessage: 'Connexion en cours…',
-        validate: v => clean({ email: checkEmail(v.email), password: v.password ? null : 'Saisissez votre mot de passe.' }),
-        send: v => api.login({ email: v.email.trim(), password: v.password }),
-        done: async res => { await account.signedIn(res.user); announce(`Connecté en tant que ${res.user.displayName}`); showAccount(); }
-      });
-      root.append(form);
-      if (notice) setMessage(message, notice);
-      if (!registrationsClosed) {
-        const other = document.createElement('p');
-        other.className = 'account-switch';
-        other.append('Pas encore de compte ? ', button('Créer un compte', showRegister));
-        root.append(other);
-      }
-      const help = document.createElement('p');
-      help.className = 'field-hint';
-      help.textContent = 'Le compte est facultatif : sans compte, vos tableaux restent sur cet appareil.';
-      root.append(help);
-      if (notice) { announce(notice); return message; }
-      return email.input;
-    });
-  }
-
-  function showRegister() {
-    show('Créer un compte', root => {
-      const name = makeField({ name: 'displayName', label: 'Nom affiché', autocomplete: 'name' });
-      const email = makeField({ name: 'email', label: 'Adresse e-mail', type: 'email', autocomplete: 'email' });
-      const password = makeField({ name: 'password', label: 'Mot de passe', type: 'password', autocomplete: 'new-password', hint: `De ${PASSWORD_MIN} à ${PASSWORD_MAX} caractères, sans autre règle. Le collage et les gestionnaires de mots de passe sont permis.` });
-      const { form, actions } = makeForm({
-        fields: [name, email, password], submitLabel: 'Créer mon compte', busyMessage: 'Création du compte en cours…',
-        validate: v => clean({ displayName: checkName(v.displayName), email: checkEmail(v.email), password: checkNewPassword(v.password) }),
-        send: async v => {
-          try {
-            return await api.register({ email: v.email.trim(), password: v.password, displayName: v.displayName.trim() });
-          } catch (err) {
-            if (err.code !== 'registrations_closed') throw err;
-            registrationsClosed = true;
-            showLogin(err.message);
-            return null;
-          }
-        },
-        done: async res => {
-          if (!res) return;
-          await account.signedIn(res.user);
-          announce('Compte créé. Vous êtes connecté.');
-          showAccount();
-        }
-      });
-      form.insertBefore(privacyHint({ age: true }), actions);
-      const other = document.createElement('p');
-      other.className = 'account-switch';
-      other.append('Déjà un compte ? ', button('Se connecter', () => showLogin()));
-      root.append(form, other);
-      return name.input;
-    });
-  }
 
   /* ---- Connecté ---- */
 
@@ -316,13 +93,18 @@ export function openAccountDialog({ onClose } = {}) {
         } catch (err) {
           if (err.name !== 'ApiError') throw err;
           setMessage(dataMessage, err.message);
-          announce(err.message);
         }
       });
       const dataHint = document.createElement('p');
       dataHint.className = 'field-hint';
       dataHint.textContent = 'Un fichier JSON avec votre compte et les tableaux dont vous êtes propriétaire.';
       section(root, 'Mes données', dataHint, privacyHint(), dataMessage, exportBtn);
+
+      const importHint = document.createElement('p');
+      importHint.className = 'field-hint';
+      importHint.textContent = 'Les tableaux créés sur cet appareil avant les comptes peuvent rejoindre votre compte.';
+      const importBtn = button('Importer vos tableaux de cet appareil…', () => openImportDialog());
+      section(root, 'Tableaux de cet appareil', importHint, importBtn);
 
       const leaveMessage = formMessage();
       const logoutBtn = button('Se déconnecter', () => startLogout(leaveMessage));
@@ -337,7 +119,7 @@ export function openAccountDialog({ onClose } = {}) {
     show('Mon compte', root => {
       const p = document.createElement('p');
       p.className = 'account-message is-error';
-      p.textContent = 'Serveur injoignable : votre compte n’est pas disponible pour le moment. Les tableaux de cet appareil restent utilisables.';
+      p.textContent = 'Serveur injoignable : votre compte n’est pas disponible pour le moment. La copie de vos tableaux sur cet appareil reste utilisable.';
       announce(p.textContent);
       root.append(p, button('Réessayer', async () => {
         announce('Nouvelle tentative…');
@@ -345,7 +127,6 @@ export function openAccountDialog({ onClose } = {}) {
         await account.whenReady();
         if (account.getUser()) showAccount();
         else if (account.hasSession()) { showUnreachable(); announce('Serveur toujours injoignable'); }
-        else showLogin();
       }));
       return heading;
     });
@@ -374,7 +155,6 @@ export function openAccountDialog({ onClose } = {}) {
       if (err.status !== 401) {
         setMessage(message, err.message);
         message.focus();
-        announce(err.message);
         return;
       }
     }
@@ -391,13 +171,13 @@ export function openAccountDialog({ onClose } = {}) {
       const actions = document.createElement('div');
       actions.className = 'dialog-actions';
       actions.append(
-        button('Garder des copies locales et me déconnecter', async () => {
+        button('Les garder sur cet appareil et me déconnecter', async () => {
+          // Le serveur n'a pas pu les recevoir : elles attendent ici et vous seront proposées à l'import à votre retour.
           const remote = boards.remoteStore();
           for (const e of waiting) {
-            if (!(await remote.keepLocalCopy(e.id))) {
-              setMessage(message, 'Stockage plein : les copies locales n’ont pas pu être créées. Vous restez connecté.');
+            if (!remote.keepOnDevice(e.id)) {
+              setMessage(message, 'Stockage plein : ces modifications n’ont pas pu être gardées. Vous restez connecté.');
               message.focus();
-              announce(message.textContent);
               return;
             }
           }
@@ -423,7 +203,7 @@ export function openAccountDialog({ onClose } = {}) {
       if (err.name !== 'ApiError') throw err;
       failure = err.message;
     }
-    if (!el.open || !account.hasSession()) return; // Session expirée entre-temps : la connexion a pris la place.
+    if (!el.open || !account.hasSession()) return; // Session expirée entre-temps : l'écran de connexion a pris la place.
     show('Supprimer le compte', root => {
       if (failure) {
         // L'avertissement est obligatoire : sans la liste des tableaux, pas de suppression possible.
@@ -441,7 +221,7 @@ export function openAccountDialog({ onClose } = {}) {
       const shared = owned.filter(b => b.memberCount > 1);
       const warning = document.createElement('div');
       warning.className = 'account-warning';
-      warning.id = `account-warning-${++nextField}`;
+      warning.id = `account-warning-${++nextWarning}`;
       const intro = document.createElement('p');
       intro.textContent = `Cette suppression est définitive. Votre compte et ${owned.length === 0 ? 'vos données seront effacés' : owned.length === 1 ? 'votre tableau enregistré sur le compte seront effacés' : `vos ${owned.length} tableaux enregistrés sur le compte seront effacés`}. Les tableaux restés sur cet appareil ne sont pas touchés.`;
       warning.append(intro);
@@ -476,22 +256,16 @@ export function openAccountDialog({ onClose } = {}) {
 
   /* ---- Choix de la vue ---- */
 
-  if (!account.hasSession()) {
-    showLogin();
-  } else {
-    show('Mon compte', root => {
-      const p = document.createElement('p');
-      p.setAttribute('role', 'status');
-      p.textContent = 'Chargement du compte…';
-      root.append(p);
-      return heading;
-    });
-    account.whenReady().then(() => {
-      if (!el.open) return;
-      if (!account.hasSession()) showLogin();
-      else showAccount();
-    });
-  }
+  show('Mon compte', root => {
+    const p = document.createElement('p');
+    p.setAttribute('role', 'status');
+    p.textContent = 'Chargement du compte…';
+    root.append(p);
+    return heading;
+  });
+  account.whenReady().then(() => {
+    if (el.open) showAccount();
+  });
   return el;
 }
 
