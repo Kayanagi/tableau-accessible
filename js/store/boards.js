@@ -6,17 +6,66 @@ const CURRENT_VERSION = 4;
 
 let data = { version: CURRENT_VERSION, tableaux: [], espaces: [] };
 const listeners = new Set();
+const saveListeners = new Set();
+let saveFailed = false;
+// Tableaux du compte : fourni par store/remote-boards.js, chargé seulement s'il y a un compte.
+let remote = null;
 
 function generateId() {
   return 'board-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 }
 
+function write() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+}
+
+function reportSave(error) {
+  const failed = !!error;
+  if (failed === saveFailed) return;
+  saveFailed = failed;
+  for (const fn of saveListeners) {
+    try { fn(error); } catch (e) { console.error(e); }
+  }
+}
+
+/* Rend compte de son résultat. Les tableaux locaux passent avant le miroir, qui cède sa place si besoin. */
 function save() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    write();
   } catch (e) {
-    console.warn('Sauvegarde impossible :', e);
+    let retried = false;
+    try { retried = !!remote?.release(); if (retried) write(); }
+    catch (again) { retried = false; e = again; }
+    if (!retried) {
+      console.warn('Sauvegarde impossible :', e);
+      reportSave(e);
+      return false;
+    }
   }
+  reportSave(null);
+  return true;
+}
+
+export function isSaveFailing() {
+  return saveFailed;
+}
+
+/* Appelé à chaque changement d'état : avec l'erreur à l'échec, avec null au rétablissement. */
+export function onSaveFailure(fn) {
+  saveListeners.add(fn);
+  return () => saveListeners.delete(fn);
+}
+
+export function attachRemote(source) {
+  remote = source;
+}
+
+export function detachRemote() {
+  remote = null;
+}
+
+export function remoteStore() {
+  return remote;
 }
 
 function notify() {
@@ -66,11 +115,15 @@ export function subscribe(fn) {
 }
 
 export function getAll() {
-  return data.tableaux;
+  return remote ? [...data.tableaux, ...remote.list()] : data.tableaux;
+}
+
+export function getLocal(id) {
+  return data.tableaux.find(b => b.id === id) || null;
 }
 
 export function get(id) {
-  return data.tableaux.find(b => b.id === id) || null;
+  return getLocal(id) || remote?.get(id) || null;
 }
 
 export function create(nom, données) {
@@ -94,7 +147,7 @@ export function create(nom, données) {
 
 export function saveData(id, snapshot) {
   const board = data.tableaux.find(b => b.id === id);
-  if (!board) return;
+  if (!board) { remote?.edit(id, snapshot); return; }
   board.données = snapshot;
   board.dernièreOuverture = new Date().toISOString();
   save();
@@ -117,8 +170,8 @@ export function rename(id, nom) {
 }
 
 export function duplicate(id) {
-  const original = data.tableaux.find(b => b.id === id);
-  if (!original) return null;
+  const original = get(id);
+  if (!original?.données) return null;
   const now = new Date().toISOString();
   const copy = {
     id: generateId(),
@@ -139,7 +192,7 @@ export function duplicate(id) {
 
 export function toggleFavori(id) {
   const board = data.tableaux.find(b => b.id === id);
-  if (!board) return false;
+  if (!board) return remote?.toggleFavori(id) ?? false;
   board.favori = !board.favori;
   save();
   notify();
@@ -147,19 +200,19 @@ export function toggleFavori(id) {
 }
 
 export function getFavoris() {
-  return data.tableaux.filter(b => b.favori);
+  return getAll().filter(b => b.favori);
 }
 
 export function touchOpened(id) {
   const board = data.tableaux.find(b => b.id === id);
-  if (!board) return;
+  if (!board) { remote?.touch(id); return; }
   board.dernièreOuverture = new Date().toISOString();
   save();
 }
 
 export { BOARD_ICONS };
 export function setIcon(id, icon) {
-  const board = get(id);
+  const board = getLocal(id);
   if (!board || !BOARD_ICONS.some(([id]) => id === icon)) return;
   board.icon = icon;
   save(); notify();
@@ -176,11 +229,13 @@ export function renameSpace(id, nom) {
 export function removeSpace(id) {
   data.espaces = data.espaces.filter(s => s.id !== id);
   for (const b of data.tableaux) if (b.espaceId === id) b.espaceId = null;
+  remote?.clearSpace(id);
   save(); notify();
 }
 export function moveToSpace(id, espaceId) {
   const b = get(id);
   if (b && (!espaceId || data.espaces.some(s => s.id === espaceId))) {
+    if (b.distant) { remote.setSpace(id, espaceId || null); notify(); return; }
     b.espaceId = espaceId || null; save(); notify();
   }
 }
