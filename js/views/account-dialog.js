@@ -154,6 +154,20 @@ function button(label, run, className) {
   return b;
 }
 
+function privacyHint({ age = false } = {}) {
+  const hint = document.createElement('p');
+  hint.className = 'field-hint';
+  if (age) hint.append('Réservé aux personnes de 15 ans et plus. Consultez la page ');
+  else hint.append('Consultez la page ');
+  const link = document.createElement('a');
+  link.href = 'confidentialite.html';
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = 'Confidentialité (nouvel onglet)';
+  hint.append(link, ' pour savoir quelles données Baro conserve.');
+  return hint;
+}
+
 export function openAccountDialog({ onClose } = {}) {
   let body;
   const el = dialog('Mon compte', d => {
@@ -215,7 +229,7 @@ export function openAccountDialog({ onClose } = {}) {
       const name = makeField({ name: 'displayName', label: 'Nom affiché', autocomplete: 'name' });
       const email = makeField({ name: 'email', label: 'Adresse e-mail', type: 'email', autocomplete: 'email' });
       const password = makeField({ name: 'password', label: 'Mot de passe', type: 'password', autocomplete: 'new-password', hint: `De ${PASSWORD_MIN} à ${PASSWORD_MAX} caractères, sans autre règle. Le collage et les gestionnaires de mots de passe sont permis.` });
-      const { form } = makeForm({
+      const { form, actions } = makeForm({
         fields: [name, email, password], submitLabel: 'Créer mon compte', busyMessage: 'Création du compte en cours…',
         validate: v => clean({ displayName: checkName(v.displayName), email: checkEmail(v.email), password: checkNewPassword(v.password) }),
         send: async v => {
@@ -235,6 +249,7 @@ export function openAccountDialog({ onClose } = {}) {
           showAccount();
         }
       });
+      form.insertBefore(privacyHint({ age: true }), actions);
       const other = document.createElement('p');
       other.className = 'account-switch';
       other.append('Déjà un compte ? ', button('Se connecter', () => showLogin()));
@@ -307,7 +322,7 @@ export function openAccountDialog({ onClose } = {}) {
       const dataHint = document.createElement('p');
       dataHint.className = 'field-hint';
       dataHint.textContent = 'Un fichier JSON avec votre compte et les tableaux dont vous êtes propriétaire.';
-      section(root, 'Mes données', dataHint, dataMessage, exportBtn);
+      section(root, 'Mes données', dataHint, privacyHint(), dataMessage, exportBtn);
 
       const leaveMessage = formMessage();
       const logoutBtn = button('Se déconnecter', () => startLogout(leaveMessage));

@@ -221,6 +221,14 @@ export function render(route) {
   updateBoardsList(boardsSection, route);
   main.appendChild(boardsSection);
   container.appendChild(main);
+
+  const footer = document.createElement('footer');
+  footer.className = 'dashboard-footer';
+  const privacy = document.createElement('a');
+  privacy.href = 'confidentialite.html';
+  privacy.textContent = 'Confidentialité';
+  footer.append(privacy);
+  container.appendChild(footer);
 }
 
 const accountLabel = () => (account.hasSession() ? 'Mon compte' : 'Se connecter');

@@ -793,6 +793,21 @@ dialog ul {
   font-weight: bold;
   border-bottom-color: var(--primary);
 }
+.field-hint a { color: var(--link); }
+.dashboard-footer {
+  grid-column: 1 / -1;
+  padding: .5rem 1rem;
+  border-top: 1px solid var(--border);
+  font-size: .85rem;
+}
+.dashboard-footer a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  max-width: 100%;
+  color: var(--link);
+  overflow-wrap: anywhere;
+}
 .templates-section { padding: 1rem; }
 .templates-section h2 { font-size: 1.1rem; margin-bottom: 0.75rem; }
 .templates-list {

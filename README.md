@@ -1,15 +1,16 @@
 # Tableau blanc accessible
 
-Application statique de tableau blanc, accessible (WCAG 2.2 AA), multi-tableaux. Sans dépendance externe, sans CDN, sans build.
+Application de tableau blanc accessible (WCAG 2.2 AA) et multi-tableaux. L’interface reste sans build et sans CDN ; un serveur Node.js facultatif gère les comptes et l’enregistrement distant.
 
 ## Fonctionnalités
 
 - **Dashboard** : page d'accueil avec navigation (Accueil, Favoris, Parcourir), modèles de création, liste/grille des tableaux, recherche, tri, actions (ouvrir, renommer, dupliquer, favori, supprimer avec confirmation).
-- **Multi-tableaux** : chaque tableau a son propre espace dans le localStorage. Migration automatique depuis l'ancien format mono-tableau.
+- **Multi-tableaux** : les tableaux peuvent rester sur l’appareil ou être enregistrés sur un compte. Migration automatique depuis l'ancien format mono-tableau.
 - **Modèles** : boutique de 56 modèles intégrés, cas d’usage, sous-filtres, tri, recherche, aperçu SVG généré localement ; modèles personnels enregistrés sur cet appareil et supprimables.
 - **Trois vues synchronisées** par tableau : Canevas (SVG interactif), Plan (arborescence), Tableau (table triable).
 - **Import/export** : JSON (depuis le dashboard ou le tableau), menu Exporter dans le tableau : JSON, Markdown, CSV des éléments, SVG et PNG du canevas entier (échelle 2). Les couleurs calculées du thème sont intégrées au SVG.
 - **Accessibilité** : landmarks, lien d'évitement, annonces aria-live, focus visible, cibles ≥ 24 px, contraste AA, thème clair/sombre/contraste élevé, `prefers-reduced-motion`, responsive ≥ 320 px.
+- **Comptes** : inscription, connexion, modification du nom et du mot de passe, export des données et suppression du compte. Sans compte, l’application reste entièrement locale et n’émet aucune requête vers le serveur.
 
 Les raccourcis de création et d’organisation s’appliquent au Canevas, hors champs et dialogues. Les flèches permettent de parcourir les boutons des barres d’outils avec un seul arrêt de tabulation par barre.
 
@@ -30,6 +31,12 @@ Modèles intégrés : Vierge, Organigramme / flux, Rétrospective 4 L, Feuille d
 Catégories : Réunions et ateliers, Idéation et brainstorming, Recherche et design, Agile, Stratégie et planification, Diagrammes et cartographie, Mes modèles. Les cinq identifiants historiques restent compatibles. Les données supplémentaires sont dans `js/store/template-library.js`.
 
 Le stockage `tableau-accessible-boards` est en version 4 : collection `espaces` (id, nom), champs facultatifs `espaceId` (null) et `icon` (`board`) par tableau. Les six anciennes valeurs emoji sont migrées automatiquement ; les tableaux et réglages antérieurs sont conservés. Les modèles personnels utilisent `tableau-accessible-templates`.
+
+### Comptes et enregistrement (1.9.0)
+
+Les tableaux du compte portent le badge « Sur mon compte » et les tableaux locaux le badge « Sur cet appareil ». « Enregistrer sur mon compte » envoie un tableau local ; « Garder une copie locale » permet d’en conserver aussi une copie indépendante sur l’appareil.
+
+Les modifications d’un tableau du compte sont enregistrées automatiquement après un court délai. Une copie hors ligne est conservée sur l’appareil. Si le serveur contient entre-temps une autre version, Baro n’écrase rien et crée une copie locale suffixée « (conflit du JJ/MM) ». L’import JSON est désactivé dans un tableau du compte.
 
 ### Manipulation directe (1.3.0)
 
@@ -64,6 +71,25 @@ python3 -m http.server 8080
 
 Puis ouvrir `http://localhost:8080`.
 
+## Serveur
+
+Le serveur facultatif se trouve dans `server/`. Il utilise Node.js 22 et SQLite, écoute sur `127.0.0.1:3006`, et sa configuration PM2 porte le nom `baro-server`. En production, la base est stockée dans `/var/lib/baro/baro.db`. Le timer systemd fourni lance chaque jour une sauvegarde SQLite cohérente.
+
+Variables d’environnement lues par `server/src/config.js` :
+
+| Variable | Rôle |
+|----------|------|
+| `NODE_ENV` | Active les garde-fous de production avec la valeur `production`. |
+| `PORT` | Port d’écoute, `3006` par défaut. |
+| `BARO_DB` | Chemin de la base SQLite, `/var/lib/baro/baro.db` par défaut. |
+| `BARO_ORIGIN` | Origine autorisée, `https://baro.dwes.fr` par défaut. |
+| `BARO_INSCRIPTIONS` | `ouvert` autorise les inscriptions ; `ferme` les désactive. |
+| `BARO_INSECURE_COOKIE` | `1` autorise le cookie HTTP pour les tests locaux ; refusé en production. |
+| `BARO_SCRYPT_N` | Coût de dérivation des mots de passe ; ne peut pas être abaissé en production. |
+| `BARO_ACCOUNT_BOARD_QUOTA_BYTES` | Quota total de tableaux par compte, 100 Mio par défaut. |
+
+Il n’existe pas encore de formulaire public « mot de passe oublié ». Un administrateur peut utiliser `server/scripts/reset-password.mjs` ; le nouveau mot de passe est lu sans écho et toutes les sessions du compte sont fermées.
+
 ## Routes (hash)
 
 | Route | Vue |
@@ -72,6 +98,7 @@ Puis ouvrir `http://localhost:8080`.
 | `#/favoris` | Tableaux favoris |
 | `#/parcourir` | Tous les tableaux |
 | `#/espace/<id>` | Tableaux d’un espace local |
+| `#/compte` | Compte, connexion ou inscription |
 | `#/tableau/<id>` | Tableau individuel |
 
 ## Raccourcis clavier (vue tableau)
@@ -127,7 +154,7 @@ Puis ouvrir `http://localhost:8080`.
 
 ## Modèle de données
 
-### Multi-tableaux (localStorage `tableau-accessible-boards`)
+### Multi-tableaux locaux (localStorage `tableau-accessible-boards`)
 
 ```json
 {
@@ -183,22 +210,23 @@ Mise en forme (hors liens) : `fontSize` (`"auto"` ou nombre de pixels), `bold`, 
 
 ## Limites
 
-- Pas de collaboration en temps réel (l'état JSON est conçu pour être sérialisable).
+- Pas de synchronisation en temps réel ni de partage dans cette version : ces fonctions sont prévues respectivement pour les versions 1.10.0 et 1.11.0.
+- Pas de procédure publique de mot de passe oublié ; la réinitialisation passe par le script d’administration.
+- Pas d’historique des versions côté serveur.
 - Pas de mise en forme riche du texte (italique, souligné).
 - Le dessin à main levée se fait au pointeur uniquement (les tracés existants restent manipulables au clavier).
 - Pas d’insertion de forme sur une ligne ni de sauts de ligne aux croisements.
-- Communauté : publication prévue avec le serveur, seuls les modèles locaux partageables sont listés.
-- Stockage local uniquement (localStorage).
+- Communauté : publication prévue avec le partage, seuls les modèles locaux partageables sont listés.
 
 ## Tests
 
-Les tests E2E utilisent Playwright (Chromium headless).
+Les tests serveur utilisent le lanceur de tests de Node.js. Les tests E2E utilisent Playwright (Chromium headless) ; `tests/e2e-compte.mjs` requiert aussi `axe-core`.
 
 ```bash
-cd tests
-npm install playwright
-npx playwright install chromium
-node e2e.mjs   # sert le dossier parent du script sur le port 8765 (PORT=… pour en changer)
+(cd tests && npm install playwright axe-core && npx playwright install chromium)
+(cd server && npm install && npm test)
+node tests/e2e.mjs
+node tests/e2e-compte.mjs
 ```
 
 ### Présentation et navigation (1.6.0)

@@ -101,6 +101,36 @@ const noOverflow = page => page.evaluate(() => {
 
 try {
   if (!ONLY) {
+  // === Liens vers la page de confidentialité ===
+  {
+    console.log('--- Confidentialité ---');
+    const { context, page } = await newPage();
+    await page.goto(BASE);
+    await page.waitForSelector('.dashboard-footer');
+    const dashboardLink = page.locator('.dashboard-footer').getByRole('link', { name: 'Confidentialité', exact: true });
+    log('Confidentialité : lien présent sur le tableau de bord sans compte', await dashboardLink.getAttribute('href') === 'confidentialite.html');
+
+    await page.click('#btn-account');
+    await page.getByRole('button', { name: 'Créer un compte' }).click();
+    const registerLink = page.locator('.account-dialog').getByRole('link', { name: 'Confidentialité (nouvel onglet)', exact: true });
+    log('Confidentialité : lien présent à la création du compte',
+      await registerLink.getAttribute('href') === 'confidentialite.html'
+      && await registerLink.getAttribute('target') === '_blank'
+      && await registerLink.getAttribute('rel') === 'noopener');
+
+    await page.getByLabel('Nom affiché').fill('Claire');
+    await page.getByLabel('Adresse e-mail').fill(`u${++userCounter}@exemple.test`);
+    await page.getByLabel('Mot de passe').fill(PASSWORD);
+    await page.getByRole('button', { name: 'Créer mon compte' }).click();
+    await page.getByRole('heading', { name: 'Mon compte' }).waitFor();
+    const accountLink = page.locator('.account-section', { hasText: 'Mes données' }).getByRole('link', { name: 'Confidentialité (nouvel onglet)', exact: true });
+    log('Confidentialité : lien présent près de l’export', await accountLink.getAttribute('href') === 'confidentialite.html');
+
+    const privacyPage = await page.request.get(`${BASE}/confidentialite.html`);
+    log('Confidentialité : page servie avec le contact RGPD', privacyPage.status() === 200 && (await privacyPage.text()).includes('rgpd@dwes.fr'));
+    await context.close();
+  }
+
   // === Cas 1 : le mode local ne change pas ===
   {
     console.log('--- Cas 1 : mode local ---');

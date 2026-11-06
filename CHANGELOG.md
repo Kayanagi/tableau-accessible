@@ -2,6 +2,26 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.9.0] - 2026-11-06
+
+### Ajouté
+- Un compte peut maintenant être créé puis utilisé pour se connecter. Depuis l’espace Compte, chacun peut modifier son nom et son mot de passe, exporter ses données ou supprimer définitivement son compte.
+- Les tableaux enregistrés sur le compte apparaissent avec le badge « Sur mon compte » ; les tableaux locaux conservent le badge « Sur cet appareil ». Un tableau local peut être envoyé avec « Enregistrer sur mon compte », avec l’option « Garder une copie locale ».
+- Un tableau du compte est enregistré automatiquement après chaque modification et une copie hors ligne reste disponible sur l’appareil. En cas de modifications concurrentes, Baro crée une copie nommée « (conflit du JJ/MM) » : aucune version n’est écrasée.
+- Une page « Confidentialité » explique quelles données Baro conserve, pourquoi et combien de temps. Elle est accessible depuis le tableau de bord, le formulaire d’inscription et « Mon compte ».
+- Un compte sans connexion depuis 24 mois est supprimé, après un e-mail d’avertissement envoyé 30 jours avant. Se connecter suffit pour le garder.
+
+### Modifié
+- L’import JSON est refusé lorsqu’un tableau du compte est ouvert, afin de ne pas remplacer son contenu par inadvertance.
+- Sans compte, Baro fonctionne exactement comme auparavant : les tableaux restent sur l’appareil et aucune requête n’est envoyée au serveur.
+
+### Sécurité
+- Les limites de débit sont appliquées par préfixe réseau IPv6 /64, les tailles de corps sont limitées selon chaque route, et chaque compte est limité à 100 Mio et 100 tableaux.
+
+### Accessibilité
+- Le lien « Ouvrir » respecte le contraste requis, les lignes des tableaux ont un contraste accru et ce lien n’est plus annoncé comme un bouton.
+- Le passage hors ligne est annoncé et le focus revient à un emplacement utile lorsqu’un message est fermé.
+
 ## [1.8.2] - 2026-11-06
 
 ### Corrigé
