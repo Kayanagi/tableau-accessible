@@ -11,6 +11,7 @@ function parseRoute(path) {
   if (boardMatch) return { view: 'tableau', boardId: boardMatch[1] };
   if (path === '/favoris') return { view: 'favoris', boardId: null };
   if (path === '/parcourir') return { view: 'parcourir', boardId: null };
+  if (path === '/compte') return { view: 'compte', boardId: null };
   return { view: 'accueil', boardId: null };
 }
 
