@@ -1087,7 +1087,7 @@ try {
   for (const [name, run] of Object.entries(REG)) {
     if (ONLY_LIST && !ONLY_LIST.includes(name)) continue;
     console.log(`--- ${name} ---`);
-    try { await run(); } catch (err) { log(`${name} : exception`, false, err.message.split('\n').slice(0, 3).join(' ')); }
+    try { await run(); } catch (err) { log(`${name} : exception`, false, err.message.split('\n').slice(0, 3).join(' ')); app.setBodyLimit(); await app.startBackend(); }
   }
 } catch (err) {
   log('Exception', false, err.stack || err.message);
