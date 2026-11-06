@@ -1513,6 +1513,8 @@ dialog { margin: auto; }
 
 /* === Compte et tableaux enregistrés === */
 #app-notices:empty { display: none; }
+/* Au-dessus des barres flottantes du tableau, qui sont fixes : un message ne doit jamais passer dessous. */
+#app-notices { position: relative; z-index: 10; }
 .notice {
   display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem;
   padding: .5rem 1rem; background: var(--surface); color: var(--fg);
@@ -1524,6 +1526,11 @@ dialog { margin: auto; }
 /* Le tableau occupe tout l'écran : le message réduit sa hauteur au lieu de le recouvrir. */
 body:has(#app-board:not([hidden])):has(.notice) { height: 100vh; height: 100dvh; }
 body:has(.notice) #app-board:not([hidden]) { height: auto; flex: 1 1 0; min-height: 0; }
+/* Fenêtre basse (zoom, paysage) : les messages défilent dans leur zone pour laisser les barres du tableau visibles, et le tableau garde sa hauteur. */
+@media (max-height: 500px) {
+  body:has(#app-board:not([hidden])) #app-notices { flex: none; max-height: 40vh; max-height: 40dvh; overflow-y: auto; }
+  body:has(.notice) #app-board:not([hidden]) { flex: none; height: 100vh; height: 100dvh; }
+}
 
 .board-badge {
   display: inline-block; margin-left: .5rem; padding: 0 .4rem; border: 1px solid var(--border); border-radius: 999px;
@@ -1532,6 +1539,8 @@ body:has(.notice) #app-board:not([hidden]) { height: auto; flex: 1 1 0; min-heig
 .board-badge-account { border: 2px solid var(--primary); font-weight: 600; }
 .board-card-link .board-badge { margin-left: 0; align-self: flex-start; }
 .btn-account-action { white-space: normal; }
+/* L'action du compte ne tient pas sur une ligne de carte : sans retour à la ligne, les libellés étaient coupés. */
+.board-card-actions { flex-wrap: wrap; }
 [aria-disabled="true"] { opacity: .7; cursor: progress; }
 
 .board-problem { grid-column: 1 / -1; max-width: 40rem; margin: 2rem auto; padding: 1rem; }
@@ -1549,6 +1558,7 @@ body:has(.notice) #app-board:not([hidden]) { height: auto; flex: 1 1 0; min-heig
 }
 .account-field input[aria-invalid="true"] { border: 2px solid var(--danger); }
 .field-hint { margin: .25rem 0 0; font-size: .85rem; color: var(--fg); }
+.account-form > .field-hint { margin: 0 0 .5rem; }
 .field-error, .account-message {
   margin: .25rem 0 0; padding-left: .5rem; border-left: 4px solid var(--danger);
   color: var(--fg); font-size: .875rem; font-weight: 600; overflow-wrap: anywhere;

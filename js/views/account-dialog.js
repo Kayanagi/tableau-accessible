@@ -31,6 +31,8 @@ function makeField({ name, label, type = 'text', autocomplete, hint, value = '' 
   input.autocomplete = autocomplete;
   input.setAttribute('autocapitalize', 'none');
   input.spellcheck = false;
+  // Le formulaire reste en noValidate : c'est l'état « obligatoire » qui est exposé, pas la bulle du navigateur.
+  input.required = true;
   wrap.append(lab, input);
   const described = [];
   if (hint) {
@@ -87,7 +89,14 @@ function makeForm({ fields, submitLabel, submitClass = 'btn-primary', busyMessag
   form.noValidate = true;
   form.className = 'account-form';
   const message = formMessage();
-  form.append(message, ...fields.map(f => f.wrap));
+  form.append(message);
+  if (fields.length > 1) {
+    const required = document.createElement('p');
+    required.className = 'field-hint';
+    required.textContent = 'Tous les champs sont obligatoires.';
+    form.append(required);
+  }
+  form.append(...fields.map(f => f.wrap));
   const actions = document.createElement('div');
   actions.className = 'dialog-actions';
   const submit = document.createElement('button');
@@ -155,13 +164,21 @@ export function openAccountDialog({ onClose } = {}) {
   });
   const heading = el.querySelector('h2');
   heading.tabIndex = -1;
-  el.addEventListener('close', () => onClose?.());
+  // Session expirée pendant que le dialogue est ouvert : les formulaires du compte ne peuvent plus aboutir.
+  const stopListening = account.onEvent(event => {
+    if (event.type === 'expired') showLogin('Votre session a expiré. Reconnectez-vous pour continuer.');
+  });
+  el.addEventListener('close', () => { stopListening?.(); onClose?.(); });
 
-  const show = (title, build, focusTarget) => {
+  let firstView = true;
+  const show = (title, build) => {
     heading.textContent = title;
     body.replaceChildren();
-    const target = build(body);
-    (focusTarget || target || heading).focus();
+    const target = build(body) || heading;
+    target.focus();
+    // Le focus arrive sur un champ : sans cette annonce, le changement de vue passe inaperçu au lecteur d'écran.
+    if (!firstView && target.tagName === 'INPUT') announce(title);
+    firstView = false;
   };
 
   /* ---- Sans session ---- */
@@ -238,7 +255,8 @@ export function openAccountDialog({ onClose } = {}) {
     return s;
   }
 
-  function showAccount() {
+  /* returnTo : le bouton qui a mené à la vue quittée par « Annuler », pour reprendre là où on en était. */
+  function showAccount(returnTo) {
     const user = account.getUser();
     if (!user) { showUnreachable(); return; }
     show('Mon compte', root => {
@@ -292,9 +310,11 @@ export function openAccountDialog({ onClose } = {}) {
       section(root, 'Mes données', dataHint, dataMessage, exportBtn);
 
       const leaveMessage = formMessage();
-      section(root, 'Session', leaveMessage, button('Se déconnecter', () => startLogout(leaveMessage)));
-      section(root, 'Supprimer le compte', button('Supprimer mon compte…', showDelete, 'btn-danger'));
-      return heading;
+      const logoutBtn = button('Se déconnecter', () => startLogout(leaveMessage));
+      const deleteBtn = button('Supprimer mon compte…', showDelete, 'btn-danger');
+      section(root, 'Session', leaveMessage, logoutBtn);
+      section(root, 'Supprimer le compte', deleteBtn);
+      return { logout: logoutBtn, delete: deleteBtn }[returnTo] || heading;
     });
   }
 
@@ -303,6 +323,7 @@ export function openAccountDialog({ onClose } = {}) {
       const p = document.createElement('p');
       p.className = 'account-message is-error';
       p.textContent = 'Serveur injoignable : votre compte n’est pas disponible pour le moment. Les tableaux de cet appareil restent utilisables.';
+      announce(p.textContent);
       root.append(p, button('Réessayer', async () => {
         announce('Nouvelle tentative…');
         account.start();
@@ -368,9 +389,11 @@ export function openAccountDialog({ onClose } = {}) {
           await logoutNow(message);
         }, 'btn-primary'),
         button('Me déconnecter sans les garder', () => logoutNow(message), 'btn-danger'),
-        button('Annuler', showAccount)
+        button('Annuler', () => showAccount('logout'))
       );
       root.append(intro, ul, message, actions);
+      // Le focus part sur le titre, puis Tab mène aux boutons : l'avertissement serait sauté.
+      announce(`${intro.textContent} ${waiting.map(e => e.nom).join(', ')}.`);
       return heading;
     });
   }
@@ -385,6 +408,7 @@ export function openAccountDialog({ onClose } = {}) {
       if (err.name !== 'ApiError') throw err;
       failure = err.message;
     }
+    if (!el.open || !account.hasSession()) return; // Session expirée entre-temps : la connexion a pris la place.
     show('Supprimer le compte', root => {
       if (failure) {
         // L'avertissement est obligatoire : sans la liste des tableaux, pas de suppression possible.
@@ -393,14 +417,16 @@ export function openAccountDialog({ onClose } = {}) {
         p.textContent = `Impossible de vérifier vos tableaux : ${failure}`;
         const actions = document.createElement('div');
         actions.className = 'dialog-actions';
-        actions.append(button('Réessayer', showDelete, 'btn-primary'), button('Annuler', showAccount));
+        actions.append(button('Réessayer', showDelete, 'btn-primary'), button('Annuler', () => showAccount('delete')));
         root.append(p, actions);
+        announce(p.textContent);
         return heading;
       }
       const owned = rows.filter(b => b.role === 'owner');
       const shared = owned.filter(b => b.memberCount > 1);
       const warning = document.createElement('div');
       warning.className = 'account-warning';
+      warning.id = `account-warning-${++nextField}`;
       const intro = document.createElement('p');
       intro.textContent = `Cette suppression est définitive. Votre compte et ${owned.length === 0 ? 'vos données seront effacés' : owned.length === 1 ? 'votre tableau enregistré sur le compte seront effacés' : `vos ${owned.length} tableaux enregistrés sur le compte seront effacés`}. Les tableaux restés sur cet appareil ne sont pas touchés.`;
       warning.append(intro);
@@ -418,13 +444,16 @@ export function openAccountDialog({ onClose } = {}) {
         warning.append(p, ul);
       }
       const password = makeField({ name: 'password', label: 'Mot de passe', type: 'password', autocomplete: 'current-password' });
+      // Tab depuis le titre mène droit au champ : l'avertissement doit y être rattaché pour ne pas être sauté.
+      password.described.push(warning.id);
+      password.input.setAttribute('aria-describedby', warning.id);
       const { form, actions } = makeForm({
         fields: [password], submitLabel: 'Supprimer définitivement mon compte', submitClass: 'btn-danger', busyMessage: 'Suppression du compte…',
         validate: v => clean({ password: v.password ? null : 'Saisissez votre mot de passe pour confirmer.' }),
         send: v => api.deleteMe({ password: v.password }),
         done: () => clearSessionAndClose('Votre compte a été supprimé.')
       });
-      actions.append(button('Annuler', showAccount));
+      actions.append(button('Annuler', () => showAccount('delete')));
       root.append(warning, form);
       return heading;
     });
