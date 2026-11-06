@@ -12,7 +12,7 @@ function invalid(code, message) {
 export function registerAuthRoutes(router, app) {
   const { db, passwords, sessions, limiter, config } = app;
   const findUser = db.prepare('SELECT * FROM users WHERE email = ?');
-  const insertUser = db.prepare('INSERT INTO users (id, email, display_name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+  const insertUser = db.prepare('INSERT INTO users (id, email, display_name, password_hash, created_at, updated_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const rehash = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash = ?');
 
   function limit(bucket, key, max, windowMs, checkOnly = false) {
@@ -41,7 +41,7 @@ export function registerAuthRoutes(router, app) {
     const id = newId('u_');
     const t = Date.now();
     try {
-      insertUser.run(id, email, displayName, hash, t, t);
+      insertUser.run(id, email, displayName, hash, t, t, t);
     } catch (err) {
       if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') throw taken();
       throw err;

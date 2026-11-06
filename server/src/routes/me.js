@@ -1,5 +1,6 @@
 import { setImmediate as yieldToLoop } from 'node:timers/promises';
 import { ACCOUNT_BODY, HttpError, tooMany } from '../http.js';
+import { createAccountRemoval } from '../accounts.js';
 import { publicUser } from '../auth.js';
 import { isValidPassword, normalizeDisplayName, normalizePassword } from '../validate.js';
 import { readBoard } from './boards.js';
@@ -13,8 +14,7 @@ export function registerMeRoutes(router, app) {
   const setHash = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?');
   const ownedBoards = db.prepare("SELECT board_id AS id FROM board_members WHERE user_id = ? AND role = 'owner'");
   const otherMemberships = db.prepare("SELECT board_id AS boardId, role FROM board_members WHERE user_id = ? AND role <> 'owner'");
-  const deleteBoard = db.prepare('DELETE FROM boards WHERE id = ?');
-  const deleteUser = db.prepare('DELETE FROM users WHERE id = ?');
+  const removeAccount = createAccountRemoval(db);
 
   async function write(res, chunk) {
     if (res.write(chunk)) return;
@@ -66,10 +66,7 @@ export function registerMeRoutes(router, app) {
 
   router.add('DELETE', '/api/me', async ctx => {
     await requirePassword(ctx, ctx.body.password);
-    db.transaction(() => {
-      for (const { id } of ownedBoards.all(ctx.session.userId)) deleteBoard.run(id);
-      deleteUser.run(ctx.session.userId);
-    })();
+    removeAccount(ctx.session.userId);
     return { status: 204, headers: { 'Set-Cookie': sessions.clearCookie() } };
   }, { auth: 'account', bodyLimit: ACCOUNT_BODY });
 

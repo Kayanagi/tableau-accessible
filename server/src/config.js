@@ -1,3 +1,5 @@
+import { safeAddress } from './mail.js';
+
 /* Configuration lue dans l'environnement. Toute valeur incohérente arrête le démarrage. */
 export const PROD_SCRYPT_N = 2 ** 16;
 const COOKIE_NAME = '__Host-baro_sid';
@@ -38,6 +40,11 @@ export function loadConfig(env = process.env) {
   const inscriptions = env.BARO_INSCRIPTIONS ?? 'ouvert';
   if (!['ouvert', 'ferme'].includes(inscriptions)) throw new Error(`BARO_INSCRIPTIONS doit valoir « ouvert » ou « ferme » : ${inscriptions}`);
 
+  const inactivity = env.BARO_INACTIVITY ?? (production ? 'actif' : 'inactif');
+  if (!['actif', 'inactif'].includes(inactivity)) throw new Error('BARO_INACTIVITY doit valoir « actif » ou « inactif »');
+  const mailFrom = safeAddress(env.BARO_MAIL_FROM ?? 'contact@dwes.fr');
+  if (!mailFrom) throw new Error('BARO_MAIL_FROM doit être une adresse e-mail simple');
+
   const insecureCookie = env.BARO_INSECURE_COOKIE === '1';
   if (env.BARO_INSECURE_COOKIE !== undefined && env.BARO_INSECURE_COOKIE !== '1' && env.BARO_INSECURE_COOKIE !== '0') {
     throw new Error('BARO_INSECURE_COOKIE doit valoir 0 ou 1');
@@ -54,6 +61,8 @@ export function loadConfig(env = process.env) {
     dbPath: env.BARO_DB ?? '/var/lib/baro/baro.db',
     origin,
     inscriptionsOpen: inscriptions === 'ouvert',
+    inactivityEnabled: inactivity === 'actif',
+    mailFrom,
     accountBoardQuotaBytes: parsePositiveInteger('BARO_ACCOUNT_BOARD_QUOTA_BYTES', env.BARO_ACCOUNT_BOARD_QUOTA_BYTES, 100 * 1024 * 1024),
     // Le préfixe __Host- impose Secure : le mode de test local change donc aussi de nom de cookie.
     cookie: { name: insecureCookie ? INSECURE_COOKIE_NAME : COOKIE_NAME, secure: !insecureCookie },

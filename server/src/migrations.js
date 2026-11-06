@@ -77,6 +77,11 @@ export const MIGRATIONS = [
     PRIMARY KEY (board_id, rev),
     UNIQUE (board_id, client_id, client_seq)
   ) WITHOUT ROWID;
+  `,
+  `
+  ALTER TABLE users ADD COLUMN last_active_at INTEGER;
+  ALTER TABLE users ADD COLUMN inactivity_warned_at INTEGER;
+  UPDATE users SET last_active_at = MAX(created_at, COALESCE((SELECT MAX(last_seen_at) FROM sessions WHERE sessions.user_id = users.id), created_at));
   `
 ];
 

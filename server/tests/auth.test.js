@@ -139,7 +139,7 @@ describe('API d’authentification', () => {
   it('crée toutes les tables du schéma dès la première migration', () => {
     const names = s.app.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all().map(r => r.name);
     assert.deepEqual(names, ['board_items', 'board_members', 'board_ops', 'boards', 'sessions', 'share_links', 'users']);
-    assert.equal(s.app.db.pragma('user_version', { simple: true }), 1);
+    assert.equal(s.app.db.pragma('user_version', { simple: true }), 2);
     assert.equal(s.app.db.pragma('journal_mode', { simple: true }), 'wal');
     assert.equal(s.app.db.pragma('foreign_keys', { simple: true }), 1);
   });

@@ -115,15 +115,23 @@ export function createSessions(db, config) {
     remove: db.prepare('DELETE FROM sessions WHERE token_hash = ?'),
     removeUser: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
     touch: db.prepare('UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?'),
+    markActive: db.prepare('UPDATE users SET last_active_at = ?, inactivity_warned_at = NULL WHERE id = ?'),
     purge: db.prepare('DELETE FROM sessions WHERE expires_at <= ?')
   };
 
-  function create(userId) {
+  /* Toute connexion passe ici : elle compte comme activité et annule un avertissement d'inactivité. */
+  const create = db.transaction(userId => {
     const token = randomBytes(32).toString('base64url');
     const t = Date.now();
     queries.insert.run(hashToken(token), userId, t, t, t + SESSION_TTL);
+    queries.markActive.run(t, userId);
     return token;
-  }
+  });
+
+  const touchAccount = db.transaction((t, expires, hash, userId) => {
+    queries.touch.run(t, expires, hash);
+    queries.markActive.run(t, userId);
+  });
 
   function tokenOf(req) {
     const token = parseCookies(req.headers.cookie).get(cookie.name);
@@ -147,7 +155,8 @@ export function createSessions(db, config) {
     let setCookie = null;
     if (t - row.last_seen_at >= HOUR) {
       const expires = guest ? row.expires_at : t + SESSION_TTL;
-      queries.touch.run(t, expires, hash);
+      if (guest) queries.touch.run(t, expires, hash);
+      else touchAccount(t, expires, hash, row.user_id);
       if (!guest) setCookie = sessionCookie(cookie, token, SESSION_TTL / 1000);
     }
     const session = guest

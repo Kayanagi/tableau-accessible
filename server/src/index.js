@@ -6,6 +6,8 @@ import { openDb } from './db.js';
 import { HttpError, Router, createHandler, tooMany } from './http.js';
 import { createPasswords, createSessions } from './auth.js';
 import { createRateLimiter } from './rate-limit.js';
+import { createInactivity } from './inactivity.js';
+import { createSendmail } from './mail.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerBoardRoutes } from './routes/boards.js';
@@ -82,18 +84,28 @@ export function createApp(config) {
   return app;
 }
 
+/* Hors de createApp : les tests du serveur HTTP ne peuvent pas démarrer ce passage par accident. */
+export function startInactivity(app, send, options = {}) {
+  const inactivity = createInactivity({ db: app.db, send, ...options });
+  inactivity.start();
+  return inactivity;
+}
+
 async function main() {
   const config = loadConfig();
   const app = createApp(config);
   const port = await app.listen(config.port);
   console.log(`[baro] à l'écoute sur ${HOST}:${port}, origine ${config.origin}`);
   if (!config.cookie.secure) console.warn('[baro] cookie sans Secure : usage local uniquement');
+  const inactivity = config.inactivityEnabled ? startInactivity(app, createSendmail({ from: config.mailFrom }).send) : null;
+  console.log(`[baro] suppression des comptes inactifs : ${inactivity ? 'active' : 'désactivée'}`);
   let closing = false;
   const stop = () => {
     if (closing) return;
     closing = true;
     const force = setTimeout(() => process.exit(1), 5000);
     force.unref();
+    inactivity?.stop();
     app.close().then(() => process.exit(0));
   };
   process.on('SIGINT', stop);
