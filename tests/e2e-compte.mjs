@@ -11,6 +11,7 @@ import { startAppServer } from './helpers/app-server.mjs';
 const require = createRequire(import.meta.url);
 const axeSource = require('fs').readFileSync(require.resolve('axe-core/axe.min.js'), 'utf8');
 const SHOTS = process.env.SHOTS || null;
+const ONLY = process.env.ONLY || null; // ONLY=C01,C04 : ne rejoue que ces scénarios de non-régression
 const BOARDS_KEY = 'tableau-accessible-boards';
 const MIRROR_KEY = 'tableau-accessible-distants';
 const FLAG_KEY = 'tableau-accessible-compte';
@@ -99,6 +100,7 @@ const noOverflow = page => page.evaluate(() => {
 });
 
 try {
+  if (!ONLY) {
   // === Cas 1 : le mode local ne change pas ===
   {
     console.log('--- Cas 1 : mode local ---');
@@ -619,6 +621,473 @@ try {
     await shot(page, 'inscriptions-fermees');
     await context.close();
     await closed.close();
+  }
+  }
+
+  // === Revue v1.9.0 et audit d'accessibilité : un scénario par constat ===
+  const dup = async page => { await page.locator('.canvas-item[data-id="item-1"]').first().focus(); await page.keyboard.press('Control+d'); };
+  const openBoard = async (page, id) => { await page.goto(`${BASE}/#/tableau/${id}`); await page.waitForSelector('.canvas-item[data-id="item-1"]'); };
+  const localNames = async page => JSON.parse(await stored(page, BOARDS_KEY) || '{"tableaux":[]}').tableaux.map(b => b.nom);
+  const conflictCopies = async page => (await localNames(page)).filter(n => n.includes('conflit'));
+  const notices = page => page.locator('#app-notices').textContent().catch(() => '');
+  const remoteCall = (page, fn, arg) => page.evaluate(async ([source, a]) => (0, eval)(`(${source})`)(await import('/js/store/remote-boards.js'), a), [fn.toString(), arg]);
+  const fillStorage = page => page.evaluate(() => { let i = 0; for (const n of [1048576, 1024, 1]) { const s = 'x'.repeat(n); try { for (;;) localStorage.setItem(`rempli-${i++}`, s); } catch { /* plein */ } } });
+  const elsewhere = (page, id, extra = 'ailleurs') => page.evaluate(async ([i, content]) => {
+    const s = await (await fetch(`/api/boards/${i}`)).json();
+    const { id: _, icon, rev, createdAt, updatedAt, ...d } = s.board;
+    d.items.push({ id: 'item-99', type: 'sticky_note', x: 400, y: 40, width: 150, height: 150, content, color: 'light_yellow', size: 'm' });
+    return (await fetch(`/api/boards/${i}/data`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseRev: rev, data: d }) })).status;
+  }, [id, extra]);
+  const listen = page => page.evaluate(() => {
+    window.__dit = [];
+    new MutationObserver(() => { const t = document.getElementById('announcer').textContent; if (t) window.__dit.push(t); }).observe(document.getElementById('announcer'), { childList: true, characterData: true, subtree: true });
+  });
+  const said = (page, text) => page.evaluate(t => window.__dit.filter(x => x.includes(t)).length, text);
+  async function connected(name = 'Tableau', items = [sticky('item-1', 'x')]) {
+    const parts = await newPage();
+    const email = await register(parts.page);
+    await closeDialog(parts.page);
+    const id = await seedAndUpload(parts.page, name, items);
+    return { ...parts, email, id };
+  }
+  async function logoutIn(page) {
+    await page.goto(`${BASE}/#/compte`);
+    await page.waitForSelector('.account-dialog');
+    await page.getByRole('button', { name: 'Se déconnecter' }).click();
+    await page.waitForFunction(k => localStorage.getItem(k) === null, FLAG_KEY);
+  }
+
+  /* Interroge depuis Node : waitForFunction n'attend pas fiablement un prédicat asynchrone. */
+  async function until(page, fn, arg, timeout = 15000) {
+    const end = Date.now() + timeout;
+    for (;;) {
+      if (await page.evaluate(fn, arg)) return;
+      if (Date.now() > end) throw new Error(`Délai dépassé : ${fn}`);
+      await new Promise(r => setTimeout(r, 700));
+    }
+  }
+
+  const REG = {
+    async C01() {
+      const { context, page: a, id, email } = await connected('C1');
+      const b = await context.newPage();
+      await openBoard(b, id);
+      await logoutIn(a);
+      await b.waitForFunction(() => document.getElementById('app-notices')?.textContent.includes('autre onglet'));
+      log('C1 : l’autre onglet est suspendu et prévenu', await remoteCall(b, m => m.isSuspended()));
+      await dup(b);
+      await b.waitForFunction(k => JSON.parse(localStorage.getItem(k) || 'null')?.tableaux?.some(t => t.sortants && t.données.items.length === 2), MIRROR_KEY, { timeout: 5000 });
+      log('C1 : le travail de l’onglet B est écrit dans le miroir', true);
+      await a.goto(`${BASE}/#/compte`);
+      await a.getByLabel('Adresse e-mail').fill(email);
+      await a.getByLabel('Mot de passe').fill(PASSWORD);
+      await a.locator('.account-form').getByRole('button', { name: 'Se connecter', exact: true }).click();
+      await a.getByRole('heading', { name: 'Mon compte' }).waitFor();
+      await until(a, async i => (await (await fetch(`/api/boards/${i}`)).json()).board?.items.length === 2, id, 10000);
+      log('C1 : reconnexion : le travail de B arrive sur le serveur', true);
+      await context.close();
+    },
+    async C02() {
+      const { context, page, id } = await connected('C2');
+      await openBoard(page, id);
+      await page.waitForTimeout(1300);
+      await app.stopBackend();
+      await fillStorage(page);
+      await dup(page);
+      await page.locator('[data-notice^="save-"]').waitFor({ timeout: 5000 });
+      const text = await notices(page);
+      log('C2 : message exact, pas de « reste enregistré »', text.includes('pas encore sur le serveur') && !text.includes('Il reste enregistré'), text.slice(0, 160));
+      log('C2 : sortants gardés en mémoire', await remoteCall(page, (m, i) => m.get(i).sortants && m.get(i).données.items.length === 2, id));
+      log('C2 : version durable du miroir intacte', (await mirror(page)).tableaux.find(t => t.id === id).données?.items?.length === 1);
+      const asked = new Promise(resolve => page.once('dialog', d => { resolve(d.type()); d.accept().catch(() => {}); }));
+      await page.close({ runBeforeUnload: true });
+      log('C2 : fermer l’onglet demande confirmation', await Promise.race([asked, new Promise(r => setTimeout(() => r('rien'), 3000))]) === 'beforeunload');
+      await app.startBackend();
+      await context.close();
+      // Trop gros pour le miroir et pour keepalive, serveur joignable
+      const big = await connected('C2b');
+      await big.page.goto(`${BASE}/#/`);
+      await remoteCall(big.page, (m, i) => { const e = m.get(i); m.edit(i, { ...e.données, items: Array.from({ length: 25 }, (_, n) => ({ id: `item-${n + 1}`, type: 'sticky_note', x: n, y: 0, width: 150, height: 150, content: 'z'.repeat(45000), color: 'light_yellow', size: 'm' })) }); }, big.id);
+      await big.page.keyboard.press('Tab');
+      await big.page.locator('[data-notice^="save-"]').waitFor({ timeout: 5000 });
+      const asked2 = new Promise(resolve => big.page.once('dialog', d => { resolve(d.type()); d.accept().catch(() => {}); }));
+      await big.page.close({ runBeforeUnload: true });
+      log('C2 : trop gros, envoi en attente : confirmation demandée', await Promise.race([asked2, new Promise(r => setTimeout(() => r('rien'), 3000))]) === 'beforeunload');
+      await big.context.close();
+    },
+    async C03() {
+      const { context, page, api, id } = await connected('C3');
+      await openBoard(page, id);
+      app.setBodyLimit(50);
+      await dup(page);
+      await page.locator('[data-notice^="save-"]').waitFor({ timeout: 6000 });
+      await page.waitForTimeout(7000);
+      app.setBodyLimit();
+      const puts = api.filter(a => a.startsWith('PUT')).length;
+      log('C3 : 413 HTML : un seul envoi', puts === 1, `${puts} PUT`);
+      const text = await notices(page);
+      log('C3 : 413 HTML : message juste', text.includes('trop volumineux') && !text.includes('injoignable'), text.slice(0, 160));
+      await page.goto(`${BASE}/#/`);
+      await page.waitForTimeout(100);
+      const before = api.filter(a => a.startsWith('PUT')).length;
+      await remoteCall(page, async (m, i) => { const e = m.get(i); m.edit(i, { ...e.données, items: Array.from({ length: 100 }, (_, n) => ({ id: `item-${n + 1}`, type: 'sticky_note', x: n, y: 0, width: 150, height: 150, content: 'z'.repeat(45000), color: 'light_yellow', size: 'm' })) }); await m.flush(i); }, id);
+      log('C3 : plus de 4 Mio : refus avant envoi', api.filter(a => a.startsWith('PUT')).length === before);
+      await context.close();
+    },
+    async C04() {
+      const { context, page, id } = await connected('C4');
+      await openBoard(page, id);
+      await elsewhere(page, id);
+      let release; const gate = new Promise(r => { release = r; });
+      await page.route(`**/api/boards/${id}`, async r => { if (r.request().method() === 'GET') await gate; await r.continue(); });
+      await dup(page);
+      const put = page.waitForResponse(r => r.url().endsWith('/data') && r.status() === 409, { timeout: 6000 });
+      await put;
+      await dup(page);
+      await dup(page);
+      await page.waitForTimeout(100);
+      const shown = await page.locator('.canvas-item').count();
+      release();
+      await page.locator('.notice-error', { hasText: 'modifié ailleurs' }).waitFor({ timeout: 5000 });
+      await page.unroute(`**/api/boards/${id}`);
+      const copy = JSON.parse(await stored(page, BOARDS_KEY)).tableaux.find(b => b.nom.includes('conflit'));
+      log('C4 : éditions pendant la résolution dans la copie', shown === 4 && copy?.données.items.length === 4, `écran ${shown}, copie ${copy?.données.items.length}`);
+      await page.waitForFunction(() => document.querySelectorAll('.canvas-item').length === 2);
+      log('C4 : le serveur s’affiche ensuite', true);
+      await context.close();
+      // Variante : stockage plein, copie envoyée au compte, édition pendant cet envoi
+      const v = await connected('C4b');
+      await openBoard(v.page, v.id);
+      await v.page.waitForTimeout(1300);
+      await elsewhere(v.page, v.id);
+      await fillStorage(v.page);
+      let free; const held = new Promise(r => { free = r; });
+      let first = true;
+      await v.page.route('**/api/boards', async r => { if (r.request().method() === 'POST' && first) { first = false; await held; } await r.continue(); });
+      const posted = v.page.waitForRequest(r => r.method() === 'POST' && r.url().endsWith('/api/boards'), { timeout: 8000 });
+      await dup(v.page);
+      await posted;
+      await dup(v.page);
+      await v.page.waitForTimeout(100);
+      free();
+      await v.page.locator('.notice-error', { hasText: 'modifié ailleurs' }).waitFor({ timeout: 8000 });
+      const sizes = await v.page.evaluate(async () => {
+        const { boards } = await (await fetch('/api/boards')).json();
+        const out = [];
+        for (const b of boards.filter(x => x.name.includes('conflit'))) out.push((await (await fetch(`/api/boards/${b.id}`)).json()).board.items.length);
+        return out;
+      });
+      log('C4 : édition pendant l’envoi de la copie : rien de perdu', sizes.includes(3), JSON.stringify(sizes));
+      await v.context.close();
+    },
+    async C05() {
+      const { context, page, id } = await connected('C5');
+      await openBoard(page, id);
+      await page.route('**/api/boards/*/data', r => r.abort());
+      await dup(page);
+      await page.waitForTimeout(1300);
+      await page.goto(`${BASE}/#/`);
+      await page.waitForTimeout(200);
+      await page.evaluate(() => fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' } }));
+      await fillStorage(page);
+      const email = `u${++userCounter}@exemple.test`;
+      await page.evaluate(([e, pw]) => fetch('/api/auth/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: e, password: pw, displayName: 'D' }) }), [email, PASSWORD]);
+      await page.reload();
+      await page.locator('[data-notice^="save-"]', { hasText: 'autre compte' }).waitFor({ timeout: 8000 });
+      log('C5 : copie impossible : sortants gardés', await remoteCall(page, (m, i) => m.get(i)?.sortants === true && m.get(i).données.items.length === 2, id));
+      log('C5 : l’alerte de stockage plein reste', (await notices(page)).includes('stockage de cet appareil est plein'));
+      await page.evaluate(() => { for (const k of Object.keys(localStorage)) if (k.startsWith('rempli-')) localStorage.removeItem(k); });
+      await row(page, 'C5').getByRole('button', { name: /Garder une copie locale/ }).click();
+      await page.waitForFunction(k => JSON.parse(localStorage.getItem(k)).tableaux.some(b => b.nom === 'C5' && b.données.items.length === 2), BOARDS_KEY);
+      log('C5 : place libérée : le travail est récupéré', true);
+      await context.close();
+    },
+    async C06() {
+      const connector = { id: 'item-3', type: 'connector', x: 0, y: 0, startId: 'item-1', endId: 'item-2', lineType: 'straight', startCap: 'none', endCap: 'arrow_filled', lineStyle: 'solid', strokeWidth: 2, stroke: 'auto', label: '', waypoints: [] };
+      const { context, page, id } = await connected('C6', [sticky('item-1', 'x'), sticky('item-2', 'y', 300), connector]);
+      await openBoard(page, id);
+      await dup(page);
+      await page.waitForTimeout(200);
+      await page.reload();
+      await page.waitForFunction(i => JSON.parse(localStorage.getItem('tableau-accessible-distants')).tableaux.find(t => t.id === i).sortants === false, id, { timeout: 8000 });
+      const s = await fetchBoard(page, id);
+      log('C6 : recharger après une modification : enregistrée', s.board.items.length === 4 && s.rev >= 1, `rev ${s.rev}, ${s.board.items.length} objets`);
+      log('C6 : recharger : aucune fausse copie', (await conflictCopies(page)).length === 0 && !(await notices(page)).includes('modifié ailleurs'));
+      // Déterministe : le serveur applique le PUT, le navigateur ne lit jamais la réponse
+      await page.waitForSelector('.canvas-item[data-id="item-1"]');
+      let lost = true;
+      await page.route(`**/api/boards/${id}/data`, async r => { if (lost) { lost = false; await r.fetch(); await r.abort(); } else await r.continue(); });
+      await dup(page);
+      const conflict = page.waitForResponse(r => r.url().endsWith('/data') && r.status() === 409, { timeout: 12000 });
+      await conflict;
+      await page.waitForFunction(i => JSON.parse(localStorage.getItem('tableau-accessible-distants')).tableaux.find(t => t.id === i).sortants === false, id, { timeout: 8000 });
+      log('C6 : réponse perdue puis 409 : pas de copie', (await conflictCopies(page)).length === 0);
+      log('C6 : réponse perdue : révision reprise', await remoteCall(page, (m, i) => m.get(i).rev, id) === (await fetchBoard(page, id)).rev);
+      await context.close();
+    },
+    async C07() {
+      const { context, page: a, id } = await connected('C7');
+      await a.goto(`${BASE}/#/`);
+      const b = await context.newPage();
+      await b.goto(`${BASE}/#/`);
+      await row(b, 'C7').waitFor();
+      await openBoard(a, id);
+      await a.waitForTimeout(1300);
+      await a.route(`**/api/boards/${id}/data`, r => r.abort());
+      await dup(a);
+      await a.waitForFunction(([k, i]) => JSON.parse(localStorage.getItem(k)).tableaux.find(t => t.id === i).sortants === true, [MIRROR_KEY, id]);
+      await b.waitForTimeout(200);
+      log('C7 : l’onglet passif n’adopte pas les sortants', (await remoteCall(b, m => m.pending().length)) === 0);
+      await b.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+      await b.waitForTimeout(200);
+      const m = (await mirror(a)).tableaux.find(t => t.id === id);
+      log('C7 : sa sortie ne réécrit pas une version ancienne', m.sortants === true && m.données.items.length === 2);
+      await a.unroute(`**/api/boards/${id}/data`);
+      await until(a, async i => (await (await fetch(`/api/boards/${i}`)).json()).rev === 1, id, 40000);
+      await remoteCall(b, m2 => m2.flushAll());
+      await b.waitForTimeout(400);
+      log('C7 : aucune fausse copie', (await conflictCopies(b)).length === 0, (await localNames(b)).join(','));
+      await context.close();
+    },
+    async C08() {
+      const { context, page, id } = await connected('C8');
+      await openBoard(page, id);
+      await page.evaluate(i => fetch(`/api/boards/${i}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } }), id);
+      await page.evaluate(async () => (await import('/js/store/account.js')).refreshBoards());
+      await page.locator('.notice-error', { hasText: 'plus accès' }).waitFor({ timeout: 3000 });
+      await dup(page);
+      await page.waitForTimeout(300);
+      log('C8 : tableau ouvert disparu : entrée gardée, éditions conservées', await remoteCall(page, (m, i) => m.get(i)?.perdu === true && m.get(i).données.items.length === 2, id));
+      await page.getByRole('button', { name: 'Garder une copie locale' }).click();
+      await page.waitForFunction(k => JSON.parse(localStorage.getItem(k)).tableaux.some(b => b.nom === 'C8' && b.données.items.length === 2), BOARDS_KEY);
+      log('C8 : copie locale récupérée', true);
+      await context.close();
+      // Liste en retard : ne retire pas un tableau tout juste créé
+      const v = await newPage();
+      await register(v.page);
+      await closeDialog(v.page);
+      await v.page.evaluate(([k, s]) => localStorage.setItem(k, s), [BOARDS_KEY, seedBoards('Tout juste', [])]);
+      await v.page.reload();
+      await row(v.page, 'Tout juste').waitFor();
+      let free; const gate = new Promise(r => { free = r; });
+      await v.page.route('**/api/boards', async r => { if (r.request().method() !== 'GET') return r.continue(); const resp = await r.fetch(); await gate; return r.fulfill({ response: resp }); });
+      const late = v.page.evaluate(async () => (await import('/js/store/account.js')).refreshBoards());
+      await v.page.waitForTimeout(150);
+      await row(v.page, 'Tout juste').getByRole('button', { name: /Enregistrer sur mon compte/ }).click();
+      await row(v.page, 'Tout juste').locator('.board-badge-account').waitFor();
+      free();
+      await late;
+      await v.page.waitForTimeout(100);
+      log('C8 : liste en retard : tableau créé gardé', await row(v.page, 'Tout juste').locator('.board-badge-account').count() === 1);
+      await v.context.close();
+    },
+    async C09() {
+      const { context, page: a, email } = await connected('C9-u1');
+      const b = await context.newPage();
+      await b.goto(`${BASE}/#/`);
+      await row(b, 'C9-u1').waitFor();
+      await logoutIn(a);
+      await a.waitForTimeout(300);
+      log('C9 : l’autre onglet ne réécrit pas le miroir purgé', await stored(a, MIRROR_KEY) === null);
+      const u2 = await register(a);
+      await seedAndUpload(a, 'C9-u2', [sticky('item-1', 'u2')]);
+      await a.waitForTimeout(1300);
+      await b.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+      await b.waitForTimeout(300);
+      const m = await mirror(a);
+      log('C9 : le miroir reste à U2', m.owner.email === u2 && m.owner.email !== email && !m.tableaux.some(t => t.nom === 'C9-u1'), `${m.owner.email} ; ${m.tableaux.map(t => t.nom)}`);
+      const names = await remoteCall(b, x => x.list().map(e => e.nom));
+      log('C9 : l’onglet B n’affiche plus les données de U1', !names.includes('C9-u1'), names.join(','));
+      await context.close();
+    },
+    async C10() {
+      const { context, page, id } = await connected('C10');
+      await page.goto(`${BASE}/#/`);
+      let free; const gate = new Promise(r => { free = r; });
+      let first = true;
+      await page.route(`**/api/boards/${id}`, async r => {
+        if (r.request().method() === 'GET' && first) { first = false; const resp = await r.fetch(); await gate; await r.fulfill({ response: resp }); return; }
+        await r.continue();
+      });
+      await page.goto(`${BASE}/#/tableau/${id}`);
+      await page.waitForTimeout(150);
+      await page.goto(`${BASE}/#/`);
+      await page.waitForTimeout(100);
+      await openBoard(page, id);
+      await dup(page);
+      await until(page, async i => (await (await fetch(`/api/boards/${i}`)).json()).rev === 1, id, 8000);
+      free();
+      await page.waitForTimeout(400);
+      const revAfter = await remoteCall(page, (m, i) => m.get(i).rev, id);
+      log('C10 : GET tardif : la révision ne recule pas', revAfter === 1, `rev ${revAfter}`);
+      await dup(page);
+      await until(page, async i => (await (await fetch(`/api/boards/${i}`)).json()).rev === 2, id, 8000);
+      log('C10 : pas de conflit ensuite', (await conflictCopies(page)).length === 0);
+      await page.unroute(`**/api/boards/${id}`);
+      await context.close();
+    },
+    async C11() {
+      const { context, page, id } = await connected('C11');
+      await elsewhere(page, id);
+      await page.goto(`${BASE}/#/`);
+      await page.evaluate(async () => (await import('/js/store/account.js')).refreshBoards());
+      log('C11 : liste : copie périmée vidée', await remoteCall(page, (m, i) => m.get(i).données === null && m.get(i).rev === 1, id));
+      await page.route(`**/api/boards/${id}`, r => r.abort());
+      await row(page, 'C11').getByRole('button', { name: 'Dupliquer' }).click();
+      await page.locator('.notice-error').waitFor();
+      log('C11 : serveur injoignable, copie périmée : échec annoncé, pas de copie', (await localNames(page)).length === 0);
+      await page.unroute(`**/api/boards/${id}`);
+      await row(page, 'C11').getByRole('button', { name: 'Dupliquer' }).click();
+      await page.waitForFunction(k => JSON.parse(localStorage.getItem(k)).tableaux.length === 1, BOARDS_KEY);
+      log('C11 : dupliquer lit la version du serveur', JSON.parse(await stored(page, BOARDS_KEY)).tableaux[0].données.items.length === 2);
+      // Sans que la liste ait été relue
+      await page.evaluate(i => fetch(`/api/boards/${i}`).then(r => r.json()).then(s => { const { id: _, icon, rev, createdAt, updatedAt, ...d } = s.board; d.items[0].content = 'encore'; return fetch(`/api/boards/${i}/data`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ baseRev: rev, data: d }) }); }), id);
+      await page.locator('.boards-table tbody tr', { has: page.locator('.board-badge-account') }).getByRole('button', { name: /Garder une copie locale/ }).click();
+      await page.waitForFunction(k => JSON.parse(localStorage.getItem(k)).tableaux.some(b => b.nom.includes('copie locale')), BOARDS_KEY);
+      const kept = JSON.parse(await stored(page, BOARDS_KEY)).tableaux.find(b => b.nom.includes('copie locale'));
+      log('C11 : garder une copie lit la version du serveur', kept.données.items.some(x => x.content === 'encore'));
+      await context.close();
+    },
+    async C12() {
+      const { context, page, id } = await connected('C12');
+      await openBoard(page, id);
+      await listen(page);
+      let puts = 0, broken = true;
+      const message = 'Erreur interne du serveur.';
+      await page.route(`**/api/boards/${id}/data`, r => { puts++; return broken ? r.fulfill({ status: 500, json: { code: 'internal', message } }) : r.continue(); });
+      await dup(page);
+      await page.locator('[data-notice^="save-"]', { hasText: message }).waitFor({ timeout: 6000 });
+      log('C12 : 500 JSON : message dès le premier échec', puts === 1, `${puts} PUT`);
+      await page.waitForFunction(() => performance.getEntriesByType('resource').filter(e => e.name.endsWith('/data')).length >= 2, null, { timeout: 8000 });
+      await page.waitForTimeout(300);
+      log('C12 : pas de répétition', await said(page, message) === 1 && await page.locator('[data-notice^="save-"]').count() === 1, `${await said(page, message)} annonce(s)`);
+      broken = false;
+      await page.locator('[data-notice^="save-"]').waitFor({ state: 'detached', timeout: 15000 });
+      log('C12 : message retiré après l’envoi réussi', (await fetchBoard(page, id)).rev === 1);
+      await context.close();
+    },
+    async C13() {
+      const { context, page, id: a } = await connected('C13a');
+      const b = await seedAndUpload(page, 'C13b', [sticky('item-1', 'y')]);
+      await openBoard(page, a);
+      let free; const gate = new Promise(r => { free = r; });
+      await page.route(`**/api/boards/${a}`, async r => { if (r.request().method() === 'PATCH') await gate; await r.continue(); });
+      await page.locator('#board-title').click();
+      await page.locator('#board-title-input').fill('Renommé');
+      await page.keyboard.press('Enter');
+      await openBoard(page, b);
+      free();
+      await until(page, async i => (await (await fetch(`/api/boards/${i}`)).json()).board.name === 'Renommé', a);
+      await page.waitForTimeout(200);
+      const state = await page.evaluate(async () => (await import('/js/state.js')).getBoard().name);
+      log('C13 : renommer A puis ouvrir B : B garde son nom', state === 'C13b' && (await page.locator('#board-title').textContent()).includes('C13b') && (await page.title()).startsWith('C13b'), state);
+      await context.close();
+    },
+    async C14() {
+      const { context, page, id } = await connected('C14');
+      await openBoard(page, id);
+      await page.waitForTimeout(1300);
+      await elsewhere(page, id);
+      await fillStorage(page);
+      await page.route('**/api/boards', r => (r.request().method() === 'POST' ? r.abort() : r.continue()));
+      const aborted = page.waitForEvent('requestfailed', { predicate: r => r.method() === 'POST', timeout: 8000 });
+      await dup(page);
+      await aborted;
+      await page.waitForTimeout(200);
+      log('C14 : copie impossible : le travail reste', await remoteCall(page, (m, i) => m.get(i).sortants === true && m.get(i).données.items.length === 2, id));
+      await page.unroute('**/api/boards');
+      await until(page, async () => (await (await fetch('/api/boards')).json()).boards.some(b => b.name.includes('conflit')), null, 15000);
+      log('C14 : au retour du réseau, la copie est créée sans intervention', true);
+      await context.close();
+    },
+    async C15() {
+      const { context, page, id } = await connected('C15');
+      await openBoard(page, id);
+      let picker = false;
+      page.once('filechooser', () => { picker = true; });
+      await page.click('#btn-import');
+      await page.locator('.notice-error', { hasText: 'Import refusé' }).waitFor();
+      log('C15 : import refusé avant le choix du fichier', !picker);
+      await page.setInputFiles('#file-import', { name: 't.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ name: 'x', items: [] })) });
+      await page.waitForTimeout(3500);
+      const s = await fetchBoard(page, id);
+      log('C15 : tableau et serveur intacts', s.rev === 0 && s.board.items.length === 1 && await page.locator('.canvas-item').count() === 1);
+      await context.close();
+    },
+    async A11Y() {
+      // A : contraste accru du système
+      const a = await browser.newContext({ viewport: { width: 1280, height: 800 }, contrast: 'more', colorScheme: 'dark' });
+      const pa = await a.newPage();
+      await pa.addInitScript(([k, s]) => localStorage.setItem(k, s), [BOARDS_KEY, JSON.stringify({ version: 4, tableaux: ['Un', 'Deux'].map((n, i) => ({ ...JSON.parse(seedBoards(n)).tableaux[0], id: `board-1-${i}` })), espaces: [] })]);
+      await pa.goto(BASE);
+      await pa.waitForSelector('.boards-table');
+      log('A : contraste accru : variables de table définies', await pa.evaluate(() => { const s = getComputedStyle(document.documentElement); return ['--table-stripe', '--table-hover', '--outline-hover'].map(v => s.getPropertyValue(v).trim()).join(); }) === '#1a1a1a,#333333,#333333');
+      await axe(pa, 'tableau de bord, contraste accru du système');
+      // B et C : lien Ouvrir
+      for (const theme of ['dark', 'high-contrast']) {
+        await pa.evaluate(t => document.documentElement.setAttribute('data-theme', t), theme);
+        log(`B : lien Ouvrir à la couleur des liens, ${theme}`, await pa.evaluate(() => getComputedStyle(document.querySelector('.board-actions a')).color === (() => { const p = document.createElement('a'); p.style.color = 'var(--link)'; document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c; })()));
+        await axe(pa, `tableau de bord, ${theme}`);
+      }
+      log('C : Ouvrir est un lien, sans role', await pa.locator('.board-actions a[role]').count() === 0 && await pa.getByRole('link', { name: 'Ouvrir' }).count() === 2);
+      await pa.getByRole('link', { name: 'Ouvrir' }).first().focus();
+      await pa.keyboard.press('Enter');
+      await pa.waitForSelector('#app-board:not([hidden])');
+      log('C : Entrée ouvre le tableau', true);
+      await a.close();
+
+      // D : hors ligne, retour, sans répétition
+      const { context, page, id } = await connected('D');
+      await page.goto(`${BASE}/#/`);
+      await listen(page);
+      await app.stopBackend();
+      await page.evaluate(async () => { const a = await import('/js/store/account.js'); await a.refreshBoards(); });
+      await page.locator('[data-notice="server"]').waitFor();
+      await page.waitForTimeout(150);
+      await page.evaluate(async () => { const a = await import('/js/store/account.js'); await a.refreshBoards(); await a.refreshBoards(); });
+      await page.waitForTimeout(300);
+      log('D : hors ligne annoncé une seule fois', await said(page, 'Serveur injoignable') === 1, `${await said(page, 'Serveur injoignable')} annonce(s)`);
+      await app.startBackend();
+      await page.evaluate(async () => (await import('/js/store/account.js')).refreshBoards());
+      await page.locator('[data-notice="server"]').waitFor({ state: 'detached' });
+      await page.waitForTimeout(150);
+      log('D : retour annoncé', await said(page, 'Connexion au serveur rétablie') === 1);
+
+      // E : titre pendant le chargement
+      let free; const gate = new Promise(r => { free = r; });
+      await page.route(`**/api/boards/${id}`, async r => { await gate; await r.continue(); });
+      await page.goto(`${BASE}/#/tableau/${id}`);
+      await page.locator('[role="status"]', { hasText: 'Chargement du tableau' }).waitFor();
+      log('E : titre du document pendant le chargement', (await page.title()).startsWith('Chargement du tableau'), await page.title());
+      free();
+      await page.waitForSelector('.canvas-item[data-id="item-1"]');
+      await page.unroute(`**/api/boards/${id}`);
+      await page.goto(`${BASE}/#/`);
+
+      // Audit : focus rendu quand un message disparaît
+      await row(page, 'D').waitFor();
+      await page.evaluate(async () => (await import('/js/ui/notice.js')).showNotice('essai', 'Message d’essai'));
+      await page.locator('[data-notice="essai"] button').focus();
+      await page.keyboard.press('Enter');
+      await page.locator('[data-notice="essai"]').waitFor({ state: 'detached' });
+      log('Audit : message fermé : le focus ne retombe pas sur la page', await page.evaluate(() => document.activeElement !== document.body && document.activeElement?.id === 'dashboard-title'));
+
+      // Audit : champs obligatoires ; session expirée dialogue ouvert
+      await page.click('#btn-account');
+      await page.getByRole('heading', { name: 'Mon compte' }).waitFor();
+      log('Audit : champs marqués obligatoires', await page.evaluate(() => [...document.querySelectorAll('.account-dialog input')].every(i => i.required)));
+      await page.evaluate(() => fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' } }));
+      await page.getByRole('button', { name: 'Enregistrer le nom' }).click();
+      await page.getByRole('heading', { name: 'Se connecter' }).waitFor();
+      log('Audit : session expirée dialogue ouvert : retour à la connexion', (await page.locator('.account-dialog').textContent()).includes('session a expiré'));
+      await context.close();
+    }
+  };
+  const ONLY_LIST = ONLY ? ONLY.split(',') : null;
+  for (const [name, run] of Object.entries(REG)) {
+    if (ONLY_LIST && !ONLY_LIST.includes(name)) continue;
+    console.log(`--- ${name} ---`);
+    try { await run(); } catch (err) { log(`${name} : exception`, false, err.message.split('\n').slice(0, 3).join(' ')); }
   }
 } catch (err) {
   log('Exception', false, err.stack || err.message);

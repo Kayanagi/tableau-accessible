@@ -21,6 +21,8 @@ export async function startAppServer({ inscriptions = 'ouvert' } = {}) {
   let backend = null;
   let backendPort = 0;
   let clientIp = 1;
+  // Comme client_max_body_size de nginx : réponse HTML, le serveur Baro n'est même pas contacté.
+  let bodyLimit = 4 * 1024 * 1024;
 
   const statics = (req, res) => {
     let path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
@@ -39,6 +41,12 @@ export async function startAppServer({ inscriptions = 'ouvert' } = {}) {
     if (!backend) {
       res.writeHead(502, { 'Content-Type': 'text/html' });
       res.end('<h1>502</h1>');
+      return;
+    }
+    if (Number(req.headers['content-length']) > bodyLimit) {
+      req.resume();
+      res.writeHead(413, { 'Content-Type': 'text/html' });
+      res.end('<html><h1>413 Request Entity Too Large</h1></html>');
       return;
     }
     const upstream = http.request({ host: '127.0.0.1', port: backendPort, path: req.url, method: req.method, headers: { ...req.headers, 'x-real-ip': `10.0.0.${clientIp}` } }, r => {
@@ -87,6 +95,7 @@ export async function startAppServer({ inscriptions = 'ouvert' } = {}) {
     stopBackend,
     /* Change l'adresse vue par le serveur : chaque parcours a ses propres compteurs de débit. */
     nextClient() { clientIp = (clientIp % 250) + 1; },
+    setBodyLimit(bytes = 4 * 1024 * 1024) { bodyLimit = bytes; },
     async close() {
       await stopBackend();
       front.closeAllConnections();
