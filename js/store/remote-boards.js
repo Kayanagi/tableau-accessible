@@ -23,13 +23,16 @@ let suspended = false;
 let openId = null;
 let listening = false;
 let persistTimer = null;
+let mayReplaceOwner = false;
+let listSeq = 0;
 let emit = () => {};
+const removed = new Set();
 const entries = new Map();
 const runtime = new Map();
 
 function runtimeOf(id) {
   let rt = runtime.get(id);
-  if (!rt) { rt = { timer: null, firstEdit: 0, inflight: null, lastJson: null, retry: 0, blocked: false, viewerWarned: false }; runtime.set(id, rt); }
+  if (!rt) { rt = { timer: null, firstEdit: 0, inflight: null, lastJson: null, sent: null, retry: 0, warned: false, blocked: false, viewerWarned: false, addedAt: 0 }; runtime.set(id, rt); }
   return rt;
 }
 
@@ -84,23 +87,57 @@ function applyDrops(parts, dropped) {
   }
 }
 
+/* Le miroir sur le disque appartient-il à un autre compte que celui de cet onglet ? */
+function isForeign(disk) {
+  return !mayReplaceOwner && !!disk.owner?.id && !!owner?.id && disk.owner.id !== owner.id;
+}
+
+/* Une version écrite par un autre onglet, plus avancée que la nôtre, ne doit pas être écrasée à notre sortie. */
+function otherTabIsAhead(e, seen) {
+  if (!seen || e.sortants) return false;
+  return (seen.rev ?? 0) > (e.rev ?? 0) || (seen.rev === e.rev && !!seen.sortants);
+}
+
 /*
  * Écrit le miroir sous le plafond, mesuré en occupation réelle de localStorage (2 octets par unité UTF-16).
- * Ordre d'éviction : ce qui ne tiendra jamais, puis le moins récent sans sortants, et en dernier recours
- * un tableau avec sortants, qui reste alors en mémoire jusqu'à son envoi au serveur.
+ * Seul un tableau sans sortants peut être évincé : d'abord celui qui ne tiendra jamais, puis le moins récent.
+ * Un tableau avec sortants qui ne tient pas garde ses données en mémoire et le disque garde sa dernière version
+ * durable : l'interface le dit (mirror-full) et la fermeture de l'onglet est signalée (beforeunload).
  */
 function persistNow() {
   clearTimeout(persistTimer);
   persistTimer = null;
   if (!hasFlag() && !suspended) return false;
 
-  const parts = list().map(e => ({ e, full: JSON.stringify(stored(e, true)), light: JSON.stringify(stored(e, false)) }));
+  const disk = readMirror();
+  if (isForeign(disk)) {
+    // Un autre compte a pris l'appareil : ses données ne sont pas à nous, ne rien y réécrire.
+    if (!suspended) emit({ type: 'foreign-owner' });
+    for (const e of pending()) e.horsCopie = true;
+    return false;
+  }
+  // Suspendu : la session est finie, seul le travail non envoyé a sa place sur le disque.
+  const source = suspended ? pending() : list();
+  if (suspended && !source.length) return false;
+
+  const prior = new Map(disk.tableaux.filter(t => t?.id).map(t => [t.id, t]));
   const weight = text => text.length * 2;
   const shell = weight(`{"version":${VERSION},"owner":${JSON.stringify(owner)},"tableaux":[]}`);
+  const parts = source.map(e => {
+    const seen = prior.get(e.id);
+    if (otherTabIsAhead(e, seen)) {
+      const full = JSON.stringify(seen);
+      return { e, full, light: full, frozen: true };
+    }
+    const full = JSON.stringify(stored(e, true));
+    // Ne tient pas : pour un tableau avec sortants, la version durable précédente vaut mieux que rien.
+    const light = JSON.stringify(e.sortants && seen?.sortants && seen.données ? seen : stored(e, false));
+    return { e, full, light, frozen: false };
+  });
   let total = shell + parts.reduce((sum, p) => sum + weight(p.full) + 2, 0);
   const dropped = new Set();
   const drop = p => {
-    if (dropped.has(p.e.id) || !p.e.données) return;
+    if (dropped.has(p.e.id) || !p.e.données || p.frozen) return;
     dropped.add(p.e.id);
     total -= weight(p.full) - weight(p.light);
   };
@@ -108,25 +145,34 @@ function persistNow() {
   for (const p of parts) {
     if (shell + weight(p.full) > MIRROR_MAX_BYTES) { p.e.tooBig = true; drop(p); }
   }
-  const order = [...parts.filter(p => !p.e.sortants).sort(byAge), ...parts.filter(p => p.e.sortants).sort(byAge)];
-  for (const p of order) {
+  const evictable = parts.filter(p => !p.e.sortants).sort(byAge);
+  const unsent = parts.filter(p => p.e.sortants).sort(byAge);
+  for (const p of [...evictable, ...unsent]) {
     if (total <= MIRROR_MAX_BYTES) break;
     drop(p);
   }
 
-  for (const p of [null, ...order]) {
-    if (p) drop(p);
-    try {
-      writeMirror(parts, dropped);
-      applyDrops(parts, dropped);
-      return true;
-    } catch (err) {
-      console.warn('Miroir : écriture impossible', err);
+  const attempt = () => {
+    try { writeMirror(parts, dropped); return true; }
+    catch (err) { console.warn('Miroir : écriture impossible', err); return false; }
+  };
+  let written = attempt();
+  for (const p of evictable) {
+    if (written) break;
+    if (dropped.has(p.e.id) || !p.e.données || p.frozen) continue;
+    drop(p);
+    written = attempt();
+  }
+  if (!written) {
+    // Le disque garde sa dernière version : mieux vaut une version ancienne que des sortants effacés.
+    unsent.forEach(p => dropped.add(p.e.id));
+    if (!unsent.length && !disk.tableaux.some(t => t?.sortants)) {
+      try { localStorage.removeItem(MIRROR_KEY); } catch { /* rien à libérer */ }
     }
   }
-  try { localStorage.removeItem(MIRROR_KEY); } catch { /* rien à libérer */ }
+  if (written) mayReplaceOwner = false;
   applyDrops(parts, dropped);
-  return false;
+  return written;
 }
 
 function schedulePersist() {
@@ -164,23 +210,50 @@ function adopt(raw) {
   return { ...raw, distant: true, icon: normalizeBoardIcon(raw.icon), espaceId: raw.espaceId || null, favori: !!raw.favori, sortants: !!raw.sortants };
 }
 
-/* Un autre onglet a réécrit le miroir : on reprend ce qu'il sait de plus récent, sauf nos écritures en attente. */
+/*
+ * Un autre onglet a réécrit le miroir : on reprend ce que le serveur a confirmé, jamais ses sortants,
+ * qui restent à l'onglet qui les a écrits : les envoyer d'ici produirait de faux conflits.
+ */
 function onStorage(event) {
   if (event.key !== MIRROR_KEY || !event.newValue) return;
   let parsed;
   try { parsed = JSON.parse(event.newValue); } catch { return; }
   if (!Array.isArray(parsed.tableaux)) return;
+  if (isForeign(parsed)) {
+    if (!suspended) emit({ type: 'foreign-owner' });
+    return;
+  }
+  if (suspended) return;
   for (const raw of parsed.tableaux) {
+    if (!raw?.id || removed.has(raw.id)) continue;
+    const confirmed = raw.sortants ? { ...raw, données: null, sortants: false } : raw;
     const mine = entries.get(raw.id);
-    if (!mine) { entries.set(raw.id, adopt(raw)); continue; }
-    if (mine.sortants || raw.id === openId || (raw.rev ?? 0) < (mine.rev ?? 0) || !raw.données) continue;
-    entries.set(raw.id, { ...adopt(raw), favori: mine.favori, espaceId: mine.espaceId });
+    if (!mine) { entries.set(raw.id, adopt(confirmed)); continue; }
+    if (mine.sortants || raw.id === openId || (raw.rev ?? 0) < (mine.rev ?? 0) || !confirmed.données) continue;
+    entries.set(raw.id, { ...adopt(confirmed), favori: mine.favori, espaceId: mine.espaceId });
+  }
+}
+
+function saveForeignWork() {
+  if (!isForeign(readMirror())) return;
+  for (const e of pending()) {
+    if (e.données && saveLocalCopy(e, `${e.nom} (non envoyé)`)) e.sortants = false;
   }
 }
 
 function onLeave() {
   persistNow();
+  saveForeignWork();
   flushAll({ keepalive: true });
+}
+
+/* Ce qui n'est ni sur le disque ni encore sur le serveur disparaîtrait avec l'onglet. */
+function onBeforeUnload(event) {
+  persistNow();
+  saveForeignWork();
+  if (!pending().some(e => e.horsCopie)) return;
+  event.preventDefault();
+  event.returnValue = '';
 }
 
 export function init() {
@@ -192,6 +265,7 @@ export function init() {
   if (listening) return;
   listening = true;
   window.addEventListener('pagehide', onLeave);
+  window.addEventListener('beforeunload', onBeforeUnload);
   window.addEventListener('storage', onStorage);
   window.addEventListener('online', syncPending);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') onLeave(); });
@@ -204,9 +278,16 @@ export function init() {
 export function setOwner(user) {
   if (owner?.id && user?.id && owner.id !== user.id) {
     for (const e of list()) {
-      if (e.sortants && e.données) saveLocalCopy(e, `${e.nom} (non envoyé)`);
+      if (e.id === openId) emit({ type: 'owner-changed', id: e.id });
+      if (e.sortants && e.données && !saveLocalCopy(e, `${e.nom} (non envoyé)`)) {
+        // Stockage plein : le travail reste dans le miroir, repérable, jusqu'à ce qu'il y ait de la place.
+        e.perdu = true;
+        emit({ type: 'copy-failed', entry: e });
+        continue;
+      }
       forget(e.id);
     }
+    mayReplaceOwner = true;
   }
   owner = user;
   schedulePersist();
@@ -241,6 +322,9 @@ function dataOf(board) {
 function applyServer(res, keep = {}) {
   const b = res.board;
   const previous = entries.get(b.id);
+  // Réponse tardive d'une requête abandonnée : elle ne fait jamais reculer la révision.
+  if (previous && res.rev < previous.rev) return previous;
+  if (!previous) runtimeOf(b.id).addedAt = Date.now();
   const entry = previous || { distant: true, id: b.id, favori: false, espaceId: null, memberCount: 1 };
   Object.assign(entry, keep, {
     nom: b.name, icon: normalizeBoardIcon(b.icon), rev: res.rev, role: res.role,
@@ -248,19 +332,30 @@ function applyServer(res, keep = {}) {
   });
   entry.dernièreOuverture ||= toIso(b.updatedAt);
   entries.set(b.id, entry);
-  runtimeOf(b.id).lastJson = null;
+  // Le tableau ouvert garde sa référence : l'état affiché ne vient pas de cette réponse.
+  if (b.id !== openId) runtimeOf(b.id).lastJson = null;
   return entry;
 }
 
 export async function refreshList() {
+  const seq = ++listSeq;
+  const startedAt = Date.now();
   const { boards: rows } = await api.listBoards();
+  if (seq !== listSeq) return rows; // une liste plus récente est déjà demandée
   const seen = new Set();
   for (const row of rows) {
     seen.add(row.id);
+    if (removed.has(row.id)) continue;
     const e = entries.get(row.id);
     if (e) {
       Object.assign(e, { nom: row.name, icon: normalizeBoardIcon(row.icon), role: row.role, memberCount: row.memberCount, majLe: row.updatedAt, perdu: false });
       if (e.données) e.données.name = row.name;
+      // Modifié ailleurs : la copie est périmée. Le tableau ouvert le découvrira à son prochain envoi.
+      if (!e.sortants && e.id !== openId && row.rev > (e.rev ?? 0)) {
+        if (e.données) e.nbÉléments = e.données.items?.length ?? 0;
+        e.données = null;
+        e.rev = row.rev;
+      }
     } else {
       entries.set(row.id, {
         distant: true, id: row.id, nom: row.name, icon: normalizeBoardIcon(row.icon), rev: row.rev, role: row.role, memberCount: row.memberCount,
@@ -270,9 +365,12 @@ export async function refreshList() {
   }
   for (const e of list()) {
     if (seen.has(e.id)) continue;
-    // Disparu du compte : sans données à sauver, il sort simplement de la liste.
-    if (e.sortants && e.données) { if (!e.perdu) { e.perdu = true; emit({ type: 'lost', entry: e }); } }
-    else forget(e.id);
+    // Créé après le départ de la requête : la liste est simplement en retard.
+    if (runtimeOf(e.id).addedAt >= startedAt) continue;
+    // Disparu du compte : sans données à sauver et s'il n'est pas ouvert, il sort simplement de la liste.
+    if ((e.sortants && e.données) || e.id === openId) {
+      if (!e.perdu) { e.perdu = true; emit({ type: 'lost', entry: e }); }
+    } else forget(e.id);
   }
   schedulePersist();
   return rows;
@@ -323,6 +421,14 @@ export function edit(id, snapshot) {
   scheduleWrite(id, Math.min(WRITE_DELAY, Math.max(0, rt.firstEdit + WRITE_MAX_WAIT - now)));
 }
 
+/* Un seul message tant que l'échec dure : le serveur a répondu, mais la modification n'est pas enregistrée. */
+function warnOnce(e, err) {
+  const rt = runtimeOf(e.id);
+  if (rt.warned || !err.fromServer) return;
+  rt.warned = true;
+  emit({ type: 'retrying', entry: e, error: err });
+}
+
 function retryLater(id, err) {
   const rt = runtimeOf(id);
   rt.retry = Math.min(RETRY_MAX, rt.retry ? rt.retry * 2 : RETRY_MIN);
@@ -339,10 +445,12 @@ function write(id, options = {}) {
   rt.timer = null;
   rt.firstEdit = 0;
   const sent = e.données;
+  rt.sent = sent;
   rt.inflight = api.putBoardData(id, e.rev, sent, options).then(res => {
     e.rev = res.rev;
     e.majLe = res.updatedAt;
     rt.retry = 0;
+    settled(e);
     // Une édition arrivée pendant l'envoi garde ses sortants : son délai court déjà.
     if (e.données === sent) e.sortants = false;
     else if (!rt.timer) scheduleWrite(id, WRITE_DELAY);
@@ -354,21 +462,29 @@ function write(id, options = {}) {
   return rt.inflight;
 }
 
+function settled(e) {
+  const rt = runtimeOf(e.id);
+  rt.warned = false;
+  rt.blocked = false;
+  emit({ type: 'sent', entry: e });
+}
+
 async function onWriteError(e, err) {
   const rt = runtimeOf(e.id);
   if (err.code === 'conflict') { await onConflict(e); return; }
-  if (err.status === 401) return; // déjà traité : session suspendue, sortants conservés
-  if (err.status === 404) {
-    e.perdu = true;
-    schedulePersist();
-    emit({ type: 'lost', entry: e });
-    return;
-  }
-  if (err.unreachable) { retryLater(e.id, err); schedulePersist(); return; }
+  if (err.code === 'unauthenticated') return; // déjà traité : session suspendue, sortants conservés
+  if (err.notFound) { markLost(e); return; }
+  if (err.unreachable) { retryLater(e.id, err); warnOnce(e, err); schedulePersist(); return; }
   // Refus définitif (validation, droits, taille) : pas de nouvel essai avant la prochaine modification.
   rt.blocked = true;
   schedulePersist();
   emit({ type: 'rejected', entry: e, error: err });
+}
+
+function markLost(e) {
+  e.perdu = true;
+  schedulePersist();
+  emit({ type: 'lost', entry: e });
 }
 
 function conflictName(nom, date = new Date()) {
@@ -379,41 +495,87 @@ function conflictName(nom, date = new Date()) {
 
 function saveLocalCopy(entry, nom) {
   const copy = boards.create(nom, entry.données);
-  if (boards.isSaveFailing()) { boards.remove(copy.id); return null; }
+  if (boards.isSaveFailing()) { boards.discard(copy.id); return null; }
   boards.setIcon(copy.id, entry.icon);
   return copy;
 }
 
+function sortedKeys(value) {
+  if (Array.isArray(value)) return value.map(sortedKeys);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(Object.keys(value).sort().map(key => [key, sortedKeys(value[key])]));
+}
+
+/* Contenu comparable d'un tableau, indépendant de l'ordre des clés. Le nom suit PATCH, il n'en fait pas partie. */
+function contentOf(data) {
+  if (!data) return null;
+  return JSON.stringify(sortedKeys({ items: data.items ?? [], tags: data.tags ?? [], frameOrder: data.frameOrder ?? [], background: data.background ?? null }));
+}
+
 /*
- * Conflit : aucune fusion. Le travail non envoyé part dans une copie, sur l'appareil tant qu'il y a la place,
- * sinon sur le compte. La version du serveur redevient celle du tableau.
+ * Conflit : aucune fusion, mais d'abord vérifier qu'il y en a un. Un PUT accepté dont la réponse n'a pas été lue
+ * (rechargement juste après une modification) revient en 409 alors que le serveur a déjà ce contenu.
+ * Sinon le travail non envoyé part dans une copie, sur l'appareil tant qu'il y a la place, sinon sur le compte,
+ * et la version du serveur redevient celle du tableau. Rien ne s'intercale entre la dernière copie et ce remplacement.
  */
-async function onConflict(e) {
-  const nom = conflictName(e.nom);
-  let copy = saveLocalCopy(e, nom);
-  if (!copy) {
+async function onConflict(e, known = null) {
+  const rt = runtimeOf(e.id);
+  let res = known;
+  if (!res) {
     try {
-      copy = applyServer(await api.createBoard({ name: nom, icon: e.icon, data: e.données }));
+      res = await api.getBoard(e.id);
     } catch (err) {
       if (err.name !== 'ApiError') throw err;
-      // Nulle part où mettre la copie : le travail reste dans le miroir et rien n'est écrasé.
-      runtimeOf(e.id).blocked = true;
-      schedulePersist();
-      emit({ type: 'rejected', entry: e, error: err });
+      if (err.notFound) markLost(e);
+      else if (err.code !== 'unauthenticated') { retryLater(e.id, err); warnOnce(e, err); schedulePersist(); }
       return;
     }
   }
-  e.sortants = false;
-  e.données = null;
-  let fresh = false;
-  try {
-    applyServer(await api.getBoard(e.id));
-    fresh = true;
-  } catch (err) {
-    if (err.name !== 'ApiError') throw err;
+
+  const onServer = contentOf(dataOf(res.board));
+  const sameAsCurrent = onServer === contentOf(e.données);
+  if (sameAsCurrent || onServer === contentOf(rt.sent)) {
+    e.rev = res.rev;
+    e.majLe = res.board.updatedAt;
+    if (sameAsCurrent) e.sortants = false;
+    else scheduleWrite(e.id, WRITE_DELAY);
+    settled(e);
+    schedulePersist();
+    return;
   }
+
+  emit({ type: 'conflict-flush', entry: e });
+  const nom = conflictName(e.nom);
+  let copy = saveLocalCopy(e, nom);
+  while (!copy) {
+    const snapshot = e.données;
+    let created;
+    try {
+      created = applyServer(await api.createBoard({ name: nom, icon: e.icon, data: snapshot }));
+    } catch (err) {
+      if (err.name !== 'ApiError') throw err;
+      if (err.code === 'unauthenticated') return;
+      // Nulle part où mettre la copie : le travail reste dans le miroir et rien n'est écrasé.
+      if (err.unreachable) {
+        retryLater(e.id, err);
+        warnOnce(e, err);
+      } else {
+        rt.blocked = true;
+        emit({ type: 'rejected', entry: e, error: err });
+      }
+      schedulePersist();
+      return;
+    }
+    // Modifié pendant l'envoi : cette copie est incomplète, une seconde reprend tout.
+    if (e.données === snapshot) copy = created;
+  }
+  e.sortants = false;
+  clearTimeout(rt.timer);
+  rt.timer = null;
+  rt.warned = false;
+  applyServer(res);
   schedulePersist();
-  emit({ type: 'conflict', entry: e, copy, fresh });
+  emit({ type: 'conflict', entry: e, copy });
 }
 
 export async function flush(id) {
@@ -452,7 +614,7 @@ export async function open(id) {
     res = await api.getBoard(id);
   } catch (err) {
     if (err.name !== 'ApiError') throw err;
-    if (err.status === 404) {
+    if (err.notFound) {
       if (e?.données) {
         e.perdu = true;
         schedulePersist();
@@ -461,31 +623,49 @@ export async function open(id) {
       forget(id);
       return { status: 'lost', entry: null };
     }
-    if (err.status === 401) return { status: 'expired', entry: e?.données ? e : null };
+    if (err.code === 'unauthenticated') return { status: 'expired', entry: e?.données ? e : null };
     if (err.unreachable && e?.données) return { status: 'ok', entry: e, offline: true, error: err };
     return { status: 'error', error: err };
   }
   if (e?.sortants && e.données) {
-    if (res.rev !== e.rev) {
-      await onConflict(e);
-      if (entries.get(id)?.données) return { status: 'ok', entry: entries.get(id) };
-    } else {
-      Object.assign(e, { role: res.role, nom: res.board.name, icon: normalizeBoardIcon(res.board.icon), perdu: false });
-      return { status: 'ok', entry: e };
-    }
+    if (res.rev > e.rev) await onConflict(e, res);
+    else Object.assign(e, { role: res.role, nom: res.board.name, icon: normalizeBoardIcon(res.board.icon), perdu: false });
+    if (e.données) return { status: 'ok', entry: e };
   }
   const entry = applyServer(res);
   schedulePersist();
+  // Réponse plus ancienne que ce qui est connu, et plus de copie : rien de valide à afficher.
+  if (!entry.données) return { status: 'error', error: { message: 'La version à jour de ce tableau n’a pas pu être chargée.' } };
   return { status: 'ok', entry };
 }
 
+/*
+ * Le contenu à dupliquer, exporter ou copier : la version du serveur, ou le travail non envoyé s'il y en a.
+ * Serveur injoignable : la copie sert si elle n'est pas connue périmée (refreshList vide celles qui le sont).
+ */
 export async function ensureData(id) {
   const e = entries.get(id);
-  if (e?.données) return e;
-  const res = await api.getBoard(id);
+  if (e?.données && (e.perdu || e.sortants)) return e;
+  let res;
+  try {
+    res = await api.getBoard(id);
+  } catch (err) {
+    if (err.name !== 'ApiError') throw err;
+    if (err.notFound && e?.données) { e.perdu = true; schedulePersist(); return e; }
+    if (err.unreachable && e?.données) return e;
+    throw err;
+  }
+  // Modifié pendant la lecture : le travail en attente passe avant cette réponse.
+  if (e?.sortants && e.données) return e;
   const entry = applyServer(res);
   schedulePersist();
   return entry;
+}
+
+/* Le tableau ouvert est perdu : son état affiché est la version à sauver. */
+export function setData(id, snapshot) {
+  const e = entries.get(id);
+  if (e) e.données = snapshot;
 }
 
 /* ---- Actions du tableau de bord ---- */
@@ -537,6 +717,7 @@ export async function setIcon(id, icon) {
 
 export async function remove(id) {
   await api.deleteBoard(id);
+  removed.add(id);
   forget(id);
   persistNow();
 }

@@ -337,7 +337,7 @@ js/views/account-dialog.js   (nouveau)
 tests/e2e-compte.mjs, tests/helpers/app-server.mjs  (nouveaux)
 ```
 
-Modifiés : `js/state.js` (extraction), `js/store/boards.js` (`get`/`getAll` fusionnés, `save()` qui rend compte de l'échec), `js/app.js` (`showBoard` asynchrone avec garde de course), `js/router.js` (`#/compte`), `js/views/dashboard.js`, `js/views/board-actions.js`, `index.html`, `css/`, `.gitignore`, `README.md`, `CHANGELOG.md`.
+Modifiés : `js/state.js` (extraction), `js/store/boards.js` (`get`/`getAll` fusionnés, `save()` qui rend compte de l'échec), `js/app.js` (`showBoard` asynchrone avec garde de course, refus d'import dans un tableau distant), `js/router.js` (`#/compte`), `js/views/dashboard.js`, `js/views/board-actions.js`, `index.html`, `css/`, `.gitignore`, `README.md`, `CHANGELOG.md`.
 
 ### v1.10.0 : synchronisation temps réel
 
@@ -353,7 +353,7 @@ js/views/activity-panel.js   (nouveau)
 tests/e2e-synchro.mjs        (nouveau)
 ```
 
-Modifiés : `js/state.js` (`applyRemote`, préfixe d'identifiants, `undo`/`redo` déléguées), `js/store/history.js`, `js/app.js`, `js/io.js` (refus d'import), `js/views/outline.js`, `table.js`, `canvas.js`, `comments-panel.js` (rendu différé), `js/preferences.js`, `js/views/preferences-menu.js`, `js/views/board-actions.js` (renommage par `meta`), `index.html`, `css/`.
+Modifiés : `js/state.js` (`applyRemote`, préfixe d'identifiants, `undo`/`redo` déléguées), `js/store/history.js`, `js/app.js`, `js/views/outline.js`, `table.js`, `canvas.js`, `comments-panel.js` (rendu différé), `js/preferences.js`, `js/views/preferences-menu.js`, `js/views/board-actions.js` (renommage par `meta`), `index.html`, `css/`.
 
 ### v1.11.0 : curseurs et partage
 

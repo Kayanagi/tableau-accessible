@@ -34,10 +34,13 @@ export function init(getId) {
         const nom = input.value.trim();
         const remote = boards.remoteStore();
         remote.rename(board.id, nom).then(() => {
-          state.getBoard().name = nom;
-          remote.setBaseline(board.id, state.getSnapshot());
-          setBoardLabel(title, board);
-          document.title = `${board.nom} — Tableau blanc accessible`;
+          // La réponse peut arriver après l'ouverture d'un autre tableau : celui-là ne change pas de nom.
+          if (getId() === board.id) {
+            state.getBoard().name = nom;
+            remote.setBaseline(board.id, state.getSnapshot());
+            setBoardLabel(title, board);
+            document.title = `${board.nom} — Tableau blanc accessible`;
+          }
           announce(`Tableau renommé : ${board.nom}`);
         }).catch(err => {
           if (err.name !== 'ApiError') throw err;

@@ -11,6 +11,8 @@ let api = null;
 let remote = null;
 let user = null;
 let ready = Promise.resolve();
+let reachable = true;
+let listening = false;
 const listeners = new Set();
 const eventListeners = new Set();
 
@@ -64,14 +66,34 @@ async function loadModules() {
   if (remote) return;
   const [apiModule, remoteModule] = await Promise.all([import('../sync/api.js'), import('./remote-boards.js')]);
   api = apiModule;
-  api.setHandlers({
-    unauthorized: expire,
-    reachability: reachable => emit({ type: reachable ? 'online' : 'offline' })
+  api.setHandlers({ unauthorized: () => expire(), reachability: onReachability });
+  remoteModule.setEventHandler(event => {
+    if (event.type === 'foreign-owner') expire({ keepFlag: true, otherTab: true });
+    else emit(event);
   });
-  remoteModule.setEventHandler(emit);
   remoteModule.init();
   boards.attachRemote(remoteModule);
   remote = remoteModule;
+  if (!listening) {
+    listening = true;
+    window.addEventListener('storage', onStorage);
+  }
+}
+
+/* Un événement par changement d'état, pas par requête : ni bruit répété, ni reprise manquée. */
+function onReachability(isReachable) {
+  if (isReachable === reachable) return;
+  reachable = isReachable;
+  emit({ type: reachable ? 'online' : 'offline' });
+  if (reachable) remote?.syncPending();
+}
+
+/* L'indicateur est partagé entre onglets : celui qui ne l'a pas retiré doit aussi cesser d'écrire. */
+function onStorage(event) {
+  if (event.key !== SESSION_FLAG && event.key !== null) return;
+  if (!remote) return;
+  if (!hasSession()) expire({ otherTab: true });
+  else if (remote.isSuspended()) start();
 }
 
 async function restore() {
@@ -82,6 +104,7 @@ async function restore() {
     if (me.guest) { signedOut(); return; }
     user = me.user;
     remote.setOwner(user);
+    remote.resume();
   } catch (err) {
     if (err.status === 401) return;
     user = remote.getOwner();
@@ -127,13 +150,16 @@ export function updateUser(account) {
   changed();
 }
 
-/* La session n'est plus valable : les modifications non envoyées restent sur l'appareil. */
-function expire() {
-  if (!hasSession()) return;
-  remote?.suspend();
-  setFlag(false);
+/*
+ * La session n'est plus valable, ici ou dans un autre onglet : les modifications non envoyées restent sur l'appareil.
+ * L'indicateur peut déjà avoir disparu : l'onglet doit quand même cesser d'écrire et garder son travail.
+ */
+function expire({ keepFlag = false, otherTab = false } = {}) {
+  if (!remote || remote.isSuspended()) return;
+  remote.suspend();
+  if (!keepFlag) setFlag(false);
   user = null;
-  emit({ type: 'expired' });
+  emit({ type: 'expired', otherTab });
   changed();
 }
 

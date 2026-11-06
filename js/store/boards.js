@@ -145,6 +145,12 @@ export function create(nom, données) {
   return board;
 }
 
+/* Retire une entrée que le stockage n'a pas pu recevoir, sans réécrire : l'alerte de stockage plein reste vraie. */
+export function discard(id) {
+  data.tableaux = data.tableaux.filter(b => b.id !== id);
+  notify();
+}
+
 export function saveData(id, snapshot) {
   const board = data.tableaux.find(b => b.id === id);
   if (!board) { remote?.edit(id, snapshot); return; }

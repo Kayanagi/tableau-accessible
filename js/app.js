@@ -75,17 +75,34 @@ function notify(key, message, options) {
 function onAccountEvent(event) {
   const { type, entry } = event;
   if (type === 'offline') {
-    showNotice('server', 'Serveur injoignable : les tableaux de cet appareil restent utilisables. Vos modifications sont gardées ici et seront envoyées au retour de la connexion.', { actions: [{ label: 'Réessayer', run: () => account.start() }] });
+    notify('server', 'Serveur injoignable : les tableaux de cet appareil restent utilisables. Vos modifications sont gardées ici et seront envoyées au retour de la connexion.', { actions: [{ label: 'Réessayer', run: () => account.start() }] });
   } else if (type === 'online') {
     clearNotice('server');
+    announcer.announce('Connexion au serveur rétablie');
   } else if (type === 'signed-in') {
     clearNotice('session');
   } else if (type === 'expired') {
-    notify('session', 'Votre session a expiré. Reconnectez-vous pour retrouver vos tableaux et envoyer vos modifications.', { tone: 'error', actions: [{ label: 'Se connecter', run: () => router.navigate('/compte') }] });
+    notify('session', event.otherTab ? 'Cette session a pris fin dans un autre onglet. Reconnectez-vous pour retrouver vos tableaux et envoyer vos modifications.' : 'Votre session a expiré. Reconnectez-vous pour retrouver vos tableaux et envoyer vos modifications.', { tone: 'error', actions: [{ label: 'Se connecter', run: () => router.navigate('/compte') }] });
   } else if (type === 'mirror-full') {
-    notify(`mirror-${entry.id}`, `« ${entry.nom} » ne tient pas dans la copie de cet appareil : pas d’accès hors ligne pour ce tableau. Il reste enregistré sur votre compte.`);
+    if (entry.sortants) notify(`save-${entry.id}`, `« ${entry.nom} » ne tient pas sur cet appareil et vos dernières modifications ne sont pas encore sur le serveur. Gardez cet onglet ouvert jusqu’à leur envoi.`, { tone: 'error' });
+    else notify(`mirror-${entry.id}`, `« ${entry.nom} » ne tient pas dans la copie de cet appareil : pas d’accès hors ligne pour ce tableau. Il reste enregistré sur votre compte.`);
   } else if (type === 'rejected') {
-    notify(`board-${entry.id}`, `« ${entry.nom} » n’a pas pu être enregistré : ${event.error.message} Vos modifications restent sur cet appareil.`, { tone: 'error' });
+    notify(`save-${entry.id}`, `« ${entry.nom} » n’a pas pu être enregistré : ${event.error.message} Vos modifications restent sur cet appareil.`, { tone: 'error' });
+  } else if (type === 'retrying') {
+    notify(`save-${entry.id}`, `« ${entry.nom} » n’a pas pu être enregistré : ${event.error.message} Nouvel essai automatique, vos modifications restent sur cet appareil.`, { tone: 'error' });
+  } else if (type === 'sent') {
+    clearNotice(`save-${entry.id}`);
+  } else if (type === 'copy-failed') {
+    notify(`save-${entry.id}`, `Les modifications non envoyées de « ${entry.nom} » appartiennent à un autre compte et n’ont pas pu être copiées : le stockage est plein. Elles restent sur cet appareil ; libérez de la place, puis choisissez « Garder une copie locale ».`, { tone: 'error' });
+  } else if (type === 'owner-changed') {
+    if (currentBoardId === event.id) {
+      closeOpenBoard();
+      router.navigate('/');
+    }
+    notify('session', 'Un autre compte est maintenant connecté sur cet appareil : le tableau ouvert a été fermé.');
+  } else if (type === 'conflict-flush') {
+    // Un texte en cours de saisie doit partir dans la copie, pas disparaître au rechargement.
+    if (currentBoardId === entry.id) flushEditing();
   } else if (type === 'read-only') {
     notify(`board-${entry.id}`, `« ${entry.nom} » est en lecture seule : vos modifications ne seront pas enregistrées.`);
   } else if (type === 'lost') {
@@ -95,17 +112,13 @@ function onAccountEvent(event) {
   }
 }
 
-function onConflict({ entry, copy, fresh }) {
+function onConflict({ entry, copy }) {
   const isOpen = currentBoardId === entry.id;
   const message = `« ${entry.nom} » a été modifié ailleurs. Vos modifications sont gardées dans la copie « ${copy.nom} ».`;
   showNotice(`board-${entry.id}`, message, { tone: 'error', actions: [{ label: 'Ouvrir la copie', run: () => router.navigate(`/tableau/${copy.id}`) }] });
-  announcer.announce(fresh && isOpen ? `${message} La version du serveur est affichée.` : message);
-  if (isOpen) {
-    if (fresh) reloadOpenBoard(entry);
-    else { closeOpenBoard(); showRemoteProblem(entry.id, { status: 'error', error: { message: 'La version à jour de ce tableau n’a pas pu être chargée.' } }); }
-  } else {
-    dashboard.refresh();
-  }
+  announcer.announce(isOpen ? `${message} La version du serveur est affichée.` : message);
+  if (isOpen) reloadOpenBoard(entry);
+  else dashboard.refresh();
 }
 
 /* Remplace le contenu affiché sans le compter comme une modification à envoyer. */
@@ -122,6 +135,7 @@ function reloadOpenBoard(entry) {
 
 async function keepLostCopy(id) {
   try {
+    if (currentBoardId === id) boards.remoteStore().setData(id, state.getSnapshot());
     const copy = await boards.remoteStore().keepLocalCopy(id);
     if (!copy) { notify('board-action', 'Stockage de cet appareil plein : la copie locale n’a pas pu être créée.', { tone: 'error' }); return; }
     announcer.announce(`Copie locale créée : ${copy.nom}`);
@@ -223,6 +237,7 @@ async function showBoard(boardId) {
 
   closeOpenBoard();
   hideBoardView();
+  document.title = 'Chargement du tableau — Tableau blanc accessible';
   dashboard.renderLoading('Chargement du tableau…');
   announcer.announce('Chargement du tableau…');
 
@@ -425,9 +440,13 @@ function setupToolbar() {
   document.getElementById('btn-zoom-out').addEventListener('click', () => canvas.zoomOut());
   document.getElementById('btn-zoom-reset').addEventListener('click', () => canvas.zoomReset());
   document.getElementById('btn-zoom-fit').addEventListener('click', () => canvas.zoomToFit());
-  document.getElementById('btn-import').addEventListener('click', () => document.getElementById('file-import').click());
+  document.getElementById('btn-import').addEventListener('click', () => {
+    if (refuseRemoteImport()) return;
+    document.getElementById('file-import').click();
+  });
   document.getElementById('file-import').addEventListener('change', async (e) => {
     const file = e.target.files[0];
+    if (file && refuseRemoteImport()) { e.target.value = ''; return; }
     if (file) { try { await io.importJSON(file); } catch (err) { console.error(err); } }
     e.target.value = '';
   });
@@ -436,6 +455,13 @@ function setupToolbar() {
     document.getElementById('btn-undo').disabled = !state.canUndo();
     document.getElementById('btn-redo').disabled = !state.canRedo();
   });
+}
+
+/* Importer remplacerait la version du serveur, sans confirmation possible et sans historique à restaurer. */
+function refuseRemoteImport() {
+  if (!boards.get(currentBoardId)?.distant) return false;
+  notify('board-action', 'Import refusé : ce tableau est enregistré sur votre compte et serait remplacé. Importez le fichier dans un nouveau tableau, depuis l’accueil.', { tone: 'error' });
+  return true;
 }
 
 function setupToolPalette() {
