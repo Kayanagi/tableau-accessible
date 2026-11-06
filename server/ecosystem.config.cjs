@@ -5,7 +5,7 @@ module.exports = {
     {
       name: 'baro-server',
       cwd: __dirname,
-      script: 'src/index.js',
+      script: 'src/start.js',
       exec_mode: 'fork',
       instances: 1,
       max_memory_restart: '400M',

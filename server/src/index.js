@@ -1,6 +1,4 @@
 import http from 'node:http';
-import { realpathSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { loadConfig } from './config.js';
 import { openDb } from './db.js';
 import { HttpError, Router, createHandler, tooMany } from './http.js';
@@ -91,7 +89,7 @@ export function startInactivity(app, send, options = {}) {
   return inactivity;
 }
 
-async function main() {
+export async function main() {
   const config = loadConfig();
   const app = createApp(config);
   const port = await app.listen(config.port);
@@ -110,12 +108,4 @@ async function main() {
   };
   process.on('SIGINT', stop);
   process.on('SIGTERM', stop);
-}
-
-const entry = process.argv[1] ? realpathSync(process.argv[1]) : '';
-if (entry === fileURLToPath(import.meta.url)) {
-  main().catch(err => {
-    console.error(`[baro] démarrage impossible : ${err.message}`);
-    process.exit(1);
-  });
 }

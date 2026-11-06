@@ -595,3 +595,28 @@ describe('mode de test local', () => {
     } finally { await s.close(); }
   });
 });
+
+/* Sous PM2, le script lancé par Node n'est pas celui du serveur : le démarrage ne doit pas en dépendre. */
+it('le serveur démarre quand un lanceur importe son point d’entrée', async () => {
+  const { spawn } = await import('node:child_process');
+  const { mkdtempSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const directory = mkdtempSync(join(tmpdir(), 'baro-start-'));
+  const port = 20000 + Math.floor(Math.random() * 20000);
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `await import(${JSON.stringify(new URL('../src/start.js', import.meta.url).href)})`], {
+    env: { ...process.env, NODE_ENV: 'test', PORT: String(port), BARO_DB: join(directory, 'baro.db'), BARO_INACTIVITY: 'inactif', BARO_ORIGIN: 'http://localhost', BARO_INSECURE_COOKIE: '1', BARO_SCRYPT_N: '1024' },
+    stdio: 'ignore'
+  });
+  try {
+    let status = 0;
+    for (let i = 0; i < 50 && !status; i++) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      status = await fetch(`http://127.0.0.1:${port}/api/me`).then(res => res.status, () => 0);
+    }
+    assert.equal(status, 401);
+  } finally {
+    child.kill();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

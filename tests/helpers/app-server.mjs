@@ -66,7 +66,7 @@ export async function startAppServer({ inscriptions = 'ouvert' } = {}) {
     const probe = http.createServer();
     backendPort = await listen(probe);
     await new Promise(r => probe.close(r));
-    const child = spawn(process.execPath, ['server/src/index.js'], {
+    const child = spawn(process.execPath, ['server/src/start.js'], {
       cwd: ROOT,
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, NODE_ENV: 'test', PORT: String(backendPort), BARO_DB: join(dir, 'baro.db'), BARO_ORIGIN: origin, BARO_INSECURE_COOKIE: '1', BARO_SCRYPT_N: '1024', BARO_INSCRIPTIONS: inscriptions }
