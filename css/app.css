@@ -402,6 +402,8 @@ main {
   display: block;
   cursor: default;
   touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .canvas-item { transition: filter 0.1s; }
 .canvas-svg[data-tool="select"] .canvas-item { cursor: move; }
@@ -1050,6 +1052,8 @@ dialog ul {
   border-color: var(--primary);
 }
 .inline-editor {
+  -webkit-user-select: text;
+  user-select: text;
   position: absolute;
   z-index: 4;
   margin: 0;

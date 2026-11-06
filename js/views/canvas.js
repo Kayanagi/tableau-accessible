@@ -17,6 +17,8 @@ const MAX_ZOOM = 5;
 const LINK_BLUE = '#3859ff';
 const GRID = 50;
 const RIGHT_DRAG = 5;
+const LINK_MIN_DRAG = 8;
+const NO_LINE = 'Aucune ligne créée';
 const TOOL_SIZES = {
   sticky_note: [150, 150], text: [200, 30], 'shape:rectangle': [120, 80], 'shape:circle': [100, 100], 'shape:diamond': [120, 100], 'shape:triangle': [120, 100], line: [200, 20], card: [200, 120], frame: [400, 300],
   comment: [28, 28], mindmap: [170, 56], kanban: [548, 116], datatable: [360, 118], code: [320, 180], flipcard: [220, 140]
@@ -1104,7 +1106,7 @@ function onPointerDown(e) {
   if (dot && sel) {
     e.preventDefault();
     const b = itemBox(sel);
-    linkState = { fromId: sel.id, from: { x: b.x + b.w / 2, y: b.y + b.h / 2 }, to: pt };
+    linkState = { fromId: sel.id, from: { x: b.x + b.w / 2, y: b.y + b.h / 2 }, to: pt, downX: e.clientX, downY: e.clientY };
     svg.setPointerCapture(e.pointerId);
     renderOverlay();
     return;
@@ -1342,7 +1344,7 @@ function finishLineDrag() {
   }
 }
 
-function createLine(start, end) {
+function createLine(start, end, message) {
   const data = { type: 'connector', x: 0, y: 0, label: '', lineType: 'straight', startCap: 'none', endCap: 'arrow_filled' };
   L.setEnd(data, 'start', start.id ? start : snapPoint(start));
   L.setEnd(data, 'end', end.id ? end : snapPoint(end));
@@ -1350,8 +1352,32 @@ function createLine(start, end) {
   const item = state.addItem(data);
   setTool('select');
   focusGroup(item.id);
-  announce(`Créé : ${state.getItemLabel(item)}`);
+  announce(message || `Créé : ${state.getItemLabel(item)}`);
   return item;
+}
+
+/* Relâchement d'un point bleu : sur une autre forme, un lien ; ailleurs sur le canevas, une ligne à fin libre. */
+function finishLink(l, e) {
+  renderOverlay();
+  const from = state.getItem(l.fromId);
+  if (e.type !== 'pointerup' || !from) { announce(NO_LINE); return; }
+  const pt = screenToSvg(e.clientX, e.clientY);
+  const el = document.elementFromPoint(e.clientX, e.clientY);
+  const endId = el?.closest('.canvas-item')?.getAttribute('data-id') ?? (overlay.contains(el) ? hitItem(pt, l.fromId)?.id : null);
+  const end = state.getItem(endId);
+  if (end && !['connector', 'comment'].includes(end.type) && endId !== l.fromId) {
+    state.addItem({ type: 'connector', startId: l.fromId, endId, label: '', lineType: 'straight', endCap: 'arrow_filled', x: 0, y: 0 });
+    state.setSelectedId(l.fromId);
+    announce(`Lien créé entre ${state.getItemLabel(from)} et ${state.getItemLabel(end)}`);
+    return;
+  }
+  const box = itemBox(from);
+  const onStart = p => p.x >= box.x && p.x <= box.x + box.w && p.y >= box.y && p.y <= box.y + box.h;
+  if (!svg.contains(el) || Math.hypot(e.clientX - l.downX, e.clientY - l.downY) < LINK_MIN_DRAG || onStart(pt) || onStart(snapPoint(pt))) {
+    announce(NO_LINE);
+    return;
+  }
+  createLine({ id: l.fromId }, pt, `Ligne créée depuis ${from.content || from.title || state.getItemLabel(from)}, extrémité libre`);
 }
 
 function onPointerUp(e) {
@@ -1417,17 +1443,7 @@ function onPointerUp(e) {
   if (linkState) {
     const l = linkState;
     linkState = null;
-    const target = document.elementFromPoint(e.clientX, e.clientY)?.closest('.canvas-item');
-    const endId = target?.getAttribute('data-id');
-    const end = state.getItem(endId);
-    if (end && end.type !== 'connector' && endId !== l.fromId) {
-      state.addItem({ type: 'connector', startId: l.fromId, endId, label: '', lineType: 'straight', endCap: 'arrow_filled', x: 0, y: 0 });
-      state.setSelectedId(l.fromId);
-      announce(`Lien créé entre ${state.getItemLabel(state.getItem(l.fromId))} et ${state.getItemLabel(end)}`);
-    } else {
-      renderOverlay();
-      announce('Aucun lien créé');
-    }
+    finishLink(l, e);
     return;
   }
   if (marquee) {

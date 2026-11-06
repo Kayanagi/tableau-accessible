@@ -406,7 +406,9 @@ try {
   await page.mouse.click(...Object.values(mid(await box('item-1'))));
   const dot = mid(await page.locator('.link-dot').nth(1).boundingBox());
   await drag(dot, { x: dot.x, y: dot.y + 200 });
-  log('Point bleu : tirer vers un objet crée une flèche, relâcher dans le vide ne crée rien', decorative && link?.startId === 'item-1' && link.endId === 'item-2' && link.lineType === 'straight' && link.endCap === 'arrow_filled' && (await snapshot()).items.length === 4);
+  const freeEnd = (await snapshot()).items.at(-1);
+  log('Point bleu : tirer vers un objet crée une flèche, relâcher dans le vide crée une ligne à fin libre', decorative && link?.startId === 'item-1' && link.endId === 'item-2' && link.lineType === 'straight' && link.endCap === 'arrow_filled' && (await snapshot()).items.length === 5 && freeEnd.startId === 'item-1' && !freeEnd.endId && !!freeEnd.end);
+  await page.keyboard.press('Control+z');
 
   const b1 = await box('item-1'), b2 = await box('item-2');
   await page.keyboard.press('Escape');
@@ -1202,6 +1204,150 @@ try {
   await lp.waitForFunction(() => document.querySelector('#board-search [role=status]').textContent === '1 résultat');
   await lp.keyboard.press('Escape');
   log('Plan, Tableau, CSV et recherche connaissent les lignes libres', /Ligne libre de \(100, 100\) à \(300, 100\)/.test(outlineLines) && /Ligne libre de \(100, 100\)/.test(tableLines) && csvLines.includes('Ligne libre de (100, 100)'));
+  // Sélection de texte native et ligne à extrémité libre (1.8.2)
+  const fShape = (id, x, y, content) => ({ id, type: 'shape', shape: 'rectangle', x, y, width: 160, height: 80, content });
+  const fNative = () => lp.evaluate(() => { const s = getSelection(); return { text: s.toString(), collapsed: s.isCollapsed }; });
+  const fBlank = n => !n.text && n.collapsed;
+  const fBoard = () => lLoad([fShape('a', 200, 200, 'Début'), fShape('b', 800, 200, 'Étape 1'), { id: 'c', type: 'comment', x: 600, y: 480, messages: [] }, { id: 'd', type: 'connector', start: { x: 600, y: 620 }, end: { x: 900, y: 620 } }]);
+  const fPick = async id => { await lp.evaluate(async id => (await import('/js/views/canvas.js')).focusItem(id), id); await lp.waitForSelector('.link-dot'); };
+  const fDot = name => lHandle(`.link-dot[data-link="${name}"]`);
+  const fNew = async () => (await lItems()).find(i => i.type === 'connector' && i.id !== 'd');
+
+  await fBoard();
+  await lp.evaluate(() => getSelection().removeAllRanges());
+  const fTextStyle = await lp.locator('#canvas-items [data-id="a"] .item-text').evaluate(el => [getComputedStyle(el).userSelect, getComputedStyle(el).webkitUserSelect]);
+  await lDrag(await lToScreen(100, 240), await lToScreen(1100, 240));
+  const fOverBackground = await fNative();
+  await lDrag(await lToScreen(280, 240), await lToScreen(280, 340));
+  const fOverObject = await fNative();
+  await lDrag(await lToScreen(100, 500), await lHandle('#btn-comments'));
+  const fOverPanel = await fNative();
+  log('Canevas : aucune sélection de texte native après un glisser sur le fond, sur un objet et jusqu’à un panneau', fTextStyle.every(v => v === 'none') && fBlank(fOverBackground) && fBlank(fOverObject) && fBlank(fOverPanel), JSON.stringify([fTextStyle, fOverBackground, fOverObject, fOverPanel]));
+
+  await fBoard();
+  await lp.evaluate(async () => (await import('/js/views/inline-editor.js')).open('a'));
+  const fEditor = lp.locator('.inline-editor');
+  await fEditor.waitFor();
+  const fEditorStyle = await fEditor.evaluate(el => getComputedStyle(el).userSelect);
+  const fEditorBox = await fEditor.boundingBox();
+  await lp.mouse.move(fEditorBox.x + 2, fEditorBox.y + fEditorBox.height / 2);
+  await lp.mouse.down();
+  await lp.mouse.move(fEditorBox.x + fEditorBox.width - 2, fEditorBox.y + fEditorBox.height / 2, { steps: 6 });
+  await lp.mouse.up();
+  const fEditorPicked = await fEditor.evaluate(el => el.value.slice(el.selectionStart, el.selectionEnd));
+  await lp.keyboard.press('Escape');
+  const fReadable = await lp.evaluate(() => ['#view-outline', '#view-table', '#comments-panel', '#frames-panel'].map(s => { const el = document.querySelector(s); return el ? getComputedStyle(el).userSelect : 'absent'; }));
+  await lp.click('#tab-outline');
+  const fOutlineStyle = await lp.locator('#view-outline .outline-item-btn').first().evaluate(el => getComputedStyle(el.parentElement).userSelect);
+  await lp.click('#tab-table');
+  const fTableStyle = await lp.locator('#view-table td').first().evaluate(el => getComputedStyle(el).userSelect);
+  await lp.click('#tab-canvas');
+  log('Éditeur sur place, Plan, Tableau et panneaux restent sélectionnables', fEditorStyle === 'text' && fEditorPicked === 'Début' && ![...fReadable, fOutlineStyle, fTableStyle].includes('none'), JSON.stringify([fEditorStyle, fEditorPicked, fReadable, fOutlineStyle, fTableStyle]));
+
+  await fBoard();
+  await fPick('a');
+  const fBefore = (await lItems()).length;
+  await lDrag(await fDot('e'), await lToScreen(500, 420));
+  await lAnn(/^Ligne créée depuis Début, extrémité libre$/);
+  ln = await fNew();
+  const fPicked = await lState('getSelectedIds');
+  log('Point bleu : relâcher dans le vide crée une ligne, début accroché et fin libre', ln?.startId === 'a' && !ln.start && !ln.endId && ln.end?.x === 500 && ln.end?.y === 420 && ln.lineType === 'straight' && ln.endCap === 'arrow_filled' && ln.startCap === 'none', JSON.stringify(ln));
+  log('Ligne créée : sélectionnée, avec ses poignées et sa barre', fPicked.length === 1 && fPicked[0] === ln.id && await lp.locator('[data-end="start"]').count() === 1 && await lp.locator('[data-end="end"]').count() === 1 && await lp.locator('.context-toolbar').isVisible() && await lp.locator('.link-dot').count() === 0);
+  await lp.keyboard.press('Control+z');
+  const fUndone = await lItems();
+  await lp.keyboard.press('Control+Shift+z');
+  const fRedone = await fNew();
+  log('Ligne créée : un seul pas d’annulation', fUndone.length === fBefore && !fUndone.some(i => i.id === ln.id) && fRedone?.id === ln.id && fRedone.end?.x === 500);
+
+  await lp.evaluate(async id => (await import('/js/views/canvas.js')).focusItem(id), ln.id);
+  await lDrag(await lHandle('[data-end="end"]'), await lToScreen(880, 240));
+  await lAnn(/^Fin accrochée à /);
+  ln = await fNew();
+  log('Extrémité libre : se ré-accroche quand on la dépose sur une forme', ln.startId === 'a' && ln.endId === 'b' && !ln.end, JSON.stringify(ln));
+
+  await fBoard();
+  await fPick('a');
+  await lDrag(await fDot('e'), await lToScreen(750, 620));
+  await lAnn(/extrémité libre$/);
+  const fOnLine = await fNew();
+  await fBoard();
+  await fPick('a');
+  const fPin = await lp.locator('#canvas-items [data-id="c"]').boundingBox();
+  await lDrag(await fDot('e'), { x: fPin.x + fPin.width / 2, y: fPin.y + fPin.height / 2 });
+  await lAnn(/extrémité libre$/);
+  const fOnComment = await fNew();
+  log('Point bleu : relâcher sur une ligne ou un commentaire laisse la fin libre', fOnLine?.startId === 'a' && !fOnLine.endId && fOnLine.end?.x === 750 && fOnLine.end?.y === 620 && fOnComment?.startId === 'a' && !fOnComment.endId && !!fOnComment.end, JSON.stringify([fOnLine, fOnComment]));
+
+  const fNothing = async (to, from = 'e') => {
+    await fBoard();
+    await fPick('a');
+    const start = await fDot(from);
+    await lDrag(start, typeof to === 'function' ? await to(start) : to);
+    await lAnn(/^Aucune ligne créée$/);
+    return !(await fNew()) && (await lState('getSelectedIds'))[0] === 'a';
+  };
+  const fOnSelf = await fNothing(await lToScreen(280, 240));
+  const fOnSelfEdge = await fNothing(await lToScreen(205, 205));
+  const fTiny = await fNothing(s => ({ x: s.x + 7, y: s.y }));
+  const fOnInterface = await fNothing(() => lHandle('#btn-comments'));
+  log('Point bleu : relâcher sur l’objet de départ, moins de 8 px ou sur l’interface ne crée rien', fOnSelf && fOnSelfEdge && fTiny && fOnInterface, JSON.stringify([fOnSelf, fOnSelfEdge, fTiny, fOnInterface]));
+
+  await fBoard();
+  await fPick('a');
+  const fAtLimit = await fDot('e');
+  await lDrag(fAtLimit, { x: fAtLimit.x + 9, y: fAtLimit.y });
+  await lAnn(/extrémité libre$/);
+  const fShort = await fNew();
+  log('Point bleu : à partir de 8 px à l’écran, la ligne est créée', fShort?.startId === 'a' && !!fShort.end, JSON.stringify(fShort));
+
+  await fBoard();
+  await lp.evaluate(async () => { const c = await import('/js/views/canvas.js'); c.zoomIn(); c.zoomIn(); c.zoomIn(); });
+  const fZoom = await lp.evaluate(async () => (await import('/js/views/canvas.js')).getZoom());
+  await fPick('a');
+  const fZoomDot = await fDot('e');
+  await lDrag(fZoomDot, { x: fZoomDot.x + 5, y: fZoomDot.y });
+  await lAnn(/^Aucune ligne créée$/);
+  const fZoomTiny = await fNew();
+  await lDrag(fZoomDot, { x: fZoomDot.x + 40, y: fZoomDot.y });
+  await lAnn(/extrémité libre$/);
+  const fZoomed = await fNew();
+  const fZoomX = await lp.evaluate(async ([x, y]) => { const c = await import('/js/views/canvas.js'); const r = c.getContainer().getBoundingClientRect(); const o = c.toContainer(0, 0), u = c.toContainer(1, 0); return Math.round((x - r.left - o.x) / (u.x - o.x)); }, [fZoomDot.x + 40, fZoomDot.y]);
+  log('Point bleu : le seuil se mesure à l’écran, quel que soit le zoom', fZoom !== 1 && !fZoomTiny && fZoomed?.end.x === fZoomX, JSON.stringify([fZoom, fZoomed?.end, fZoomX]));
+
+  await fBoard();
+  await lp.evaluate(async () => (await import('/js/preferences.js')).setPref('snapGrid', true));
+  await fPick('a');
+  await lDrag(await fDot('e'), await lToScreen(513, 437));
+  await lAnn(/extrémité libre$/);
+  const fSnapped = await fNew();
+  await lp.evaluate(async () => (await import('/js/preferences.js')).setPref('snapGrid', false));
+  log('Point bleu : l’extrémité libre suit l’alignement sur la grille', fSnapped?.end?.x === 500 && fSnapped?.end?.y === 450, JSON.stringify(fSnapped));
+
+  await fBoard();
+  await fPick('a');
+  await lDrag(await fDot('e'), await lToScreen(880, 240));
+  await lAnn(/^Lien créé entre /);
+  const fLinked = await fNew();
+  log('Point bleu : relâcher sur une autre forme crée toujours le lien', fLinked?.startId === 'a' && fLinked.endId === 'b' && !fLinked.end && (await lState('getSelectedIds'))[0] === 'a', JSON.stringify(fLinked));
+
+  await lLoad([fShape('a', 200, 200, 'Début'), fShape('n', 200, 110, 'Voisin')]);
+  await fPick('a');
+  await lDrag(await fDot('e'), await fDot('n'));
+  await lAnn(/^Lien créé entre /);
+  const fUnderDot = await fNew();
+  log('Point bleu : relâcher sur un point bleu posé sur une forme voisine crée le lien', fUnderDot?.endId === 'n', JSON.stringify(fUnderDot));
+
+  await fBoard();
+  await fPick('a');
+  const fCancel = await fDot('e');
+  await lp.mouse.move(fCancel.x, fCancel.y);
+  await lp.mouse.down();
+  await lp.mouse.move(fCancel.x + 100, fCancel.y + 100, { steps: 4 });
+  await lp.evaluate(() => document.querySelector('.canvas-svg').dispatchEvent(new PointerEvent('pointercancel', { pointerId: 1, bubbles: true })));
+  await lAnn(/^Aucune ligne créée$/);
+  await lp.mouse.up();
+  log('Point bleu : un geste annulé par le système ne crée rien', !(await fNew()) && await lp.locator('.link-preview').count() === 0);
+
   log('Lignes : pas d’erreurs console', lineErrors.length === 0, lineErrors.join('; '));
   await lineCtx.close();
 

@@ -2,6 +2,15 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.8.2] - 2026-11-06
+
+### Corrigé
+- Glisser sur le canevas ne surligne plus le texte des objets. L’éditeur sur place, les champs, les vues Plan et Tableau et les panneaux restent sélectionnables.
+
+### Modifié
+- Tirer un point bleu puis relâcher dans le vide, sur une ligne ou sur un commentaire crée une ligne : le début reste accroché à l’objet, la fin est un point libre, alignée sur la grille si l’option est active. La ligne devient la sélection et s’annule en un seul pas. Sa fin se ré-accroche si on la dépose ensuite sur une forme.
+- Relâcher sur l’objet de départ, hors du canevas ou après moins de 8 px à l’écran ne crée rien et annonce « Aucune ligne créée ». Relâcher sur une autre forme crée toujours le lien.
+
 ## [1.8.1] - 2026-11-05
 
 ### Corrigé

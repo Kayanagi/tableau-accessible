@@ -91,6 +91,10 @@ Catégories : Réunions et ateliers, Idéation et brainstorming, Recherche et de
 - Type : droit, à angles droits, courbe (Bézier). Trait : plein, tirets, pointillés. Option « sauts de ligne » aux croisements.
 - Insérer sur une ligne : carte, texte, post-it carré ou large, rectangle, rectangle arrondi, cercle, triangle, losange, bulle, parallélogramme, étoile.
 
+### Ligne tirée d'un objet, relâchée dans le vide (non observé dans Miro)
+
+Ce geste n'a pas pu être reproduit par automatisation dans Miro : il n'est donc pas observé. Le comportement de Baro vient de la consigne de Wesley : une ligne n'est pas obligée de finir sur une autre forme. Relâcher dans le vide crée une ligne dont le début reste accroché à l'objet de départ et dont la fin est un point libre.
+
 ## Glisser-déposer
 
 - Depuis la palette du post-it : saisir une pastille et la déposer sur le canevas pose le post-it à cet endroit, dans cette couleur, et ouvre l'édition.
