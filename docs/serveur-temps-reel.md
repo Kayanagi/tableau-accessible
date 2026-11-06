@@ -49,7 +49,9 @@ CREATE TABLE users (
   display_name TEXT NOT NULL,              -- 1 à 50 caractères
   password_hash TEXT NOT NULL,             -- scrypt$N$r$p$sel$hash
   created_at INTEGER NOT NULL,
-  updated_at INTEGER NOT NULL
+  updated_at INTEGER NOT NULL,
+  last_active_at INTEGER,                  -- migration 2 ; NULL n'est jamais traité comme inactif
+  inactivity_warned_at INTEGER             -- migration 2 ; date de l'avertissement réussi
 );
 
 CREATE TABLE boards (
@@ -150,6 +152,12 @@ Décisions associées :
 | Export du compte | 1 / 10 min par compte |
 
 - Connexion : message unique « E-mail ou mot de passe incorrect », calcul scrypt factice si le compte n'existe pas. Les 401 ne devraient déclencher aucune prison fail2ban (jails actives : `nginx-http-auth`, `nginx-botsearch`, `nginx-bad-request`) ; à confirmer au test de fumée.
+- **Comptes inactifs** : un compte sans connexion depuis 24 mois est supprimé, après un e-mail d'avertissement envoyé 30 jours avant (`server/src/inactivity.js`). Durées en jours fixes : avertissement après 700 jours, suppression après 730.
+  - Activité : une connexion, ou une session de compte au même endroit que le glissement horaire du jeton. Elle écrit `last_active_at` et remet `inactivity_warned_at` à `NULL`. Une session invitée ne compte pas pour un compte.
+  - Passage au démarrage puis toutes les 24 h, 100 comptes au plus (suppressions d'abord, envois avec le reste), un compte à la fois. Une erreur est journalisée et le serveur continue. Les journaux ne portent que l'identifiant du compte.
+  - **Règle de sûreté : jamais de suppression sans avertissement réussi d'au moins 30 jours.** Un envoi échoué ne pose aucune date et sera réessayé. Les conditions sont relues dans la transaction de suppression. La suppression suit la même logique que `DELETE /api/me` (`server/src/accounts.js`).
+  - Envoi par `/usr/sbin/sendmail` (Postfix local, relais OVH), sans shell ni dépendance. Réussi signifie : code de sortie 0, donc message accepté par Postfix, pas forcément distribué. Une adresse que Postfix lirait autrement qu'une adresse unique et ASCII (virgule, guillemets, partie locale accentuée, retour à la ligne) est refusée : son compte n'est ni averti ni supprimé.
+  - Configuration, sans secret : `BARO_INACTIVITY` (`actif` par défaut en production, `inactif` ailleurs ; `inactif` désactive tout) et `BARO_MAIL_FROM` (`contact@dwes.fr` par défaut). Les valeurs par défaut suffisent en production : `ecosystem.config.cjs` ne change pas (§0).
 - Quotas : 100 tableaux possédés et 100 Mio cumulés par compte. Le quota d’octets est configurable par `BARO_ACCOUNT_BOARD_QUOTA_BYTES` et s’applique aux créations et remplacements entiers ; dépassement : `403 quota_exceeded`.
 
 ## 4. API HTTP (contrat, pour `api-designer`)
@@ -325,11 +333,12 @@ server/package.json, package-lock.json, ecosystem.config.cjs
 server/src/index.js, config.js, http.js (routeur, garde Origin, corps JSON, erreurs)
 server/src/db.js, migrations.js
 server/src/auth.js (scrypt, file de calcul, sessions), rate-limit.js
+server/src/accounts.js, inactivity.js, mail.js (comptes inactifs, §3)
 server/src/routes/auth.js, me.js, boards.js
 server/src/validate.js
 server/scripts/reset-password.mjs, backup.mjs
 server/deploy/baro.nginx.conf.example, baro-backup.service, baro-backup.timer
-server/tests/auth.test.js, boards.test.js, validate.test.js
+server/tests/auth.test.js, boards.test.js, validate.test.js, inactivity.test.js
 js/model-rules.js            (nouveau)
 js/sync/api.js               (nouveau)
 js/store/remote-boards.js    (nouveau, miroir)
@@ -426,6 +435,7 @@ Environnement : `node:test` côté serveur, base temporaire, sur port éphémèr
 | Comparaison lancée sur un état vide : suppressions en masse | Élevée | §5 (référence préalable), test 10 de la v1.10.0 |
 | Un éditeur efface tout le tableau (invités compris), sans historique de versions côté serveur | Moyenne | Lien en lecture par défaut, sauvegarde quotidienne. Historique de versions : version ultérieure |
 | Pas de vérification d'e-mail, inscription ouverte : abus de stockage | Moyenne | Débit, quotas, `BARO_INSCRIPTIONS=ferme` |
+| Comptes inactifs : avertissement accepté par Postfix puis jamais reçu (adresse non vérifiée, rebond) : suppression quand même au bout de 30 jours | Moyenne | Connaissance des rebonds hors périmètre. Sauvegarde quotidienne, 14 jours conservés |
 | Mot de passe oublié sans parcours public | Moyenne | Commande d'administration ; parcours e-mail à planifier |
 | Mémoire : 1,1 Go disponible, pas de swap | Moyenne | 2 scrypt simultanés, 400 Mo PM2, une seule instance |
 | 5 000 objets : `notify()` déclenche déjà snapshot et rendu complet à chaque changement ; les lots distants les multiplient | Moyenne | Application groupée par trame (une seule `notify`), miroir à 1 s, mesure par `performance-engineer` avant la v1.10.0. Rendu incrémental si nécessaire |
