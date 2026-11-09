@@ -99,6 +99,8 @@ button:hover { background: var(--surface); }
 .field-error, .account-message { margin: .25rem 0 0; padding-left: .5rem; border-left: 4px solid var(--danger); color: var(--fg); font-size: .875rem; font-weight: 600; overflow-wrap: anywhere; }
 .account-message { margin: 0 0 .5rem; padding: .35rem .5rem; }
 .field-error[hidden], .account-message[hidden] { display: none; }
+.account-message.is-success { border-left-color: var(--primary); }
+.account-intro { margin: 0 0 .75rem; }
 .account-switch { margin-top: .75rem; overflow-wrap: anywhere; }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .25rem; }
 .login-retry { margin-bottom: .75rem; }

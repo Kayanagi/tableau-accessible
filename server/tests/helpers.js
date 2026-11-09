@@ -13,12 +13,16 @@ export const nextIp = () => { ipCounter++; return `10.${(ipCounter >> 16) & 255}
 
 let userCounter = 0;
 
-/* Serveur réel sur port éphémère, avec base temporaire et N de scrypt abaissé par configuration. */
-export async function startServer(env = {}, tweak = config => config) {
+/*
+ * Serveur réel sur port éphémère, avec base temporaire et N de scrypt abaissé par configuration.
+ * Les e-mails ne partent jamais : ils sont gardés dans `sent` (ou confiés à `send` si fourni).
+ */
+export async function startServer(env = {}, tweak = config => config, { send } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'baro-test-'));
   const dbPath = join(dir, 'baro.db');
   const config = tweak(loadConfig({ NODE_ENV: 'test', PORT: '0', BARO_DB: dbPath, BARO_ORIGIN: ORIGIN, BARO_SCRYPT_N: '1024', ...env }));
-  const app = createApp(config);
+  const sent = [];
+  const app = createApp(config, { send: send ?? (async message => { sent.push(message); return true; }) });
   const port = await app.listen(0);
   const base = `http://127.0.0.1:${port}`;
 
@@ -47,7 +51,10 @@ export async function startServer(env = {}, tweak = config => config) {
     rmSync(dir, { recursive: true, force: true });
   }
 
-  return { app, base, call, signUp, close, dbPath, dir };
+  /* Attend la fin des envois différés (mot de passe oublié). */
+  const settle = () => app.passwordResets.idle();
+
+  return { app, base, call, signUp, close, dbPath, dir, sent, settle };
 }
 
 export function tokenFrom(res, name = COOKIE) {

@@ -14,6 +14,16 @@ function parseOrigin(value) {
   return value;
 }
 
+/* Adresse publique des liens envoyés par e-mail : une origine exacte, comme BARO_ORIGIN. */
+function parsePublicUrl(value) {
+  let url;
+  try { url = new URL(value); } catch { throw new Error(`BARO_PUBLIC_URL invalide : ${value}`); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.origin !== value) {
+    throw new Error(`BARO_PUBLIC_URL doit être une origine exacte, sans chemin ni barre finale : ${value}`);
+  }
+  return value;
+}
+
 function parsePort(value) {
   const port = Number(value);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error(`PORT invalide : ${value}`);
@@ -45,6 +55,12 @@ export function loadConfig(env = process.env) {
   const mailFrom = safeAddress(env.BARO_MAIL_FROM ?? 'contact@dwes.fr');
   if (!mailFrom) throw new Error('BARO_MAIL_FROM doit être une adresse e-mail simple');
 
+  const publicUrl = parsePublicUrl(env.BARO_PUBLIC_URL ?? 'https://baro.dwes.fr');
+  if (production && !publicUrl.startsWith('https://')) throw new Error('BARO_PUBLIC_URL doit être en https quand NODE_ENV=production');
+  // Capture des e-mails dans un fichier, pour les tests de bout en bout : jamais en production.
+  const mailCapture = env.BARO_MAIL_CAPTURE || null;
+  if (mailCapture && production) throw new Error('BARO_MAIL_CAPTURE est refusée quand NODE_ENV=production');
+
   const insecureCookie = env.BARO_INSECURE_COOKIE === '1';
   if (env.BARO_INSECURE_COOKIE !== undefined && env.BARO_INSECURE_COOKIE !== '1' && env.BARO_INSECURE_COOKIE !== '0') {
     throw new Error('BARO_INSECURE_COOKIE doit valoir 0 ou 1');
@@ -63,6 +79,8 @@ export function loadConfig(env = process.env) {
     inscriptionsOpen: inscriptions === 'ouvert',
     inactivityEnabled: inactivity === 'actif',
     mailFrom,
+    publicUrl,
+    mailCapture,
     accountBoardQuotaBytes: parsePositiveInteger('BARO_ACCOUNT_BOARD_QUOTA_BYTES', env.BARO_ACCOUNT_BOARD_QUOTA_BYTES, 100 * 1024 * 1024),
     // Le préfixe __Host- impose Secure : le mode de test local change donc aussi de nom de cookie.
     cookie: { name: insecureCookie ? INSECURE_COOKIE_NAME : COOKIE_NAME, secure: !insecureCookie },

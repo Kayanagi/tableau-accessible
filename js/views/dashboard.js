@@ -120,13 +120,13 @@ export function render(route) {
     const link = document.createElement('a'); link.href = `#/espace/${space.id}`; link.textContent = space.nom;
     if (route.spaceId === space.id) link.setAttribute('aria-current', 'page');
     const rename = document.createElement('button'); rename.textContent = 'Renommer'; rename.setAttribute('aria-label', `Renommer l’espace ${space.nom}`);
-    rename.onclick = () => ask('Renommer l’espace', space.nom, nom => { const ok = boards.renameSpace(space.id, nom); render(router.getRoute()); announce(ok ? 'Espace renommé' : 'Stockage de cet appareil plein : espace non renommé'); });
+    rename.onclick = () => ask('Renommer l’espace', space.nom, nom => { const ok = boards.renameSpace(space.id, nom); render(router.getRoute()); announce(ok ? 'Espace renommé' : 'Espace non renommé : enregistrement impossible'); });
     const del = document.createElement('button'); del.textContent = 'Supprimer'; del.setAttribute('aria-label', `Supprimer l’espace ${space.nom}`);
-    del.onclick = () => ask(`Supprimer l’espace « ${space.nom} » ? Les tableaux seront conservés.`, '', () => { if (!boards.removeSpace(space.id)) { announce('Stockage de cet appareil indisponible : espace non supprimé'); return; } if (route.spaceId === space.id) router.navigate('/'); else render(router.getRoute()); announce('Espace supprimé, tableaux conservés'); }, true);
+    del.onclick = () => ask(`Supprimer l’espace « ${space.nom} » ? Les tableaux seront conservés.`, '', () => { if (!boards.removeSpace(space.id)) { announce('Espace non supprimé : enregistrement impossible'); return; } if (route.spaceId === space.id) router.navigate('/'); else render(router.getRoute()); announce('Espace supprimé, tableaux conservés'); }, true);
     row.append(link, rename, del); nav.append(row);
   }
   const add = document.createElement('button'); add.id = 'btn-create-space'; add.textContent = 'Créer un espace';
-  add.onclick = () => ask('Créer un espace', '', nom => { const ok = boards.createSpace(nom); render(router.getRoute()); announce(ok ? 'Espace créé' : 'Stockage de cet appareil plein : espace non créé'); });
+  add.onclick = () => ask('Créer un espace', '', nom => { const ok = boards.createSpace(nom); render(router.getRoute()); announce(ok ? 'Espace créé' : 'Espace non créé : la limite de 200 espaces, ou de 2 Mio de données du compte, est atteinte'); });
   nav.append(add);
   container.appendChild(nav);
 
@@ -238,7 +238,8 @@ export function render(route) {
 
 function signature() {
   const connected = account.isConnected();
-  return JSON.stringify([connected, account.getInvites().map(i => [i.id, i.boardName, i.invitedByName, i.role]), boards.getAll().map(b => [b.id, b.nom, b.icon, b.favori, b.espaceId, b.dernièreOuverture, b.role, b.perdu, b.memberCount, b.ownerName, b.données?.items?.length ?? b.nbÉléments])]);
+  // Les espaces viennent du serveur avec le compte : un autre onglet ou appareil peut les changer.
+  return JSON.stringify([connected, boards.getSpaces().map(s => [s.id, s.nom]), account.getInvites().map(i => [i.id, i.boardName, i.invitedByName, i.role]), boards.getAll().map(b => [b.id, b.nom, b.icon, b.favori, b.espaceId, b.dernièreOuverture, b.role, b.perdu, b.memberCount, b.ownerName, b.données?.items?.length ?? b.nbÉléments])]);
 }
 
 /* Fermeture de session : rien de ce qui était affiché ne reste dans la page. */

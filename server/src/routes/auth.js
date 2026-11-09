@@ -1,8 +1,10 @@
 import { ACCOUNT_BODY, HttpError, tooMany } from '../http.js';
-import { newId, publicUser } from '../auth.js';
+import { hashToken, newId, publicUser } from '../auth.js';
 import { isValidEmail, isValidPassword, normalizeDisplayName, normalizeEmail, normalizePassword } from '../validate.js';
 
 const MIN = 60 * 1000;
+const HOUR = 60 * MIN;
+const INVALID_RESET = 'Ce lien de réinitialisation n’est plus valable. Refaites une demande.';
 const WRONG_LOGIN = 'E-mail ou mot de passe incorrect';
 
 function invalid(code, message) {
@@ -10,7 +12,7 @@ function invalid(code, message) {
 }
 
 export function registerAuthRoutes(router, app) {
-  const { db, passwords, sessions, limiter, config } = app;
+  const { db, passwords, sessions, limiter, config, passwordResets } = app;
   const findUser = db.prepare('SELECT * FROM users WHERE email = ?');
   const insertUser = db.prepare('INSERT INTO users (id, email, display_name, password_hash, created_at, updated_at, last_active_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
   const rehash = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ? AND password_hash = ?');
@@ -95,6 +97,35 @@ export function registerAuthRoutes(router, app) {
     sessions.destroy(ctx.session.hash);
     return { status: 204, headers: { 'Set-Cookie': sessions.clearCookie() } };
   }, { auth: 'session', bodyLimit: 4 * 1024 });
+
+  /*
+   * Mot de passe oublié : 202 {} identique avec ou sans compte, y compris au-delà des débits, qui
+   * ne font que supprimer l'envoi. Recherche du compte et envoi partent après la réponse.
+   * Débits comptés que le compte existe ou non ; l'adresse n'est gardée en mémoire que hachée.
+   */
+  router.add('POST', '/api/auth/password-reset', ctx => {
+    const email = normalizeEmail(ctx.body.email);
+    if (!isValidEmail(email)) throw invalid('invalid_email', 'Adresse e-mail invalide.');
+    const over = limiter.hit('reset-ip', ctx.ipKey, 10, HOUR) ? 'préfixe IP'
+      : limiter.hit('reset-email', hashToken(email).toString('hex'), 3, HOUR) ? 'adresse'
+        : limiter.hit('reset-all', '*', 50, HOUR) ? 'total' : null;
+    if (over) console.warn(`[baro] réinitialisation : débit atteint (${over}), aucun envoi`);
+    else passwordResets.request(email);
+    return { status: 202, body: {} };
+  }, { bodyLimit: ACCOUNT_BODY });
+
+  /* Jeton inexistant, expiré ou déjà utilisé : même réponse. Toutes les sessions du compte sont fermées. */
+  router.add('POST', '/api/auth/password-reset/confirm', async ctx => {
+    const { token } = ctx.body;
+    const invalidToken = () => invalid('invalid_token', INVALID_RESET);
+    const userId = passwordResets.check(token);
+    if (!userId) throw invalidToken();
+    const password = normalizePassword(ctx.body.password);
+    if (!isValidPassword(password)) throw invalid('invalid_password', 'Le mot de passe doit contenir de 12 à 128 caractères.');
+    const hash = await passwords.hash(password, ctx.ipKey);
+    if (!passwordResets.consume(token, userId, hash)) throw invalidToken();
+    return { status: 204 };
+  }, { bodyLimit: ACCOUNT_BODY, ipRate: { bucket: 'reset-confirm-ip', limit: 10, windowMs: 15 * MIN } });
 
   /*
    * Interrogée par auth_request à chaque requête statique du site : ni corps, ni limite de débit,

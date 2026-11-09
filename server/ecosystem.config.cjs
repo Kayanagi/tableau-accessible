@@ -15,6 +15,8 @@ module.exports = {
         PORT: 3006,
         BARO_DB: '/var/lib/baro/baro.db',
         BARO_ORIGIN: 'https://baro.dwes.fr',
+        // Base des liens envoyés par e-mail (mot de passe oublié).
+        BARO_PUBLIC_URL: 'https://baro.dwes.fr',
         BARO_INSCRIPTIONS: 'ouvert'
       }
     }

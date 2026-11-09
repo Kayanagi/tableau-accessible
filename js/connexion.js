@@ -7,6 +7,8 @@ const PASSWORD_MIN = 12;
 const PASSWORD_MAX = 128;
 const TIMEOUT_MS = 30000;
 const UNREACHABLE = 'Serveur injoignable. Vérifiez votre connexion ou réessayez plus tard.';
+const RESET_SENT = 'Si un compte existe pour cette adresse, un e-mail vient de partir. Le lien est valable une heure. Pensez à vérifier les indésirables.';
+export const FORGOT_HASH = '#mot-de-passe-oublie';
 const FIELD_OF_CODE = { invalid_email: 'email', email_taken: 'email', invalid_password: 'password', invalid_display_name: 'displayName', bad_credentials: 'password' };
 
 let nextField = 0;
@@ -97,7 +99,8 @@ function makeForm({ fields, submitLabel, busyMessage, validate, send, done, anno
   submit.className = 'btn-primary';
   submit.textContent = submitLabel;
   actions.append(submit);
-  form.append(message, required, ...fields.map(f => f.wrap), actions);
+  // Un seul champ : la mention « tous obligatoires » n'apprendrait rien.
+  form.append(message, ...(fields.length > 1 ? [required] : []), ...fields.map(f => f.wrap), actions);
 
   let busy = false;
   // Le focus lit l'erreur du champ ; s'il y est déjà (Entrée dans le champ), rien ne bouge : l'erreur est alors annoncée.
@@ -152,8 +155,9 @@ function switchLine(text, label, run) {
 /*
  * Monte le formulaire dans body, sous le titre title. onSignedIn(user) reçoit le compte une fois le serveur d'accord.
  * Rend setNotice(message) : un message de plus (session expirée, serveur injoignable) sans toucher à la saisie.
+ * forgot : ouvrir directement « Mot de passe oublié » (lien « refaire une demande » de reinitialiser.html).
  */
-export function mountAuth({ title, body, announce, onSignedIn, notice = null }) {
+export function mountAuth({ title, body, announce, onSignedIn, notice = null, forgot = false }) {
   let current = null;
 
   function showLogin(text) {
@@ -168,7 +172,7 @@ export function mountAuth({ title, body, announce, onSignedIn, notice = null }) 
       send: v => post('/auth/login', { email: v.email.trim(), password: v.password }),
       done: res => onSignedIn(res.user)
     });
-    body.append(form);
+    body.append(form, switchLine('', 'Mot de passe oublié ?', () => showForgot(email.input.value)));
     if (!registrationsClosed) body.append(switchLine('Pas encore de compte ? ', 'Créer un compte', showRegister));
     current = message;
     if (text) { setMessage(message, text, true); message.focus(); }
@@ -212,7 +216,50 @@ export function mountAuth({ title, body, announce, onSignedIn, notice = null }) 
     announce('Créer un compte');
   }
 
-  showLogin(notice);
+  /* La réponse est la même que l'adresse ait un compte ou non : rien ne dit ici quels comptes existent. */
+  function showForgot(prefill = '') {
+    title.textContent = 'Mot de passe oublié';
+    body.replaceChildren();
+    const intro = document.createElement('p');
+    intro.className = 'field-hint account-intro';
+    intro.textContent = 'Saisissez l’adresse e-mail de votre compte : vous recevrez un lien pour choisir un nouveau mot de passe.';
+    const email = makeField({ name: 'email', label: 'Adresse e-mail', type: 'email', autocomplete: 'email' });
+    email.input.value = prefill.trim();
+    const { form, message } = makeForm({
+      announce,
+      fields: [email], submitLabel: 'Envoyer le lien', busyMessage: 'Envoi de la demande…',
+      validate: v => clean({ email: checkEmail(v.email) }),
+      send: v => post('/auth/password-reset', { email: v.email.trim() }),
+      done: () => showForgotSent()
+    });
+    body.append(intro, form, switchLine('', 'Retour à la connexion', () => { showLogin(); announce('Se connecter'); }));
+    current = message;
+    email.input.focus();
+    announce('Mot de passe oublié');
+  }
+
+  function showForgotSent() {
+    title.textContent = 'Vérifiez vos e-mails';
+    body.replaceChildren();
+    const sent = document.createElement('p');
+    sent.className = 'account-message is-success';
+    sent.tabIndex = -1;
+    sent.textContent = RESET_SENT;
+    const help = document.createElement('p');
+    help.className = 'field-hint';
+    help.append('Rien reçu ? Vous pouvez refaire une demande dans quelques minutes, ou écrire à ');
+    const mail = document.createElement('a');
+    mail.href = 'mailto:rgpd@dwes.fr';
+    mail.textContent = 'rgpd@dwes.fr';
+    help.append(mail, '.');
+    body.append(sent, help, switchLine('', 'Retour à la connexion', () => { showLogin(); announce('Se connecter'); }));
+    current = null;
+    // Le focus fait lire le message : pas d'alerte en plus, qui le lirait deux fois.
+    sent.focus();
+  }
+
+  if (forgot) showForgot();
+  else showLogin(notice);
   return {
     setNotice(text) { if (current) setMessage(current, text); }
   };
@@ -246,6 +293,10 @@ function startPage() {
     const theme = localStorage.getItem('tableau-accessible-theme');
     if (['light', 'dark', 'high-contrast'].includes(theme)) document.documentElement.setAttribute('data-theme', theme);
   } catch { /* stockage indisponible : le thème du système s'applique */ }
+
+  // Lien « refaire une demande » de reinitialiser.html : le formulaire s'ouvre, l'adresse n'en garde rien.
+  const forgot = location.hash === FORGOT_HASH;
+  if (forgot) history.replaceState(null, '', location.pathname + location.search);
 
   const region = document.getElementById('announcer');
   const announce = text => { region.textContent = ''; setTimeout(() => { region.textContent = text; }, 50); };
@@ -286,7 +337,7 @@ function startPage() {
     } catch { /* coupure réseau : même message qu'un serveur arrêté */ }
     if (status === 401) {
       try { sessionStorage.removeItem(RELOAD_KEY); } catch { /* rien à retirer */ }
-      mountAuth({ title, body: page, announce, onSignedIn: enter });
+      mountAuth({ title, body: page, announce, onSignedIn: enter, forgot });
       return;
     }
     if (status === 204 && (fromRetry || mayReload())) { enter(); return; }

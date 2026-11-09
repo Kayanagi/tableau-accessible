@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#4a2fcc">
+  <meta name="robots" content="noindex">
+  <!-- Le jeton est dans le fragment, jamais envoyé ; il est de plus retiré de l'adresse dès le chargement. -->
+  <meta name="referrer" content="no-referrer">
+  <title>Nouveau mot de passe — Baro, le tableau blanc accessible</title>
+  <!-- Chemins absolus : page publique, servie sans session comme connexion.html. -->
+  <link rel="stylesheet" href="/css/connexion.css">
+</head>
+<body>
+  <a href="#reinitialiser-main" class="skip-link">Aller au contenu principal</a>
+  <main id="reinitialiser-main" class="login-screen" tabindex="-1">
+    <div class="login-card">
+      <p class="login-brand">Baro, le tableau blanc accessible</p>
+      <h1 id="reset-title" tabindex="-1">Choisir un nouveau mot de passe</h1>
+      <div id="reset-body" class="account-body">
+        <noscript><p>Cette page a besoin de JavaScript pour fonctionner.</p></noscript>
+      </div>
+      <footer class="login-footer">
+        <p class="field-hint">Un problème pour retrouver l’accès à votre compte ? Écrivez à <a href="mailto:rgpd@dwes.fr">rgpd@dwes.fr</a>. Consultez la page <a href="/confidentialite.html" target="_blank" rel="noopener">Confidentialité (nouvel onglet)</a> pour savoir quelles données Baro conserve.</p>
+      </footer>
+    </div>
+  </main>
+  <div id="announcer" aria-live="polite" aria-atomic="true" class="sr-only"></div>
+  <script type="module" src="/js/reinitialiser.js"></script>
+</body>
+</html>

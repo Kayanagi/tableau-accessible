@@ -1,5 +1,6 @@
 import { HttpError } from '../http.js';
 import { newId } from '../auth.js';
+import { createAccountUsage } from '../accounts.js';
 import { ValidationError, isValidIcon, normalizeBoardName, prepareBoard, prepareImport } from '../validate.js';
 
 const MAX_OWNED_BOARDS = 100;
@@ -58,12 +59,8 @@ export function registerBoardRoutes(router, app) {
   const { requireRole } = createBoardAccess(db);
   const countOwned = db.prepare("SELECT COUNT(*) AS n FROM board_members WHERE user_id = ? AND role = 'owner'");
   const ownerOf = db.prepare("SELECT user_id AS userId FROM board_members WHERE board_id = ? AND role = 'owner'");
-  const ownedBytes = db.prepare(`SELECT COALESCE(SUM(
-      length(CAST(b.name AS BLOB)) + length(CAST(b.icon AS BLOB)) + length(CAST(b.meta AS BLOB)) +
-      (SELECT COALESCE(SUM(length(CAST(i.data AS BLOB))), 0) FROM board_items i WHERE i.board_id = b.id)
-    ), 0) AS bytes
-    FROM boards b JOIN board_members m ON m.board_id = b.id
-    WHERE m.user_id = ? AND m.role = 'owner'`);
+  // Le quota compte aussi les données du compte (espaces, favoris, modèles) : un seul plafond de 100 Mio.
+  const usage = createAccountUsage(db);
   const boardBytes = db.prepare(`SELECT length(CAST(name AS BLOB)) + length(CAST(icon AS BLOB)) + length(CAST(meta AS BLOB)) +
       (SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0) FROM board_items WHERE board_id = boards.id) AS bytes
     FROM boards WHERE id = ?`);
@@ -110,7 +107,7 @@ export function registerBoardRoutes(router, app) {
       if (countOwned.get(ctx.session.userId).n >= MAX_OWNED_BOARDS) {
         throw new HttpError(403, 'quota_exceeded', `Vous avez atteint la limite de ${MAX_OWNED_BOARDS} tableaux.`);
       }
-      requireQuota(ctx.session.userId, ownedBytes.get(ctx.session.userId).bytes + serializedBytes(finalName, icon, prepared));
+      requireQuota(ctx.session.userId, usage.totalBytes(ctx.session.userId) + serializedBytes(finalName, icon, prepared));
       db.prepare('INSERT INTO boards (id, name, icon, meta, rev, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)')
         .run(id, finalName, icon, JSON.stringify(prepared.meta), t, t);
       db.prepare("INSERT INTO board_members (board_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)").run(id, ctx.session.userId, t);
@@ -150,7 +147,7 @@ export function registerBoardRoutes(router, app) {
       if (!owner) throw notFound();
       const stored = boardBytes.get(ctx.params.id);
       const row = db.prepare('SELECT name, icon FROM boards WHERE id = ?').get(ctx.params.id);
-      requireQuota(owner.userId, ownedBytes.get(owner.userId).bytes - stored.bytes + serializedBytes(row.name, row.icon, prepared));
+      requireQuota(owner.userId, usage.totalBytes(owner.userId) - stored.bytes + serializedBytes(row.name, row.icon, prepared));
       const next = current.rev + 1;
       // Le nom ne suit que PATCH : un renommage ailleurs ne provoque ni conflit ni retour en arrière.
       db.prepare('UPDATE boards SET meta = ?, rev = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(prepared.meta), next, t, ctx.params.id);

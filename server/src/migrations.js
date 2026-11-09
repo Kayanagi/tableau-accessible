@@ -104,6 +104,23 @@ export const MIGRATIONS = [
     created_at INTEGER NOT NULL,
     PRIMARY KEY (owner_id, import_key)
   ) WITHOUT ROWID;
+  `,
+  `
+  CREATE TABLE password_resets (
+    token_hash BLOB PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER
+  ) WITHOUT ROWID;
+  CREATE INDEX password_resets_user ON password_resets(user_id);
+
+  CREATE TABLE account_data (
+    user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    data TEXT NOT NULL,
+    rev INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  ) WITHOUT ROWID;
   `
 ];
 

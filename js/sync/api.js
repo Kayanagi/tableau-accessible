@@ -111,6 +111,8 @@ export const updateMe = fields => request('PATCH', '/me', { body: fields });
 export const changePassword = fields => request('POST', '/me/password', { body: fields });
 export const deleteMe = fields => request('DELETE', '/me', { body: fields });
 export const exportAccount = () => request('GET', '/me/export');
+export const getAccountData = () => request('GET', '/me/data');
+export const putAccountData = (baseRev, data, options = {}) => request('PUT', '/me/data', { body: { baseRev, data }, ...options });
 
 export const listBoards = () => request('GET', '/boards');
 export const createBoard = fields => request('POST', '/boards', { body: fields });

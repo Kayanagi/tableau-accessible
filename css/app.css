@@ -1586,6 +1586,7 @@ body:has(.notice) #app-board:not([hidden]) { height: auto; flex: 1 1 0; min-heig
 .field-error[hidden], .account-message[hidden] { display: none; }
 .account-who, .account-switch { overflow-wrap: anywhere; }
 .account-switch { margin-top: .75rem; }
+.login-card .account-intro { margin: 0 0 .75rem; }
 .account-section { margin-top: 1rem; padding-top: .75rem; border-top: 1px solid var(--border); }
 .account-section h3 { margin-top: 0; }
 .account-warning { margin-bottom: .75rem; padding: .5rem .75rem; border: 2px solid var(--danger); border-radius: 4px; }

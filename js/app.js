@@ -196,6 +196,8 @@ function onAccountEvent(event) {
     notify(`save-${entry.id}`, `« ${entry.nom} » n’a pas pu être enregistré : ${event.error.message} Vos modifications restent sur cet appareil.`, { tone: 'error' });
   } else if (type === 'retrying') {
     notify(`save-${entry.id}`, `« ${entry.nom} » n’a pas pu être enregistré : ${event.error.message} Nouvel essai automatique, vos modifications restent sur cet appareil.`, { tone: 'error' });
+  } else if (type === 'account-data-rejected') {
+    notify('account-data', `Un changement d’espaces, de favoris ou de modèles n’a pas été enregistré : ${event.error.message}`, { tone: 'error' });
   } else if (type === 'sent') {
     clearNotice(`save-${entry.id}`);
   } else if (type === 'copy-failed') {

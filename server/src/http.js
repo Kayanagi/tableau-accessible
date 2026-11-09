@@ -88,7 +88,8 @@ export function guardWrite(req, origin) {
 }
 
 function tooLarge(limit) {
-  const amount = limit < 1024 * 1024 ? `${Math.ceil(limit / 1024)} Kio` : `${Math.ceil(limit / (1024 * 1024))} Mio`;
+  const mib = Math.round(limit / (1024 * 1024) * 10) / 10;
+  const amount = limit < 1024 * 1024 ? `${Math.ceil(limit / 1024)} Kio` : `${String(mib).replace('.', ',')} Mio`;
   return new HttpError(413, 'body_too_large', `La requête dépasse la taille maximale de ${amount}.`);
 }
 

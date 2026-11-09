@@ -5,7 +5,8 @@ import { HttpError, Router, createHandler, tooMany } from './http.js';
 import { createPasswords, createSessions } from './auth.js';
 import { createRateLimiter } from './rate-limit.js';
 import { createInactivity } from './inactivity.js';
-import { createSendmail } from './mail.js';
+import { createMailer } from './mail.js';
+import { createPasswordResets } from './password-reset.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerMeRoutes } from './routes/me.js';
 import { registerBoardRoutes } from './routes/boards.js';
@@ -16,7 +17,8 @@ const WRITES_PER_MINUTE = 120;
 const MINUTE = 60 * 1000;
 const HOUR = 60 * MINUTE;
 
-export function createApp(config) {
+/* `send` : l'expéditeur des e-mails de réinitialisation, injectable pour les tests. */
+export function createApp(config, { send = createMailer(config).send } = {}) {
   const db = openDb(config.dbPath);
   const expiredInvites = db.prepare('DELETE FROM board_invites WHERE expires_at <= ?');
   const app = {
@@ -26,6 +28,7 @@ export function createApp(config) {
     sessions: createSessions(db, config),
     limiter: createRateLimiter(),
     purgeExpiredInvites: () => expiredInvites.run(Date.now()).changes,
+    passwordResets: createPasswordResets({ db, send, publicUrl: config.publicUrl }),
     /* Les limites IP de route sont appliquées avant toute lecture du corps. */
     prepare(ctx, options) {
       if (options.ipRate) {
@@ -62,9 +65,11 @@ export function createApp(config) {
 
   app.sessions.purgeExpired();
   app.purgeExpiredInvites();
+  app.passwordResets.purgeExpired();
   const sweep = setInterval(() => {
     app.sessions.purgeExpired();
     app.purgeExpiredInvites();
+    app.passwordResets.purgeExpired();
     app.limiter.sweep();
   }, HOUR);
   sweep.unref();
@@ -77,11 +82,14 @@ export function createApp(config) {
       resolve(server.address().port);
     });
   });
+  // Les envois différés en cours se terminent avant la fermeture de la base.
   app.close = () => new Promise(resolve => {
     clearInterval(sweep);
     server.close(() => {
-      db.close();
-      resolve();
+      app.passwordResets.idle().finally(() => {
+        db.close();
+        resolve();
+      });
     });
     server.closeIdleConnections();
   });
@@ -97,11 +105,13 @@ export function startInactivity(app, send, options = {}) {
 
 export async function main() {
   const config = loadConfig();
-  const app = createApp(config);
+  const mailer = createMailer(config);
+  const app = createApp(config, { send: mailer.send });
   const port = await app.listen(config.port);
   console.log(`[baro] à l'écoute sur ${HOST}:${port}, origine ${config.origin}`);
   if (!config.cookie.secure) console.warn('[baro] cookie sans Secure : usage local uniquement');
-  const inactivity = config.inactivityEnabled ? startInactivity(app, createSendmail({ from: config.mailFrom }).send) : null;
+  const inactivity = config.inactivityEnabled ? startInactivity(app, mailer.send) : null;
+  if (config.mailCapture) console.log('[baro] e-mails capturés dans un fichier : usage de test uniquement');
   console.log(`[baro] suppression des comptes inactifs : ${inactivity ? 'active' : 'désactivée'}`);
   let closing = false;
   const stop = () => {

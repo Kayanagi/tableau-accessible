@@ -2,6 +2,21 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.11.0] - à paraître
+
+### Ajouté
+- « Mot de passe oublié ? » sur la page de connexion et sur l’écran de connexion de l’application : un lien valable une heure, à usage unique, est envoyé par e-mail. Le message affiché est le même qu’un compte existe ou non.
+- Nouvelle page publique `reinitialiser.html` pour choisir le nouveau mot de passe (deux saisies, mêmes règles qu’à l’inscription). Le lien retire aussitôt le jeton de la barre d’adresse ; un lien expiré ou déjà utilisé propose de refaire une demande. Après le changement, toutes les sessions du compte sont fermées.
+
+### Modifié
+- Les espaces, favoris, place des tableaux dans les espaces, « Mes modèles » et modèles récents sont enregistrés sur le serveur avec le compte : ils suivent le compte d’un appareil à l’autre et ne restent plus dans le navigateur après la déconnexion. L’onglet n’en garde qu’une copie de travail, envoyée environ une seconde après chaque modification ; les modifications faites hors ligne partent au retour de la connexion, et deux onglets ou appareils qui écrivent en même temps sont fusionnés sans perte.
+- Ce qu’une version précédente avait rangé sur l’appareil pour un compte est envoyé au serveur à la connexion suivante, puis effacé de l’appareil.
+- Déconnexion : « Les garder sur cet appareil » ne concerne plus que les modifications de tableaux non envoyées. Espaces, favoris et modèles ne sont plus listés ; s’ils n’ont pas pu être envoyés, l’écran le signale et propose de réessayer.
+- La page de confidentialité décrit l’organisation du compte enregistrée sur le serveur (supprimée avec le compte, incluse dans l’export) et la demande de nouveau mot de passe.
+
+### Sécurité
+- Le jeton de réinitialisation voyage dans le fragment de l’adresse (jamais envoyé au serveur web ni dans le Referer), n’est conservé en base que haché et n’est jamais journalisé.
+
 ## [1.10.0] - 2026-11-09
 
 ### Ajouté

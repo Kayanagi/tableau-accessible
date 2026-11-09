@@ -12,7 +12,7 @@ import { button, focusMessage, formMessage } from './account-forms.js';
 
 const objectsLabel = n => `${n} objet${n > 1 ? 's' : ''}`;
 const count = (n, one, many) => `${n} ${n > 1 ? many : one}`;
-const FULL = 'Le stockage de cet appareil est plein.';
+const FULL = 'La limite des données du compte est atteinte (200 espaces, 100 modèles, 2 Mio).';
 
 export function openImportDialog() {
   const userId = account.getUser()?.id;
@@ -185,7 +185,7 @@ export function openImportDialog() {
       progress.setAttribute('role', 'status');
       body.append(progress);
       const results = [];
-      // Espaces et modèles d'abord : ils restent sur l'appareil, et les tableaux importés retrouvent leur espace.
+      // Espaces et modèles d'abord : ils rejoignent le compte, et les tableaux importés retrouvent leur espace.
       for (const [kind, list, fn] of [['space', sel.space, localImport.importSpaces], ['template', sel.template, localImport.importTemplates]]) {
         if (!list.length) continue;
         try {

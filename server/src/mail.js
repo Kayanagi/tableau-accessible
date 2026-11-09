@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { appendFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { domainToASCII } from 'node:url';
 
@@ -88,4 +89,40 @@ export function createSendmail({ from, path = SENDMAIL_PATH, timeoutMs = SEND_TI
   }
 
   return { send };
+}
+
+/* Tests de bout en bout : chaque message est ajouté au fichier, une ligne JSON par message, au lieu
+   d'être confié à sendmail. loadConfig refuse BARO_MAIL_CAPTURE quand NODE_ENV=production. */
+export function createMailCapture({ from, path, now = Date.now }) {
+  const sender = safeAddress(from);
+  if (!sender) throw new Error('adresse d’expéditeur invalide');
+
+  async function send({ to, subject, text }) {
+    const recipient = safeAddress(to);
+    if (!recipient) return false;
+    const line = JSON.stringify({ from: sender, to: recipient, subject, text, date: new Date(now()).toISOString() });
+    try {
+      await appendFile(path, `${line}\n`, { mode: 0o600 });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return { send };
+}
+
+/* L'expéditeur du processus : capture si demandée, sendmail en production, sinon aucun envoi
+   (un serveur de développement ou de test n'écrit jamais à une vraie adresse par accident). */
+export function createMailer({ production, mailFrom, mailCapture }, log = console) {
+  if (mailCapture) return createMailCapture({ from: mailFrom, path: mailCapture });
+  if (production) return createSendmail({ from: mailFrom });
+  let warned = false;
+  return {
+    send: async () => {
+      if (!warned) log.warn('[baro] envoi d’e-mail désactivé hors production (BARO_MAIL_CAPTURE pour les capturer)');
+      warned = true;
+      return false;
+    }
+  };
 }

@@ -269,14 +269,14 @@ try {
     await page.keyboard.press('Control+d');
     await page.waitForTimeout(800);
     log('Pas de PUT avant le délai', !api.some(a => a.startsWith('PUT')));
-    await page.waitForFunction(() => performance.getEntriesByType('resource').some(e => e.name.endsWith('/data')), null, { timeout: 5000 });
+    await page.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/boards\/[^/]+\/data$/.test(e.name)), null, { timeout: 5000 });
     const afterPut = await fetchBoard(page, id);
     log('PUT après le délai : rev 1, 4 objets', afterPut.rev === 1 && afterPut.board.items.length === 4, `rev ${afterPut.rev}, ${afterPut.board.items.length} objets`);
     const puts = api.filter(a => a.startsWith('PUT')).length;
     await page.locator('.canvas-item[data-id="item-2"]').first().focus();
     await page.keyboard.press('Control+d');
     await page.goto(`${BASE}/#/`);
-    await page.waitForFunction(n => performance.getEntriesByType('resource').filter(e => e.name.endsWith('/data')).length > n, puts, { timeout: 2000 });
+    await page.waitForFunction(n => performance.getEntriesByType('resource').filter(e => /\/boards\/[^/]+\/data$/.test(e.name)).length > n, puts, { timeout: 2000 });
     const flushed = await fetchBoard(page, id);
     log('Flush à la sortie, sans attendre le délai', flushed.board.items.length === 5 && flushed.rev === 2, `rev ${flushed.rev}, ${flushed.board.items.length} objets`);
 
@@ -676,7 +676,7 @@ try {
       let release; const gate = new Promise(r => { release = r; });
       await page.route(`**/api/boards/${id}`, async r => { if (r.request().method() === 'GET') await gate; await r.continue(); });
       await dup(page);
-      const put = page.waitForResponse(r => r.url().endsWith('/data') && r.status() === 409, { timeout: 6000 });
+      const put = page.waitForResponse(r => /\/boards\/[^/]+\/data$/.test(r.url()) && r.status() === 409, { timeout: 6000 });
       await put;
       await dup(page);
       await dup(page);
@@ -755,7 +755,7 @@ try {
       let lost = true;
       await page.route(`**/api/boards/${id}/data`, async r => { if (lost) { lost = false; await r.fetch(); await r.abort(); } else await r.continue(); });
       await dup(page);
-      const conflict = page.waitForResponse(r => r.url().endsWith('/data') && r.status() === 409, { timeout: 12000 });
+      const conflict = page.waitForResponse(r => /\/boards\/[^/]+\/data$/.test(r.url()) && r.status() === 409, { timeout: 12000 });
       await conflict;
       await page.waitForFunction(i => JSON.parse(localStorage.getItem('tableau-accessible-distants')).tableaux.find(t => t.id === i).sortants === false, id, { timeout: 8000 });
       log('C6 : réponse perdue puis 409 : pas de copie', (await conflictCopies(page)).length === 0);
@@ -890,7 +890,7 @@ try {
       await dup(page);
       await page.locator('[data-notice^="save-"]', { hasText: message }).waitFor({ timeout: 6000 });
       log('C12 : 500 JSON : message dès le premier échec', puts === 1, `${puts} PUT`);
-      await page.waitForFunction(() => performance.getEntriesByType('resource').filter(e => e.name.endsWith('/data')).length >= 2, null, { timeout: 8000 });
+      await page.waitForFunction(() => performance.getEntriesByType('resource').filter(e => /\/boards\/[^/]+\/data$/.test(e.name)).length >= 2, null, { timeout: 8000 });
       await page.waitForTimeout(300);
       log('C12 : pas de répétition', await said(page, message) === 1 && await page.locator('[data-notice^="save-"]').count() === 1, `${await said(page, message)} annonce(s)`);
       broken = false;

@@ -244,7 +244,7 @@ export function getSpaces() {
   return local.spaces();
 }
 
-/* Rend l'espace créé, ou null si le stockage de l'appareil est plein. */
+/* Rend l'espace créé, ou null si une limite du compte serait dépassée. */
 export function createSpace(nom) {
   try {
     const space = local.createSpace(nom);

@@ -107,8 +107,8 @@ describe('Migration 4', () => {
       old.close();
 
       const db = openDb(path);
-      assert.equal(db.pragma('user_version', { simple: true }), 4);
-      assert.equal(MIGRATIONS.length, 4);
+      assert.equal(db.pragma('user_version', { simple: true }), 5);
+      assert.equal(MIGRATIONS.length, 5);
       assert.equal(db.prepare('SELECT name FROM boards WHERE id = ?').get('brd_1').name, 'Ancien');
       db.prepare("INSERT INTO board_imports (owner_id, import_key, board_id, created_at) VALUES ('u_1', 'legacy-key', 'brd_1', 3)").run();
       assert.throws(() => db.prepare("INSERT INTO board_imports (owner_id, import_key, board_id, created_at) VALUES ('u_1', 'legacy-key', 'brd_1', 4)").run(), /UNIQUE/);
@@ -117,7 +117,7 @@ describe('Migration 4', () => {
       db.close();
 
       const again = openDb(path);
-      assert.equal(again.pragma('user_version', { simple: true }), 4);
+      assert.equal(again.pragma('user_version', { simple: true }), 5);
       again.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

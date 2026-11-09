@@ -17,3 +17,19 @@ export function createAccountRemoval(db) {
     deleteUser.run(userId);
   });
 }
+
+/* Octets comptés au quota du compte : ses tableaux possédés et ses données de compte (espaces, modèles…). */
+export function createAccountUsage(db) {
+  const boards = db.prepare(`SELECT COALESCE(SUM(
+      length(CAST(b.name AS BLOB)) + length(CAST(b.icon AS BLOB)) + length(CAST(b.meta AS BLOB)) +
+      (SELECT COALESCE(SUM(length(CAST(i.data AS BLOB))), 0) FROM board_items i WHERE i.board_id = b.id)
+    ), 0) AS bytes
+    FROM boards b JOIN board_members m ON m.board_id = b.id
+    WHERE m.user_id = ? AND m.role = 'owner'`);
+  const data = db.prepare('SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0) AS bytes FROM account_data WHERE user_id = ?');
+  return {
+    boardBytes: userId => boards.get(userId).bytes,
+    dataBytes: userId => data.get(userId).bytes,
+    totalBytes: userId => boards.get(userId).bytes + data.get(userId).bytes
+  };
+}

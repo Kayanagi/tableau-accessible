@@ -14,7 +14,7 @@ export function saveAsTemplate(ids = null) {
     const snapshot = state.getSnapshot();
     if (ids) snapshot.items = state.collectForCopy(ids);
     try { saveTemplate(nom, snapshot); announce('Modèle enregistré dans Mes modèles'); }
-    catch { announce('Impossible d’enregistrer le modèle : stockage indisponible'); }
+    catch (e) { announce(`Impossible d’enregistrer le modèle : ${e.message}`); }
   });
 }
 

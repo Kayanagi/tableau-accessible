@@ -528,7 +528,7 @@ try {
     log('Éditeur : plus de lecture seule', await g.locator('#board-readonly').isHidden() && await g.locator('#btn-sticky').isVisible());
     await g.locator('.canvas-item[data-id="item-1"]').first().focus();
     await g.keyboard.press('Control+d');
-    await g.waitForFunction(() => performance.getEntriesByType('resource').some(e => e.name.endsWith('/data')), null, { timeout: 6000 });
+    await g.waitForFunction(() => performance.getEntriesByType('resource').some(e => /\/boards\/[^/]+\/data$/.test(e.name)), null, { timeout: 6000 });
     await g.waitForTimeout(300);
     log('Éditeur : son écriture arrive sur le serveur', (await g.evaluate(async i => (await (await fetch(`/api/boards/${i}`)).json()).board.items.length, id)) === 3);
     const manage = await g.evaluate(async i => [(await fetch(`/api/boards/${i}/invites`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'x@exemple.test', role: 'viewer' }) })).status, (await fetch(`/api/boards/${i}`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' } })).status], id);
@@ -680,18 +680,12 @@ try {
     await page.keyboard.press('Escape');
     await page.goto(`${BASE}/#/`);
     await page.waitForSelector('#dashboard-title');
-    await page.click('#btn-account');
-    await page.getByRole('button', { name: 'Se déconnecter' }).click();
-    await page.getByRole('heading', { name: 'Avant de vous déconnecter' }).waitFor();
-    const warning = await page.locator('.account-dialog').textContent();
-    log('Déconnexion : ce qui n’existe que sur l’appareil est listé', warning.includes('1 espace') && warning.includes('1 favori') && warning.includes('1 modèle dans « Mes modèles »'), warning.slice(0, 160));
-    log('Déconnexion : garder ou effacer, au choix du propriétaire', await page.getByRole('button', { name: 'Les garder sur cet appareil et me déconnecter' }).count() === 1 && await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).count() === 1);
-    await axe(page, 'avertissement de déconnexion');
-    await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).click();
-    await gateShown(page);
+    // Espaces, favoris et modèles sont sur le serveur (v1.11.0) : envoyés avant la déconnexion, rien à garder ici.
+    await logout(null);
+    log('Déconnexion : sans avertissement, l’organisation du compte étant sur le serveur', true);
     log('Déconnexion : plus rien du compte dans la page', !(await page.evaluate(() => document.body.innerText)).includes('Ana'));
     const leftover = await allStored();
-    log('Déconnexion sans garder : rien d’Ana sur l’appareil (miroir, espace, favori, modèle)', !/Ana|Tableau d’Ana|Espace d’Ana|Modèle d’Ana/.test(leftover) && (await accountKeys()).length === 0, leftover.slice(0, 200));
+    log('Déconnexion : rien d’Ana sur l’appareil (miroir, espace, favori, modèle)', !/Ana|Tableau d’Ana|Espace d’Ana|Modèle d’Ana/.test(leftover) && (await accountKeys()).length === 0, leftover.slice(0, 200));
 
     const brunoEmail = nextEmail();
     await register('Bruno', brunoEmail);
@@ -703,19 +697,18 @@ try {
     log('Autre compte : aucun import proposé', await page.locator('.import-dialog').count() === 0);
     log('Autre compte : le miroir ne garde rien du précédent', !(await page.evaluate(k => localStorage.getItem(k) || '', MIRROR_KEY)).includes('Tableau d’Ana'));
 
-    // Bruno garde son espace : réservé à lui, invisible pour Ana
     await createSpace('Espace de Bruno');
-    await logout('Les garder sur cet appareil et me déconnecter');
-    log('Garder : l’espace reste sur l’appareil, sous la clé du compte', (await accountKeys()).length === 1 && (await allStored()).includes('Espace de Bruno'));
-    await login(ana.email);
-    await page.waitForTimeout(400);
-    const anaText = await page.locator('#app-dashboard').textContent();
-    log('Retour d’Ana : rien de Bruno, et ce qu’elle a effacé ne revient pas', !anaText.includes('Espace de Bruno') && !anaText.includes('Espace d’Ana') && anaText.includes('Tableau d’Ana'));
-    log('Retour d’Ana : son tableau n’est plus en favori, aucun modèle', await page.evaluate(async () => (await import('/js/store/boards.js')).getFavoris().length === 0 && (await import('/js/store/templates.js')).getCustomTemplates().length === 0));
     await logout(null);
-    log('Sans rien de local : déconnexion directe, sans avertissement', true);
+    log('Bruno déconnecté : son espace ne reste pas sur l’appareil', (await accountKeys()).length === 0 && !(await allStored()).includes('Espace de Bruno'));
+    await login(ana.email);
+    await page.locator('.space-row a', { hasText: 'Espace d’Ana' }).waitFor();
+    const anaText = await page.locator('#app-dashboard').textContent();
+    log('Retour d’Ana : son espace revient du serveur, rien de Bruno', !anaText.includes('Espace de Bruno') && anaText.includes('Espace d’Ana') && anaText.includes('Tableau d’Ana'));
+    log('Retour d’Ana : son favori et son modèle reviennent', await page.evaluate(async () => (await import('/js/store/boards.js')).getFavoris().length === 1 && (await import('/js/store/templates.js')).getCustomTemplates().map(t => t.nom).join() === 'Modèle d’Ana'));
+    await logout(null);
     await login(brunoEmail);
-    log('Retour de Bruno : son espace gardé est là', (await page.locator('.space-row a').allTextContents()).join() === 'Espace de Bruno');
+    await page.locator('.space-row a', { hasText: 'Espace de Bruno' }).waitFor();
+    log('Retour de Bruno : son espace est là, seul', (await page.locator('.space-row a').allTextContents()).join() === 'Espace de Bruno');
     log('Comptes successifs : pas d’erreur console', errors.length === 0, errors.join(' | '));
     await context.close();
   }
@@ -794,7 +787,6 @@ try {
     // Un second compte sur l'appareil : plus rien d'avant les comptes à lui proposer
     await page.click('#btn-account');
     await page.getByRole('button', { name: 'Se déconnecter' }).click();
-    await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).click();
     await gateShown(page);
     await page.getByRole('button', { name: 'Créer un compte' }).click();
     await page.getByLabel('Nom affiché').fill('Daniel');
@@ -1074,8 +1066,15 @@ try {
     await tabB.locator('.canvas-item[data-id="item-1"]').first().focus();
     await tabB.keyboard.press('Control+d');
     await tabB.waitForFunction(i => JSON.parse(localStorage.getItem('tableau-accessible-distants') || '{"tableaux":[]}').tableaux.find(t => t.id === i)?.sortants === true, id, { timeout: 8000 });
-    // Un favori, rangé sur l'appareil seulement : la déconnexion pose la question, et la réponse est « sans les garder ».
-    await page.evaluate(async i => (await import('/js/store/boards.js')).toggleFavori(i), id);
+    // Une modification non envoyée dans cet onglet aussi : la déconnexion pose la question, et la réponse est « sans les garder ».
+    await page.route('**/api/boards/*/data', r => r.abort());
+    await page.goto(`${BASE}/#/tableau/${id}`);
+    await page.waitForSelector('.canvas-item[data-id="item-1"]');
+    await page.locator('.canvas-item[data-id="item-1"]').first().focus();
+    await page.keyboard.press('Control+d');
+    await page.waitForTimeout(2500);
+    await page.goto(`${BASE}/#/`);
+    await page.waitForSelector('#dashboard-title');
     await page.click('#btn-account');
     await page.getByRole('button', { name: 'Se déconnecter' }).click();
     await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).click();

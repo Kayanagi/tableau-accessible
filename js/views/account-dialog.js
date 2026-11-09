@@ -98,7 +98,7 @@ export function openAccountDialog({ onClose } = {}) {
       });
       const dataHint = document.createElement('p');
       dataHint.className = 'field-hint';
-      dataHint.textContent = 'Un fichier JSON avec votre compte et les tableaux dont vous êtes propriétaire.';
+      dataHint.textContent = 'Un fichier JSON avec votre compte, vos espaces, favoris et modèles, et les tableaux dont vous êtes propriétaire.';
       section(root, 'Mes données', dataHint, privacyHint(), dataMessage, exportBtn);
 
       const importHint = document.createElement('p');
@@ -139,13 +139,17 @@ export function openAccountDialog({ onClose } = {}) {
     announce(message);
   }
 
-  /* Rien ne reste du compte sur l'appareil sans que la personne l'ait choisi : l'avertissement le lui demande. */
+  /*
+   * Ce qui attend encore part d'abord : tableaux, puis espaces, favoris et modèles. Ce qui n'a pas pu partir est
+   * signalé avant la déconnexion ; le travail des tableaux peut rester sur l'appareil si la personne le choisit.
+   */
   async function startLogout(message) {
     announce('Déconnexion en cours…');
     const remote = boards.remoteStore();
-    await remote?.flushAll();
+    await Promise.all([remote?.flushAll(), local.flush()]);
     const waiting = remote?.pending() || [];
-    if (waiting.length || local.hasContent()) { showLogoutWarning(waiting); return; }
+    const unsent = local.hasUnsent();
+    if (waiting.length || unsent) { showLogoutWarning(waiting, unsent); return; }
     await logoutNow(message);
   }
 
@@ -165,18 +169,12 @@ export function openAccountDialog({ onClose } = {}) {
   }
 
   /*
-   * Proposé au seul propriétaire, depuis sa session : ses modifications non envoyées, et ce qui n'existe que sur
-   * cet appareil (espaces, favoris, modèles). Gardé, tout reste réservé à son compte ; sinon tout est effacé.
+   * Proposé au seul propriétaire, depuis sa session : ses modifications de tableaux non envoyées (à garder ici, à son
+   * seul usage, ou à effacer) et, le cas échéant, ses changements d'espaces, favoris ou modèles que le serveur n'a pas
+   * encore reçus : ceux-là ne peuvent pas rester sur l'appareil, seulement être renvoyés ou abandonnés.
    */
-  function showLogoutWarning(waiting) {
-    const counts = local.summary();
-    const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
-    const localItems = [
-      counts.espaces && plural(counts.espaces, 'espace', 'espaces'),
-      counts.favoris && plural(counts.favoris, 'favori', 'favoris'),
-      counts.modèles && plural(counts.modèles, 'modèle dans « Mes modèles »', 'modèles dans « Mes modèles »')
-    ].filter(Boolean);
-    show(waiting.length ? 'Modifications non envoyées' : 'Avant de vous déconnecter', root => {
+  function showLogoutWarning(waiting, unsent) {
+    show('Modifications non envoyées', root => {
       const parts = [];
       const list = items => {
         const ul = document.createElement('ul');
@@ -188,14 +186,16 @@ export function openAccountDialog({ onClose } = {}) {
         p.textContent = 'Ces tableaux ont des modifications qui n’ont pas pu être envoyées. La déconnexion efface les données du compte sur cet appareil :';
         parts.push(p, list(waiting.map(e => e.nom)));
       }
-      if (localItems.length) {
+      if (unsent) {
         const p = document.createElement('p');
-        p.textContent = 'Ces éléments de votre compte ne sont enregistrés que sur cet appareil, pas sur le serveur :';
-        parts.push(p, list(localItems));
+        p.textContent = 'Vos derniers changements d’espaces, de favoris ou de modèles n’ont pas pu être envoyés au serveur. Ils seront perdus à la déconnexion : réessayez l’envoi si la connexion est revenue.';
+        parts.push(p);
       }
-      const advice = document.createElement('p');
-      advice.textContent = '« Les garder sur cet appareil » les laisse ici, à l’usage de votre seul compte : une autre personne connectée ici ne les voit pas. Sur un appareil partagé, choisissez « Me déconnecter sans les garder ».';
-      parts.push(advice);
+      if (waiting.length) {
+        const advice = document.createElement('p');
+        advice.textContent = '« Les garder sur cet appareil » laisse ici les modifications des tableaux, à l’usage de votre seul compte : une autre personne connectée ici ne les voit pas. Vos espaces, favoris et modèles sont enregistrés sur le serveur avec votre compte. Sur un appareil partagé, choisissez « Me déconnecter sans les garder ».';
+        parts.push(advice);
+      }
       const message = formMessage();
       const actions = document.createElement('div');
       actions.className = 'dialog-actions';
@@ -208,29 +208,41 @@ export function openAccountDialog({ onClose } = {}) {
         try { await run(); }
         finally { busy = false; actions.removeAttribute('aria-busy'); }
       };
-      actions.append(
-        button('Les garder sur cet appareil et me déconnecter', once(async () => {
-          // Le serveur n'a pas pu les recevoir : elles attendent ici et vous seront proposées à l'import à votre retour.
-          // Tout ou rien : si un tableau ne tient pas, ou si la déconnexion échoue, les réserves déjà posées sont retirées.
-          const remote = boards.remoteStore();
-          const kept = [];
-          const undo = () => kept.forEach(b => boards.removeFromReserve(b.id));
-          for (const e of waiting) {
-            const saved = remote.keepOnDevice(e.id);
-            if (!saved) {
-              undo();
-              focusMessage(message, 'Stockage plein : ces modifications n’ont pas pu être gardées. Rien n’a été mis de côté et vous restez connecté.');
-              return;
+      if (waiting.length) {
+        actions.append(
+          button('Les garder sur cet appareil et me déconnecter', once(async () => {
+            // Le serveur n'a pas pu les recevoir : elles attendent ici et vous seront proposées à l'import à votre retour.
+            // Tout ou rien : si un tableau ne tient pas, ou si la déconnexion échoue, les réserves déjà posées sont retirées.
+            const remote = boards.remoteStore();
+            const kept = [];
+            const undo = () => kept.forEach(b => boards.removeFromReserve(b.id));
+            for (const e of waiting) {
+              const saved = remote.keepOnDevice(e.id);
+              if (!saved) {
+                undo();
+                focusMessage(message, 'Stockage plein : ces modifications n’ont pas pu être gardées. Rien n’a été mis de côté et vous restez connecté.');
+                return;
+              }
+              kept.push(saved);
             }
-            kept.push(saved);
-          }
-          let done = false;
-          try { done = await logoutNow(message, { keepLocal: true }); }
-          finally { if (!done) undo(); }
-        }), 'btn-primary'),
-        button('Me déconnecter sans les garder', once(() => logoutNow(message, { discarded: true })), 'btn-danger'),
-        button('Annuler', () => { if (!busy) showAccount('logout'); })
-      );
+            let done = false;
+            try { done = await logoutNow(message, { keepLocal: true }); }
+            finally { if (!done) undo(); }
+          }), 'btn-primary'),
+          button('Me déconnecter sans les garder', once(() => logoutNow(message, { discarded: true })), 'btn-danger')
+        );
+      } else {
+        actions.append(
+          button('Réessayer l’envoi', once(async () => {
+            announce('Nouvel envoi…');
+            await local.flush();
+            if (!local.hasUnsent()) { await logoutNow(message); return; }
+            focusMessage(message, 'Toujours impossible d’envoyer ces changements. Vérifiez votre connexion.');
+          }), 'btn-primary'),
+          button('Me déconnecter quand même', once(() => logoutNow(message)), 'btn-danger')
+        );
+      }
+      actions.append(button('Annuler', () => { if (!busy) showAccount('logout'); }));
       root.append(...parts, message, actions);
       // Le focus part sur le titre, puis Tab mène aux boutons : l'avertissement serait sauté.
       announce(parts.map(p => p.textContent).join(' '));
@@ -268,7 +280,7 @@ export function openAccountDialog({ onClose } = {}) {
       warning.className = 'account-warning';
       warning.id = `account-warning-${++nextWarning}`;
       const intro = document.createElement('p');
-      intro.textContent = `Cette suppression est définitive. Votre compte et ${owned.length === 0 ? 'vos données seront effacés' : owned.length === 1 ? 'votre tableau enregistré sur le compte seront effacés' : `vos ${owned.length} tableaux enregistrés sur le compte seront effacés`}. Vos espaces, favoris et modèles enregistrés sur cet appareil le seront aussi. Les tableaux d’avant les comptes restés sur cet appareil y restent : ceux que vous aviez importés seront de nouveau proposés à l’import, ou à la suppression de cet appareil.`;
+      intro.textContent = `Cette suppression est définitive. Votre compte et ${owned.length === 0 ? 'vos données seront effacés' : owned.length === 1 ? 'votre tableau enregistré sur le compte seront effacés' : `vos ${owned.length} tableaux enregistrés sur le compte seront effacés`}. Vos espaces, favoris et modèles, enregistrés avec le compte, le seront aussi. Les tableaux d’avant les comptes restés sur cet appareil y restent : ceux que vous aviez importés seront de nouveau proposés à l’import, ou à la suppression de cet appareil.`;
       warning.append(intro);
       if (shared.length) {
         const p = document.createElement('p');

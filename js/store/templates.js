@@ -94,15 +94,15 @@ const LEGACY = {
 };
 TEMPLATES.forEach(t => Object.assign(t, LEGACY[t.id]));
 TEMPLATES.push(...LIBRARY);
-/* « Mes modèles » et l'historique d'usage sont rangés au compte connecté, sur cet appareil (store/account-local.js). */
+/* « Mes modèles » et l'historique d'usage sont enregistrés avec le compte connecté, sur le serveur (store/account-local.js). */
 const asTemplate = t => ({ ...t, categorie: 'Mes modèles', tags: [], données: () => JSON.parse(JSON.stringify(t.snapshot)) });
 const stored = list => list.map(({ données, categorie, tags, ...t }) => t);
 export function getCustomTemplates() {
   return local.templates().map(asTemplate);
 }
-/* Lève si aucun compte n'est connecté ou si le stockage est plein : l'appelant le dit. */
+/* Lève si aucun compte n'est connecté ou si une limite du compte serait dépassée : l'appelant le dit. */
 export function saveTemplate(nom, snapshot) {
-  const t = { id: 'custom-' + Date.now() + Math.random().toString(36).slice(2, 6), nom, description: 'Modèle enregistré sur cet appareil, pour votre compte.', créé: Date.now(), snapshot: JSON.parse(JSON.stringify(snapshot)) };
+  const t = { id: 'custom-' + Date.now() + Math.random().toString(36).slice(2, 6), nom, description: 'Modèle enregistré avec votre compte.', créé: Date.now(), snapshot: JSON.parse(JSON.stringify(snapshot)) };
   local.addTemplates([t]);
   return t;
 }

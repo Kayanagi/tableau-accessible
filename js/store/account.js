@@ -112,6 +112,9 @@ async function loadModules() {
     listening = true;
     window.addEventListener('storage', onStorage);
     window.addEventListener('online', () => { if (status === 'offline' || status === 'unreachable') start(); });
+    // Espaces, favoris et modèles relus du serveur (chargement, autre onglet, autre appareil) : l'affichage suit.
+    local.subscribe(() => { if (status === 'signed-in' || status === 'offline') changed(); });
+    local.setRejectionHandler(error => emit({ type: 'account-data-rejected', error }));
   }
 }
 
@@ -124,6 +127,7 @@ function onReachability(isReachable) {
   // Démarré hors ligne : la session n'a jamais été confirmée, le retour du serveur doit le faire.
   if (status === 'offline' && !booting) start();
   remote?.syncPending();
+  local.syncPending();
 }
 
 /* L'indicateur est partagé entre onglets : celui qui ne l'a pas retiré doit aussi cesser d'écrire, et suivre une connexion. */
@@ -131,6 +135,8 @@ function onStorage(event) {
   if (event.key !== SESSION_FLAG && event.key !== null) return;
   if (!hasSession()) {
     const ended = signedOutElsewhere();
+    // Déconnexion voulue : la copie de travail des espaces, favoris et modèles part ici aussi (ils sont sur le serveur).
+    if (ended) local.forget(ended.id);
     if (ended?.discard) endedElsewhere(ended);
     else expire({ otherTab: true });
   } else if (!remote || remote.isSuspended()) start();
@@ -169,7 +175,8 @@ async function enter(account, nextStatus = 'signed-in') {
   setUser(account);
   remote.setOwner(account);
   remote.resume();
-  await refreshBoards();
+  // Espaces, favoris et modèles chargés avec la liste : le premier affichage les montre déjà.
+  await Promise.all([refreshBoards(), local.load()]);
   status = nextStatus;
   changed();
   remote.syncPending();
@@ -283,18 +290,18 @@ function expire({ keepFlag = false, otherTab = false, silent = false } = {}) {
 }
 
 /*
- * Déconnexion ou suppression du compte : le miroir est purgé. Les espaces, favoris et modèles du compte, qui
- * n'existent que sur cet appareil, ne restent que si leur propriétaire l'a choisi (keepLocal).
+ * Déconnexion ou suppression du compte : le miroir est purgé, la copie de travail des espaces, favoris et modèles
+ * aussi (ils sont sur le serveur). Le travail non envoyé des tableaux, si la personne l’a gardé, est mis de côté avant.
  * removed : le compte n'existe plus, le travail mis de côté pour lui sur l'appareil part aussi.
  * discarded : « Me déconnecter sans les garder » a été choisi ; les autres onglets du compte n'en gardent rien non plus.
  */
-export function signedOut({ keepLocal = false, removed = false, discarded = false } = {}) {
+export function signedOut({ removed = false, discarded = false } = {}) {
   const id = user?.id || remote?.getOwner()?.id || null;
   if (id) {
     try { localStorage.setItem(SIGNED_OUT_KEY, JSON.stringify({ id, discard: removed || discarded, removed, at: Date.now() })); }
     catch { /* stockage plein : les autres onglets se croiront expirés et garderont leur travail */ }
   }
-  if (id && (!keepLocal || removed)) local.forget(id);
+  if (id) local.forget(id);
   if (id && removed) {
     boards.removeReservedFor(id);
     forgetAccount(id);

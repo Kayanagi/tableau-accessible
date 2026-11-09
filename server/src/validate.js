@@ -28,7 +28,14 @@ export const LIMITS = {
   depth: 32,
   passwordMin: 12,
   passwordMax: 128,
-  email: 254
+  email: 254,
+  accountDataBytes: 2 * 1024 * 1024,
+  spaces: 200,
+  favorites: 2000,
+  placements: 2000,
+  templates: 100,
+  usage: 200,
+  templateDescription: 1000
 };
 
 const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
@@ -480,4 +487,151 @@ export function normalizeBoardName(value) {
 
 export function isValidIcon(value) {
   return typeof value === 'string' && ICON_IDS.has(value);
+}
+
+/* ---- Données du compte : espaces, favoris, placement, « Mes modèles », usage ---- */
+
+export const ACCOUNT_DATA_KEYS = ['espaces', 'favoris', 'placement', 'modèles', 'usage'];
+const BOARD_ID = /^brd_[A-Za-z0-9_-]{22}$/;
+const TEMPLATE_FIELDS = new Set(['id', 'nom', 'description', 'créé', 'partage', 'snapshot']);
+
+export const emptyAccountData = () => ({ espaces: [], favoris: [], placement: {}, modèles: [], usage: {} });
+
+function boardRef(value, path) {
+  if (typeof value !== 'string' || !BOARD_ID.test(value)) fail(path, 'Identifiant de tableau invalide', 'invalid_id');
+}
+
+function plainMap(value, path, max, label) {
+  if (!isPlain(value)) fail(path, 'Objet attendu');
+  const entries = Object.entries(value);
+  if (entries.length > max) fail(path, `${max} ${label} au plus`, 'too_many');
+  for (const [key] of entries) if (FORBIDDEN_KEYS.has(key)) fail(join(path, key), 'Clé interdite', 'forbidden_key');
+  return entries;
+}
+
+function uniqueList(value, path, max, label) {
+  if (!Array.isArray(value)) fail(path, 'Liste attendue');
+  if (value.length > max) fail(path, `${max} ${label} au plus`, 'too_many');
+  return value;
+}
+
+function prepareSpaces(list) {
+  const seen = new Set();
+  return uniqueList(list, 'espaces', LIMITS.spaces, 'espaces').map((space, i) => {
+    const at = `espaces[${i}]`;
+    if (!isPlain(space)) fail(at, 'Espace invalide');
+    for (const key of Object.keys(space)) if (key !== 'id' && key !== 'nom') fail(join(at, key), 'Champ inconnu', 'invalid_key');
+    safeId(space.id, `${at}.id`);
+    if (seen.has(space.id)) fail(`${at}.id`, 'Identifiant en double', 'duplicate_id');
+    seen.add(space.id);
+    const nom = normalizeBoardName(space.nom);
+    if (!nom) fail(`${at}.nom`, `Le nom d’un espace doit contenir de 1 à ${LIMITS.name} caractères`, 'invalid_name');
+    return { id: space.id, nom };
+  });
+}
+
+function prepareFavorites(list) {
+  const seen = new Set();
+  uniqueList(list, 'favoris', LIMITS.favorites, 'favoris').forEach((id, i) => {
+    boardRef(id, `favoris[${i}]`);
+    if (seen.has(id)) fail(`favoris[${i}]`, 'Identifiant en double', 'duplicate_id');
+    seen.add(id);
+  });
+  return [...list];
+}
+
+function preparePlacement(map) {
+  const out = {};
+  for (const [board, space] of plainMap(map, 'placement', LIMITS.placements, 'placements')) {
+    boardRef(board, join('placement', board));
+    safeId(space, join('placement', board));
+    out[board] = space;
+  }
+  return out;
+}
+
+function prepareUsage(map) {
+  const out = {};
+  for (const [template, at] of plainMap(map, 'usage', LIMITS.usage, 'entrées')) {
+    safeId(template, join('usage', template));
+    if (!Number.isSafeInteger(at) || at < 0) fail(join('usage', template), 'Date (nombre entier positif) attendue', 'out_of_range');
+    out[template] = at;
+  }
+  return out;
+}
+
+/* Un modèle est un tableau : même validation que l'envoi d'un tableau local, rangé sous sa forme de tableau. */
+function prepareTemplate(template, at) {
+  if (!isPlain(template)) fail(at, 'Modèle invalide');
+  for (const key of Object.keys(template)) if (!TEMPLATE_FIELDS.has(key)) fail(join(at, key), 'Champ inconnu', 'invalid_key');
+  safeId(template.id, `${at}.id`);
+  const nom = normalizeBoardName(template.nom);
+  if (!nom) fail(`${at}.nom`, `Le nom d’un modèle doit contenir de 1 à ${LIMITS.name} caractères`, 'invalid_name');
+  const out = { id: template.id, nom };
+  if (template.description !== undefined) {
+    if (typeof template.description !== 'string' || charCount(template.description) > LIMITS.templateDescription) {
+      fail(`${at}.description`, `Description : ${LIMITS.templateDescription} caractères au plus`, 'too_long');
+    }
+    out.description = template.description;
+  }
+  if (template['créé'] !== undefined) {
+    if (!Number.isSafeInteger(template['créé']) || template['créé'] < 0) fail(`${at}.créé`, 'Date (nombre entier positif) attendue', 'out_of_range');
+    out['créé'] = template['créé'];
+  }
+  if (template.partage !== undefined) {
+    if (typeof template.partage !== 'boolean') fail(`${at}.partage`, 'Booléen attendu');
+    out.partage = template.partage;
+  }
+  if (!isPlain(template.snapshot)) fail(`${at}.snapshot`, 'Tableau attendu', 'missing_structure');
+  let board;
+  try { board = prepareImport(template.snapshot); }
+  catch (err) {
+    if (err instanceof ValidationError) {
+      const inner = err.path.replace(/^data\.?/, '');
+      throw new ValidationError(err.code, err.message, `${at}.snapshot${inner ? `.${inner}` : ''}`);
+    }
+    throw err;
+  }
+  out.snapshot = { ...(board.name !== undefined ? { name: board.name } : {}), ...board.meta, items: board.items };
+  return out;
+}
+
+function prepareTemplates(list) {
+  const seen = new Set();
+  return uniqueList(list, 'modèles', LIMITS.templates, 'modèles').map((template, i) => {
+    const prepared = prepareTemplate(template, `modèles[${i}]`);
+    if (seen.has(prepared.id)) fail(`modèles[${i}].id`, 'Identifiant en double', 'duplicate_id');
+    seen.add(prepared.id);
+    return prepared;
+  });
+}
+
+/*
+ * Données du compte (PUT /api/me/data). Seules les cinq clés sont admises ; une clé absente vaut vide.
+ * Renvoie { data, json } : la forme rangée et sa sérialisation, bornée à 2 Mio. Lève ValidationError.
+ */
+export function prepareAccountData(data) {
+  if (!isPlain(data)) fail('data', 'Objet attendu');
+  for (const key of Object.keys(data)) {
+    if (!ACCOUNT_DATA_KEYS.includes(key)) fail(join('data', key), 'Champ inconnu', 'invalid_key');
+  }
+  // Pas de walk() global : les dates d'usage dépassent la borne des coordonnées. Chaque clé a son contrôle,
+  // et chaque modèle passe par le parcours complet d'un tableau.
+  const source = { ...emptyAccountData(), ...data };
+  let out;
+  try {
+    out = {
+      espaces: prepareSpaces(source.espaces),
+      favoris: prepareFavorites(source.favoris),
+      placement: preparePlacement(source.placement),
+      modèles: prepareTemplates(source['modèles']),
+      usage: prepareUsage(source.usage)
+    };
+  } catch (err) {
+    if (err instanceof ValidationError) throw new ValidationError(err.code, err.message, join('data', err.path));
+    throw err;
+  }
+  const json = JSON.stringify(out);
+  if (Buffer.byteLength(json) > LIMITS.accountDataBytes) fail('data', 'Données du compte de plus de 2 Mio', 'too_large');
+  return { data: out, json };
 }
