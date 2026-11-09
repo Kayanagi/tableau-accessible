@@ -26,6 +26,8 @@ let persistTimer = null;
 let mayReplaceOwner = false;
 let listSeq = 0;
 let emit = () => {};
+// Favoris et espaces d'un ancien miroir que le stockage plein a empêché de ranger (voir adoptOrganisation).
+let organisationToAdopt = null;
 const removed = new Set();
 const entries = new Map();
 const runtime = new Map();
@@ -73,6 +75,9 @@ export const getOwner = () => owner;
 
 function stored(entry, withData) {
   const { distant, horsCopie, favori, espaceId, ...rest } = entry;
+  // Reprise d'un ancien miroir pas encore rangée (stockage plein) : ses favoris et espaces restent dans le miroir.
+  if (organisationToAdopt?.favoris.includes(entry.id)) rest.favori = true;
+  if (organisationToAdopt?.placement[entry.id]) rest.espaceId = organisationToAdopt.placement[entry.id];
   return withData ? rest : { ...rest, données: null, sortants: false };
 }
 
@@ -121,6 +126,7 @@ function otherTabIsAhead(e, seen) {
 function persistNow() {
   clearTimeout(persistTimer);
   persistTimer = null;
+  retryOrganisation();
   // Sans compte (après une déconnexion), rien n'est à nous : ne jamais réécrire un miroir vidé ou celui d'un autre.
   if (!owner?.id) return false;
   if (!hasFlag() && !suspended) return false;
@@ -226,8 +232,13 @@ function adopt(raw) {
   return { ...raw, distant: true, icon: normalizeBoardIcon(raw.icon), espaceId: raw.espaceId || null, favori: !!raw.favori, sortants: !!raw.sortants };
 }
 
-/* Miroir d'une version précédente : ses favoris et espaces rejoignent le compte qui l'a écrit. */
+/*
+ * Miroir d'une version précédente : ses favoris et espaces rejoignent le compte qui l'a écrit, par l'ancien stockage
+ * de l'appareil de ce compte (store/account-local.js, adopt), qui n'est effacé qu'après l'accord du serveur.
+ * Stockage plein : ils restent dans le miroir (stored) et la reprise est retentée à chaque écriture du miroir.
+ */
 function adoptOrganisation(saved) {
+  organisationToAdopt = null;
   if (!saved.owner?.id) return;
   const favoris = [], placement = {};
   for (const t of saved.tableaux) {
@@ -235,7 +246,11 @@ function adoptOrganisation(saved) {
     if (t.favori) favoris.push(t.id);
     if (t.espaceId) placement[t.id] = t.espaceId;
   }
-  local.adopt(saved.owner.id, { favoris, placement });
+  if (!local.adopt(saved.owner.id, { favoris, placement })) organisationToAdopt = { id: saved.owner.id, favoris, placement };
+}
+
+function retryOrganisation() {
+  if (organisationToAdopt && local.adopt(organisationToAdopt.id, organisationToAdopt)) organisationToAdopt = null;
 }
 
 /*

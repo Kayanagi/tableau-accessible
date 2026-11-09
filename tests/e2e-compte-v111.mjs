@@ -390,6 +390,176 @@ try {
     log('Deux onglets et hors ligne : pas d’erreur console', errors.length === 0 && otherTrack.errors.length === 0, [...errors, ...otherTrack.errors].join(' | '));
     await context.close();
   }
+
+  // === Import d'avant les comptes : rien ne quitte l'appareil avant l'accord du serveur ===
+  {
+    console.log('--- Import refusé par le serveur ---');
+    const { context, page, errors } = await signed('Denise');
+    const BOARDS_KEY = 'tableau-accessible-boards';
+    const TEMPLATES_KEY = 'tableau-accessible-templates';
+    const badSnapshot = { name: 'Modèle abîmé', items: [{ id: 'item-1', type: 'sticky_note', x: 0, y: 0, width: 100, height: 100, content: 'x', size: 'énorme' }] };
+    const seeds = {
+      [BOARDS_KEY]: JSON.stringify({ version: 4, tableaux: [], espaces: [{ id: 'space-avant-a', nom: 'Espace A' }, { id: 'space-avant-b', nom: 'Espace B' }] }),
+      [TEMPLATES_KEY]: JSON.stringify([
+        { id: 'custom-avant-ok', nom: 'Modèle sain', description: '', créé: 1, snapshot: { name: 'Modèle sain', items: [] } },
+        { id: 'custom-avant-abime', nom: 'Modèle abîmé', description: '', créé: 2, snapshot: badSnapshot }
+      ])
+    };
+    await page.addInitScript(s => { if (!sessionStorage.getItem('semé')) { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); sessionStorage.setItem('semé', '1'); } }, seeds);
+    const common = () => page.evaluate(([b, t]) => ({ espaces: (JSON.parse(localStorage.getItem(b)) || {}).espaces?.map(s => s.id) || [], modèles: (JSON.parse(localStorage.getItem(t)) || []).map(m => m.id) }), [BOARDS_KEY, TEMPLATES_KEY]);
+    const quota = route => route.request().method() === 'PUT'
+      ? route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: 'quota_exceeded', message: 'Espace de stockage du compte plein (simulé).' }) })
+      : route.continue();
+    await page.route('**/api/me/data', quota);
+    await page.goto(`${BASE}/#/`);
+    const dlg = page.locator('.import-dialog');
+    await dlg.waitFor();
+    await page.getByRole('button', { name: 'Importer dans mon compte' }).click();
+    await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
+    const refusedText = await dlg.locator('.import-results').textContent();
+    log('Quota (simulé) : chaque espace et modèle est dit refusé, avec la raison', ['Espace « Espace A » : refusé. Espace de stockage du compte plein (simulé).', 'Espace « Espace B » : refusé.', 'Modèle « Modèle sain » : refusé.', 'Modèle « Modèle abîmé » : refusé.'].every(t => refusedText.includes(t)) && refusedText.includes('Il reste sur cet appareil.'), refusedText.slice(0, 300));
+    log('Quota (simulé) : aucun « importé » annoncé', !refusedText.includes(': importé') && (await dlg.locator('.import-summary').textContent()).includes('4 refusés'));
+    const kept = await common();
+    log('Quota (simulé) : rien n’a quitté l’appareil', kept.espaces.join() === 'space-avant-a,space-avant-b' && kept.modèles.join() === 'custom-avant-ok,custom-avant-abime', JSON.stringify(kept));
+    log('Quota (simulé) : rien sur le serveur, rien qui attende dans l’onglet', (await serverData(page)).rev === 0 && await page.evaluate(async () => !(await import('/js/store/account-local.js')).hasUnsent()));
+    await axe(page, 'compte rendu d’import refusé');
+
+    // Le serveur accepte, sauf un modèle invalide : celui-là reste sur l'appareil, nommé avec sa raison
+    await page.unroute('**/api/me/data', quota);
+    await page.getByRole('button', { name: 'Revenir à la liste' }).click();
+    await page.getByRole('button', { name: 'Importer dans mon compte' }).click();
+    await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
+    const mixed = await dlg.locator('.import-results').textContent();
+    log('Élément refusé : le reste est importé', mixed.includes('Espace « Espace A » : importé') && mixed.includes('Espace « Espace B » : importé') && mixed.includes('Modèle « Modèle sain » : importé'), mixed.slice(0, 300));
+    log('Élément refusé : nommé, avec la raison du serveur, gardé sur l’appareil', /Modèle « Modèle abîmé » : refusé\. Taille inconnue\. Il reste sur cet appareil\./.test(mixed), mixed);
+    const left = await common();
+    log('Élément refusé : seul lui reste dans l’espace commun', left.espaces.length === 0 && left.modèles.join() === 'custom-avant-abime', JSON.stringify(left));
+    const onServer = (await serverData(page)).data;
+    log('Élément refusé : le serveur a le reste, pas lui', onServer.espaces.map(s => s.nom).sort().join() === 'Espace A,Espace B' && onServer.modèles.map(t => t.nom).join() === 'Modèle sain', JSON.stringify(onServer.modèles.map(t => t.nom)));
+    log('Élément refusé : pas de second message hors du dialogue', await page.locator('[data-notice="account-data"]').count() === 0);
+    await axe(page, 'compte rendu d’import avec un élément refusé');
+    await page.getByRole('button', { name: 'Terminer' }).click();
+    await dlg.waitFor({ state: 'detached' });
+
+    // Hors ligne : en attente, retiré de l'appareil seulement quand l'envoi aboutit
+    await page.evaluate(([b]) => { const d = JSON.parse(localStorage.getItem(b)); d.espaces.push({ id: 'space-avant-c', nom: 'Espace C' }); localStorage.setItem(b, JSON.stringify(d)); }, [BOARDS_KEY]);
+    await page.click('#btn-account');
+    await page.getByRole('button', { name: 'Importer vos tableaux de cet appareil…' }).click();
+    await dlg.waitFor();
+    await page.getByRole('checkbox', { name: 'Modèle abîmé' }).uncheck();
+    await context.setOffline(true);
+    await page.getByRole('button', { name: 'Importer dans mon compte' }).click();
+    await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
+    const waiting = await dlg.locator('.import-results').textContent();
+    log('Hors ligne : « pas encore enregistré », gardé sur l’appareil', waiting.includes('Espace « Espace C » : pas encore enregistré') && (await common()).espaces.join() === 'space-avant-c', waiting);
+    await context.setOffline(false);
+    log('Hors ligne : retiré de l’appareil une fois l’envoi abouti', await until(async () => (await common()).espaces.length === 0, 10000) && (await serverData(page)).data.espaces.some(s => s.nom === 'Espace C'));
+    log('Import refusé : pas d’erreur console', errors.length === 0, errors.join(' | '));
+    await context.close();
+  }
+
+  // === Migration : un modèle refusé reste dans l'ancien stockage, le reste part ===
+  {
+    console.log('--- Migration avec un modèle refusé ---');
+    const { context, page, errors } = await signed('Émile');
+    const userId = (await (await context.request.get(`${BASE}/api/me`)).json()).user.id;
+    const legacy = {
+      version: 1,
+      espaces: [{ id: 'space-mig-1', nom: 'Espace gardé' }],
+      favoris: [], placement: {},
+      modèles: [
+        { id: 'custom-mig-ok', nom: 'Modèle migré', créé: 1, snapshot: { name: 'Modèle migré', items: [] } },
+        { id: 'custom-mig-abime', nom: 'Modèle abîmé', créé: 2, snapshot: { name: 'Modèle abîmé', items: [{ id: 'item-1', type: 'sticky_note', x: 0, y: 0, width: 100, height: 100, content: 'x', size: 'énorme' }] } }
+      ],
+      usage: { 'custom-mig-abime': 5, 'custom-mig-ok': 6 }
+    };
+    await page.addInitScript(([k, v]) => { if (!sessionStorage.getItem('semé')) { localStorage.setItem(k, v); sessionStorage.setItem('semé', '1'); } }, [ACCOUNT_PREFIX + userId, JSON.stringify(legacy)]);
+    await page.goto(`${BASE}/#/`);
+    await page.waitForSelector('#dashboard-title');
+    const sent = await until(async () => { const d = await serverData(page); return d.rev > 0 && d.data.modèles.length ? d : null; });
+    log('Migration : le reste part au serveur', !!sent && sent.data.espaces[0]?.nom === 'Espace gardé' && sent.data.modèles.map(t => t.nom).join() === 'Modèle migré', JSON.stringify(sent?.data.modèles.map(t => t.nom)));
+    const stored = await until(async () => {
+      const raw = await page.evaluate(k => localStorage.getItem(k), ACCOUNT_PREFIX + userId);
+      const d = raw && JSON.parse(raw);
+      return d && d.espaces.length === 0 ? d : null;
+    });
+    log('Migration : la clé locale garde le seul modèle refusé (et son usage)', !!stored && stored.modèles.map(t => t.id).join() === 'custom-mig-abime' && stored.usage['custom-mig-abime'] === 5 && !('custom-mig-ok' in stored.usage), JSON.stringify(stored).slice(0, 200));
+    const notice = page.locator('[data-notice="account-data"]');
+    await notice.waitFor({ timeout: 5000 }).catch(() => {});
+    log('Migration : le refus est signalé en nommant le modèle', (await notice.textContent().catch(() => '')).includes('modèle « Modèle abîmé »'), await notice.textContent().catch(() => ''));
+    await page.reload();
+    await page.waitForSelector('#dashboard-title');
+    await page.waitForTimeout(1500);
+    const again = await page.evaluate(k => JSON.parse(localStorage.getItem(k) || 'null'), ACCOUNT_PREFIX + userId);
+    log('Migration : au rechargement, le modèle refusé est toujours sur l’appareil, rien en double', again?.modèles.map(t => t.id).join() === 'custom-mig-abime' && (await serverData(page)).data.modèles.length === 1);
+    log('Migration avec refus : pas d’erreur console', errors.length === 0, errors.join(' | '));
+    await context.close();
+  }
+
+  // === Refus d'ensemble : les modifications sont réessayées une à une ===
+  {
+    console.log('--- Quota : une modification refusée, les autres passent ---');
+    const { context, page, errors } = await signed('Fanny');
+    await page.goto(`${BASE}/#/`);
+    await page.waitForSelector('#dashboard-title');
+    await page.route('**/api/me/data', route => (route.request().method() === 'PUT' && (route.request().postData() || '').includes('Trop gros')
+      ? route.fulfill({ status: 403, contentType: 'application/json', body: JSON.stringify({ code: 'quota_exceeded', message: 'Espace de stockage du compte plein (simulé).' }) })
+      : route.continue()));
+    await page.evaluate(async () => {
+      const boards = await import('/js/store/boards.js');
+      boards.createSpace('Accepté');
+      boards.createSpace('Trop gros');
+      boards.createSpace('Accepté aussi');
+    });
+    const ok = await until(async () => (await serverData(page)).data.espaces.length === 2);
+    log('Refus d’ensemble : les autres modifications du lot sont enregistrées', !!ok && (await serverData(page)).data.espaces.map(s => s.nom).sort().join() === 'Accepté,Accepté aussi', JSON.stringify((await serverData(page)).data.espaces));
+    const notice = page.locator('[data-notice="account-data"]');
+    await notice.waitFor({ timeout: 5000 }).catch(() => {});
+    log('Refus d’ensemble : le message nomme ce qui a été refusé', (await notice.textContent().catch(() => '')).includes('création de l’espace « Trop gros »'), await notice.textContent().catch(() => ''));
+    log('Refus d’ensemble : la copie revient à ce que le serveur a', await spacesOf(page) === 'Accepté|Accepté aussi');
+    log('Refus d’ensemble : pas d’erreur console', errors.length === 0, errors.join(' | '));
+    await context.close();
+  }
+
+  // === Fermeture avec des changements non envoyés, puis expiration et reconnexion dans le même onglet ===
+  {
+    console.log('--- Fermeture, expiration et reconnexion ---');
+    const { context, page, email, errors } = await signed('Gaspard');
+    await page.goto(`${BASE}/#/`);
+    await page.waitForSelector('#dashboard-title');
+    const beforeUnload = () => page.evaluate(() => { const e = new Event('beforeunload', { cancelable: true }); dispatchEvent(e); return e.defaultPrevented; });
+    log('beforeunload : rien à envoyer, rien à demander', await beforeUnload() === false);
+    await page.route('**/api/me/data', route => (route.request().method() === 'PUT' ? route.abort() : route.continue()));
+    await page.evaluate(async () => (await import('/js/store/boards.js')).createSpace('Gardé dans l’onglet'));
+    await page.waitForTimeout(1500);
+    log('beforeunload : changement non envoyé, la fermeture est signalée', await beforeUnload() === true);
+
+    // Un autre appareil écrit pendant que la session de cet onglet expire
+    const other = await browser.newContext();
+    await other.request.post(`${BASE}/api/auth/login`, { headers: { Origin: BASE, 'Content-Type': 'application/json' }, data: { email, password: TEST_PASSWORD } });
+    const current = await (await other.request.get(`${BASE}/api/me/data`)).json();
+    const put = await other.request.put(`${BASE}/api/me/data`, { headers: { Origin: BASE, 'Content-Type': 'application/json' }, data: { baseRev: current.rev, data: { ...current.data, espaces: [...current.data.espaces, { id: 'space-ailleurs', nom: 'Créé ailleurs' }] } } });
+    log('Autre appareil : écriture acceptée', put.ok(), String(put.status()));
+    await context.clearCookies();
+    await page.evaluate(async () => { await (await import('/js/sync/api.js')).getMe().catch(() => {}); });
+    await gateShown(page);
+    log('Expiration : le changement non envoyé attend toujours dans l’onglet (fermeture signalée)', await beforeUnload() === true);
+    // Les envois restent bloqués : seule une relecture du serveur peut montrer ce que l'autre appareil a écrit.
+    await page.getByLabel('Adresse e-mail').fill(email);
+    await page.getByLabel('Mot de passe').fill(TEST_PASSWORD);
+    await page.locator('.account-form').getByRole('button', { name: 'Se connecter', exact: true }).click();
+    await page.waitForSelector('#dashboard-title');
+    await page.locator('.space-row a', { hasText: 'Créé ailleurs' }).waitFor({ timeout: 8000 }).then(() => log('Reconnexion : la copie est relue du serveur (écriture d’un autre appareil visible)', true), () => log('Reconnexion : la copie est relue du serveur (écriture d’un autre appareil visible)', false));
+    log('Reconnexion : le changement gardé est toujours là, en attente', await spacesOf(page) === 'Créé ailleurs|Gardé dans l’onglet' && await beforeUnload() === true, await spacesOf(page));
+    await page.unroute('**/api/me/data');
+    await page.evaluate(async () => (await import('/js/store/account-local.js')).flush());
+    const both = await until(async () => { const d = await serverData(page); return ['Créé ailleurs', 'Gardé dans l’onglet'].every(n => d.data.espaces.some(s => s.nom === n)) ? d : null; });
+    log('Reconnexion : le changement gardé part, sans écraser l’autre appareil', !!both, JSON.stringify((await serverData(page)).data.espaces.map(s => s.nom)));
+    log('beforeunload : plus rien à signaler une fois envoyé', await until(async () => await beforeUnload() === false));
+    log('Fermeture et reconnexion : pas d’erreur console', errors.length === 0, errors.join(' | '));
+    await other.close();
+    await context.close();
+  }
 } catch (err) {
   console.error(err);
   failed++;

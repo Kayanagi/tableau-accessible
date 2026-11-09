@@ -154,7 +154,7 @@ export function openAccountDialog({ onClose } = {}) {
   }
 
   /* Rend false si le serveur a refusé : la session reste ouverte, le message le dit. */
-  async function logoutNow(message, { keepLocal = false, discarded = false } = {}) {
+  async function logoutNow(message, { discarded = false } = {}) {
     try {
       await api.logout();
     } catch (err) {
@@ -164,7 +164,7 @@ export function openAccountDialog({ onClose } = {}) {
         return false;
       }
     }
-    clearSessionAndClose('Vous êtes déconnecté.', { keepLocal, discarded });
+    clearSessionAndClose('Vous êtes déconnecté.', { discarded });
     return true;
   }
 
@@ -226,7 +226,7 @@ export function openAccountDialog({ onClose } = {}) {
               kept.push(saved);
             }
             let done = false;
-            try { done = await logoutNow(message, { keepLocal: true }); }
+            try { done = await logoutNow(message); }
             finally { if (!done) undo(); }
           }), 'btn-primary'),
           button('Me déconnecter sans les garder', once(() => logoutNow(message, { discarded: true })), 'btn-danger')

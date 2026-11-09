@@ -93,8 +93,10 @@ export function setViewer(id) {
 }
 
 /*
- * Espaces créés avant cette version, déjà marqués à leur compte dans l'espace commun : chacun rejoint la clé de son
- * propriétaire, puis quitte l'espace commun. Ils n'ont jamais été montrés à un autre compte.
+ * Espaces créés avant cette version, déjà marqués à leur compte dans l'espace commun : chacun rejoint l'ancien
+ * stockage de l'appareil de son propriétaire (store/account-local.js, adopt), puis quitte l'espace commun. Ils restent
+ * donc sur l'appareil jusqu'à ce que le serveur les ait acceptés ; ce qu'il refuse y reste. Ils n'ont jamais été
+ * montrés à un autre compte. Stockage plein : ils restent dans l'espace commun, la reprise est retentée plus tard.
  */
 function moveOwnedSpaces() {
   reloadReserve();

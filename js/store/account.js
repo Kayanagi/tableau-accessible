@@ -114,7 +114,7 @@ async function loadModules() {
     window.addEventListener('online', () => { if (status === 'offline' || status === 'unreachable') start(); });
     // Espaces, favoris et modèles relus du serveur (chargement, autre onglet, autre appareil) : l'affichage suit.
     local.subscribe(() => { if (status === 'signed-in' || status === 'offline') changed(); });
-    local.setRejectionHandler(error => emit({ type: 'account-data-rejected', error }));
+    local.setRejectionHandler((error, what) => emit({ type: 'account-data-rejected', error, what }));
   }
 }
 
@@ -135,10 +135,15 @@ function onStorage(event) {
   if (event.key !== SESSION_FLAG && event.key !== null) return;
   if (!hasSession()) {
     const ended = signedOutElsewhere();
-    // Déconnexion voulue : la copie de travail des espaces, favoris et modèles part ici aussi (ils sont sur le serveur).
-    if (ended) local.forget(ended.id);
     if (ended?.discard) endedElsewhere(ended);
     else expire({ otherTab: true });
+    // Déconnexion voulue : la copie de travail des espaces, favoris et modèles part ici aussi (ils sont sur le serveur),
+    // après un dernier essai d'envoi de ce qui attendait dans cet onglet. Ce qui n'a pas pu partir est signalé.
+    if (ended) {
+      local.forgetAfterSending(ended.id, { removed: !!ended.removed })
+        .then(sent => { if (!sent) emit({ type: 'account-data-unsent' }); })
+        .catch(err => console.error(err));
+    }
   } else if (!remote || remote.isSuspended()) start();
 }
 
@@ -210,7 +215,7 @@ async function restore() {
     return;
   }
   silentExpiry = false;
-  if (me.guest) { signedOut({ keepLocal: true }); return; }
+  if (me.guest) { signedOut(); return; }
   await enter(me.user);
 }
 
@@ -277,6 +282,8 @@ export function updateUser(account) {
 /*
  * La session n'est plus valable, ici ou dans un autre onglet : les modifications non envoyées restent sur l'appareil.
  * L'indicateur peut déjà avoir disparu : l'onglet doit quand même cesser d'écrire et garder son travail.
+ * setUser(null) quitte aussi le compte dans store/account-local.js : ses changements en attente restent dans l'onglet,
+ * et sa copie sera relue du serveur si la même personne se reconnecte ici.
  */
 function expire({ keepFlag = false, otherTab = false, silent = false } = {}) {
   if (!remote || remote.isSuspended()) return;
@@ -301,7 +308,7 @@ export function signedOut({ removed = false, discarded = false } = {}) {
     try { localStorage.setItem(SIGNED_OUT_KEY, JSON.stringify({ id, discard: removed || discarded, removed, at: Date.now() })); }
     catch { /* stockage plein : les autres onglets se croiront expirés et garderont leur travail */ }
   }
-  if (id) local.forget(id);
+  if (id) local.forget(id, { removed });
   if (id && removed) {
     boards.removeReservedFor(id);
     forgetAccount(id);

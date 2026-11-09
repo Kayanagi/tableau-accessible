@@ -5,7 +5,8 @@
  * reste sur l'appareil. Il est relu à chaque lecture et fusionné avec le disque à chaque écriture : un autre onglet
  * peut importer ou répondre « Plus tard » en même temps. Le serveur est la dernière garde : chaque tableau part avec
  * une clé d'import stable, et la même clé rend le tableau déjà créé (nouvel essai après coupure, deux onglets).
- * Espaces et modèles n'existent que sur l'appareil : importés ou refusés, ils quittent aussitôt l'espace commun.
+ * Espaces et modèles n'existent que sur l'appareil : ils ne quittent l'espace commun qu'une fois enregistrés par le
+ * serveur (importés), ou sur refus explicite de la personne (supprimés sans import).
  */
 import * as boards from './boards.js';
 import * as local from './account-local.js';
@@ -109,17 +110,36 @@ export function shouldPrompt(userId) {
   return [...importable(userId), ...importableSpaces(), ...importableTemplates()].some(x => !later.includes(x.id));
 }
 
-/* Copiés dans le compte connecté, puis retirés de l'espace commun. Lève si le stockage est plein : rien n'est retiré. */
-export function importSpaces(spaces) {
-  if (!spaces.length) return;
-  local.merge({ espaces: spaces });
-  boards.removeLegacySpaces(spaces.map(s => s.id));
-}
-
-export function importTemplates(list) {
-  if (!list.length) return;
-  local.merge({ modèles: list, usage: local.legacyUsage() });
-  local.removeLegacyTemplates(list.map(t => t.id));
+/*
+ * Espaces et modèles copiés dans le compte connecté, puis envoyés au serveur. Chacun ne quitte l'espace commun de
+ * l'appareil qu'une fois enregistré par le serveur ; ce qu'il refuse, ou ce qui n'a pas encore pu partir, y reste.
+ * Une réponse qui arrive plus tard (retour de la connexion) retire encore ce qui a été accepté.
+ * Rend un résultat par élément : { kind: 'space'|'template', id, nom, ok, pending?, reason? }.
+ * Lève si une limite du compte serait dépassée : rien n'est envoyé ni retiré.
+ */
+export async function importOrganisation({ spaces = [], templates = [] }) {
+  if (!spaces.length && !templates.length) return [];
+  const ticket = local.importItems({ espaces: spaces, modèles: templates, usage: templates.length ? local.legacyUsage() : {} });
+  const refusedOf = result => new Map(result.refused.map(r => [`${r.kind}:${r.id}`, r.reason]));
+  ticket.settled.then(result => {
+    if (!result.sent) return;
+    const refused = refusedOf(result);
+    const spaceIds = spaces.map(s => s.id).filter(id => !refused.has(`espace:${id}`));
+    const templateIds = templates.map(t => t.id).filter(id => !refused.has(`modèle:${id}`));
+    if (spaceIds.length) boards.removeLegacySpaces(spaceIds);
+    if (templateIds.length) local.removeLegacyTemplates(templateIds);
+  });
+  await local.flush();
+  // Réglé pendant l'envoi : le résultat est déjà là (ticket.result est posé avant la fin de flush).
+  const result = ticket.result;
+  const refused = result ? refusedOf(result) : new Map();
+  const outcome = (kind, key, x) => {
+    if (!result) return { kind, id: x.id, nom: x.nom, ok: false, pending: true };
+    if (refused.has(`${key}:${x.id}`)) return { kind, id: x.id, nom: x.nom, ok: false, reason: refused.get(`${key}:${x.id}`) };
+    if (!result.sent) return { kind, id: x.id, nom: x.nom, ok: false, reason: result.error?.message || 'Le serveur ne l’a pas enregistré.' };
+    return { kind, id: x.id, nom: x.nom, ok: true };
+  };
+  return [...spaces.map(s => outcome('space', 'espace', s)), ...templates.map(t => outcome('template', 'modèle', t))];
 }
 
 /* Refus explicite : supprimés de cet appareil sans passer par le compte. */

@@ -6,11 +6,17 @@
  * Lecture synchrone sur la copie de travail. Chaque modification y est appliquée aussitôt, gardée comme opération,
  * puis envoyée par un PUT différé (≈1 s, regroupé) avec la révision de base. Sur 409 (autre onglet, autre appareil),
  * la version du serveur est relue et les opérations non confirmées y sont rejouées : rien n'est écrasé.
- * Hors ligne, les opérations attendent dans l'onglet et partent au retour de la connexion.
+ * Un refus d'ensemble (quota, taille) ne jette pas le lot : chaque opération est essayée seule, et seules celles qui
+ * ne passent pas sont retirées, en les nommant. Hors ligne, les opérations attendent dans l'onglet et partent au
+ * retour de la connexion ; fermer l'onglet avant est signalé (beforeunload).
  *
- * L'ancien stockage de l'appareil (une clé par compte, versions 1.10 et avant) est envoyé au premier chargement du
- * compte, puis effacé une fois le serveur d'accord. Les données d'avant les comptes passent par l'import
- * (store/local-import.js), qui écrit ici comme toute autre modification.
+ * Ce qui vient de l'appareil (ancien stockage par compte, données d'avant les comptes) n'y est effacé qu'une fois le
+ * serveur d'accord, élément par élément : ce qu'il refuse reste sur l'appareil.
+ *   - L'ancien stockage de l'appareil (une clé par compte, versions 1.10 et avant, et reprises d'anciens miroirs ou
+ *     espaces marqués à un compte, voir adopt) est envoyé au chargement du compte, puis réécrit avec les seuls
+ *     éléments refusés (effacé s'il n'en reste pas).
+ *   - L'import des espaces et modèles d'avant les comptes (store/local-import.js) passe par importItems, qui rend la
+ *     réponse du serveur élément par élément.
  */
 const PREFIX = 'tableau-accessible-compte-';
 export const LEGACY_TEMPLATES_KEY = 'tableau-accessible-templates';
@@ -31,6 +37,8 @@ const MAX_NAME = 200;
 const MAX_DESCRIPTION = 1000;
 const SAFE_ID = /^[\w-]{1,128}$/;
 const BOARD_ID = /^brd_[A-Za-z0-9_-]{22}$/;
+const INVALID_SPACE = 'Nom ou identifiant d’espace non valable.';
+const INVALID_TEMPLATE = 'Modèle incomplet, ou nom ou identifiant non valable.';
 
 let current = null;
 let listening = false;
@@ -70,27 +78,29 @@ const cleanName = value => {
   return length >= 1 && length <= MAX_NAME ? name : null;
 };
 
+/* Ce que le serveur refuserait à coup sûr : écarté avant l'envoi (toWire), et signalé quand cela vient d'un import. */
+const validSpace = s => !!cleanName(s?.nom) && SAFE_ID.test(s?.id);
+const validTemplate = t => !!cleanName(t?.nom) && SAFE_ID.test(t?.id) && isObject(t?.snapshot);
+
 /*
  * Ce qui part au serveur : la forme qu'il admet (validate.js, prepareAccountData). Ce qu'il refuserait à coup sûr
  * (identifiant d'un tableau local, champ inconnu d'un ancien modèle, doublon) est écarté ici plutôt que de faire
- * échouer tout l'envoi.
+ * échouer tout l'envoi. Un élément venu de l'appareil et écarté ici n'y est pas effacé (voir settle et importItems).
  */
 function toWire(d) {
   const spaceIds = new Set();
   const espaces = [];
   for (const space of d.espaces) {
-    const nom = cleanName(space.nom);
-    if (!nom || !SAFE_ID.test(space.id) || spaceIds.has(space.id)) continue;
+    if (!validSpace(space) || spaceIds.has(space.id)) continue;
     spaceIds.add(space.id);
-    espaces.push({ id: space.id, nom });
+    espaces.push({ id: space.id, nom: cleanName(space.nom) });
   }
   const templateIds = new Set();
   const modèles = [];
   for (const t of d.modèles) {
-    const nom = cleanName(t.nom);
-    if (!nom || !SAFE_ID.test(t.id) || templateIds.has(t.id) || !isObject(t.snapshot)) continue;
+    if (!validTemplate(t) || templateIds.has(t.id)) continue;
     templateIds.add(t.id);
-    const out = { id: t.id, nom };
+    const out = { id: t.id, nom: cleanName(t.nom) };
     if (typeof t.description === 'string') out.description = [...t.description].slice(0, MAX_DESCRIPTION).join('');
     if (Number.isSafeInteger(t.créé) && t.créé >= 0) out.créé = t.créé;
     if (typeof t.partage === 'boolean') out.partage = t.partage;
@@ -106,28 +116,28 @@ function toWire(d) {
   };
 }
 
-/* Refus du serveur sur un élément précis (path) : l'opération qui le retire, pour envoyer tout le reste. */
-function repairOp(path, wire) {
+/* Refus du serveur sur un élément précis (path) : l'élément, et l'opération qui le retire pour envoyer tout le reste. */
+function refusalAt(path, wire) {
   let m;
   if ((m = /^data\.modèles\[(\d+)\]/.exec(path)) && wire.modèles[m[1]]) {
-    const id = wire.modèles[m[1]].id;
-    return d => { d.modèles = d.modèles.filter(t => t.id !== id); };
+    const { id, nom } = wire.modèles[m[1]];
+    return { kind: 'modèle', id, label: `modèle « ${nom} »`, apply: d => { d.modèles = d.modèles.filter(t => t.id !== id); } };
   }
   if ((m = /^data\.espaces\[(\d+)\]/.exec(path)) && wire.espaces[m[1]]) {
-    const id = wire.espaces[m[1]].id;
-    return d => { d.espaces = d.espaces.filter(s => s.id !== id); };
+    const { id, nom } = wire.espaces[m[1]];
+    return { kind: 'espace', id, label: `espace « ${nom} »`, apply: d => { d.espaces = d.espaces.filter(s => s.id !== id); } };
   }
   if ((m = /^data\.favoris\[(\d+)\]/.exec(path)) && wire.favoris[m[1]] !== undefined) {
     const id = wire.favoris[m[1]];
-    return d => { d.favoris = d.favoris.filter(f => f !== id); };
+    return { kind: 'favori', id, label: 'un favori', apply: d => { d.favoris = d.favoris.filter(f => f !== id); } };
   }
   if ((m = /^data\.placement\.(.+)$/.exec(path)) && m[1] in wire.placement) {
     const board = m[1];
-    return d => { delete d.placement[board]; };
+    return { kind: 'placement', id: board, label: 'la place d’un tableau dans un espace', apply: d => { delete d.placement[board]; } };
   }
   if ((m = /^data\.usage\.(.+)$/.exec(path)) && m[1] in wire.usage) {
     const key = m[1];
-    return d => { delete d.usage[key]; };
+    return { kind: 'usage', id: key, label: 'l’historique d’usage d’un modèle', apply: d => { delete d.usage[key]; } };
   }
   return null;
 }
@@ -152,6 +162,12 @@ function readFor(id) {
 
 const hasData = d => d.espaces.length + d.favoris.length + d.modèles.length + Object.keys(d.placement).length + Object.keys(d.usage).length > 0;
 
+/* Lève si le stockage est plein : l'appelant garde alors sa propre copie. */
+function writeFor(id, d) {
+  if (hasData(d)) localStorage.setItem(keyOf(id), JSON.stringify({ version: 1, ...d }));
+  else localStorage.removeItem(keyOf(id));
+}
+
 /* ---- API, chargée à la demande comme dans store/account.js ---- */
 
 let apiModule = null;
@@ -162,10 +178,15 @@ async function api() {
 
 /* ---- État par compte ---- */
 
+/*
+ * ops : opérations { apply(d), label, ticket?, repair? } dans l'ordre ; apply ne dépend que de ses arguments (rejouée
+ * après un conflit). label nomme l'opération si le serveur la refuse. ticket : un appelant attend la réponse.
+ * refusals : éléments refusés par le serveur pendant que des tickets attendent (raison donnée à l'appelant).
+ */
 function stateOf(id) {
   let s = accounts.get(id);
   if (!s) {
-    s = { id, loaded: false, rev: 0, base: empty(), ops: [], view: null, loading: null, sending: null, timer: null, retry: null, fetchedAt: 0, migrating: false };
+    s = { id, loaded: false, rev: 0, base: empty(), ops: [], view: null, loading: null, sending: null, timer: null, retry: null, fetchedAt: 0, migration: null, migrationTried: false, refusals: [] };
     accounts.set(id, s);
   }
   return s;
@@ -173,13 +194,15 @@ function stateOf(id) {
 
 const alive = s => accounts.get(s.id) === s;
 
+function apply(base, ops) {
+  const d = structuredClone(base);
+  for (const op of ops) op.apply(d);
+  d.usage = trimUsage(d.usage);
+  return d;
+}
+
 function view(s) {
-  if (!s.view) {
-    const d = structuredClone(s.base);
-    for (const op of s.ops) op(d);
-    d.usage = trimUsage(d.usage);
-    s.view = d;
-  }
+  s.view ||= apply(s.base, s.ops);
   return s.view;
 }
 
@@ -189,7 +212,7 @@ function changed() {
   }
 }
 
-/* Une modification refusée par le serveur (quota, élément invalide) : l'interface le dit, la copie est corrigée. */
+/* Une modification refusée par le serveur (quota, élément invalide) : fn(erreur, ce qui a été refusé). */
 export function setRejectionHandler(fn) {
   onRejected = fn || (() => {});
 }
@@ -210,9 +233,109 @@ function scheduleRetry(s) {
   s.retry = setTimeout(() => { s.retry = null; if (alive(s)) syncState(s); }, RETRY_MS);
 }
 
+/* ---- Suivi d'une opération par son appelant : import, ancien stockage de l'appareil ---- */
+
+const elementsOf = input => [
+  ...(input.espaces || []).map(x => ({ kind: 'espace', id: x.id, nom: x.nom })),
+  ...(input.modèles || []).map(x => ({ kind: 'modèle', id: x.id, nom: x.nom }))
+];
+
 /*
- * Lit la version du serveur. L'ancien stockage de l'appareil, s'il en reste, s'ajoute en tête des opérations :
- * il part avec le prochain envoi et sa clé n'est effacée qu'après l'accord du serveur.
+ * result (une seule fois) : { sent: true, refused } une fois enregistrée, refused listant les espaces et modèles de
+ * l'entrée absents de ce que le serveur a accepté, avec la raison ; { sent: false, refused, error? } si elle a été
+ * refusée en entier ou abandonnée (compte oublié). Tant que result est null, la réponse n'est pas venue.
+ */
+function ticketFor(input, { quiet = false, refused = [] } = {}) {
+  let resolve;
+  const ticket = { input, quiet, result: null, settled: new Promise(r => { resolve = r; }) };
+  ticket.settle = result => {
+    if (ticket.result) return;
+    ticket.result = { ...result, refused: [...refused, ...result.refused] };
+    resolve(ticket.result);
+  };
+  return ticket;
+}
+
+function reasonOf(s, el) {
+  const found = s.refusals.findLast(r => r.kind === el.kind && r.id === el.id);
+  return found?.reason || 'Le serveur ne l’a pas enregistré.';
+}
+
+const presentIn = (wire, el) => (el.kind === 'espace' ? wire.espaces : wire.modèles).some(x => x.id === el.id);
+
+/* Le serveur a accepté base + batch (wire), à la révision rev. */
+function commit(s, batch, rev, wire) {
+  s.rev = rev;
+  s.base = normalize(wire);
+  s.ops = s.ops.filter(op => !batch.includes(op));
+  s.view = null;
+  s.fetchedAt = Date.now();
+  for (const op of batch) {
+    if (!op.ticket) continue;
+    const refused = elementsOf(op.ticket.input).filter(el => !presentIn(wire, el)).map(el => ({ ...el, reason: reasonOf(s, el) }));
+    op.ticket.settle({ sent: true, refused });
+  }
+  if (!s.ops.some(op => op.ticket)) s.refusals = [];
+}
+
+/* Refusées seules par le serveur : retirées de la copie ; ce qui était refusé est nommé. */
+function drop(s, batch, err) {
+  s.ops = s.ops.filter(op => !batch.includes(op));
+  s.view = null;
+  for (const op of batch) {
+    op.ticket?.settle({ sent: false, error: err, refused: elementsOf(op.ticket.input).map(el => ({ ...el, reason: err.message })) });
+  }
+  const main = batch.find(op => !op.repair) || batch[0];
+  console.warn('Données du compte refusées par le serveur :', main.label, err.message);
+  if (!main.ticket?.quiet) onRejected(err, main.label);
+  changed();
+}
+
+/* Un élément refusé appartient-il à un import dont l'appelant rend compte lui-même ? */
+const reportedByCaller = (s, refusal) => s.ops.some(op => op.ticket?.quiet && !op.ticket.result && elementsOf(op.ticket.input).some(el => el.kind === refusal.kind && el.id === refusal.id));
+
+/*
+ * L'ancien stockage de l'appareil, s'il en reste, s'ajoute en tête des opérations. Une fois le serveur d'accord, il est
+ * réécrit avec les seuls éléments refusés ; refusé en entier, ou jamais envoyé, il reste tel quel. Un essai par
+ * chargement du compte : ce qui est refusé n'est pas renvoyé en boucle.
+ */
+function startMigration(s) {
+  if (s.migration) return;
+  const legacy = readFor(s.id);
+  if (!hasData(legacy)) return;
+  const ticket = ticketFor(legacy);
+  s.migration = ticket;
+  s.ops.unshift({ apply: mergeOp(legacy), label: 'les espaces, favoris et modèles gardés sur cet appareil (ils y restent)', ticket });
+  s.view = null;
+  ticket.settled.then(result => finishMigration(s, legacy, result));
+}
+
+function finishMigration(s, sent, result) {
+  if (s.migration?.result === result) s.migration = null;
+  if (!result.sent) { s.migrationTried = true; return; }
+  const refused = new Set(result.refused.map(el => `${el.kind}:${el.id}`));
+  // Relu : une reprise a pu y écrire entre-temps. Seul ce qui a été envoyé et accepté en sort.
+  const left = readFor(s.id);
+  left.espaces = left.espaces.filter(x => refused.has(`espace:${x.id}`) || !sent.espaces.some(y => y.id === x.id));
+  left.modèles = left.modèles.filter(x => refused.has(`modèle:${x.id}`) || !sent.modèles.some(y => y.id === x.id));
+  // Favoris, places et usages écartés par toWire (identifiant d'un tableau local…) n'ont pas de sens pour le serveur.
+  left.favoris = left.favoris.filter(f => !sent.favoris.includes(f));
+  for (const [board, space] of Object.entries(sent.placement)) if (left.placement[board] === space) delete left.placement[board];
+  for (const [key, at] of Object.entries(sent.usage)) if (left.usage[key] <= at && !refused.has(`modèle:${key}`)) delete left.usage[key];
+  try { writeFor(s.id, left); } catch (e) { console.warn('Ancien stockage du compte non réécrit :', e); }
+  if (refused.size) { s.migrationTried = true; return; }
+  // Ajouté pendant l'envoi (reprise d'un ancien miroir) : part à son tour.
+  if (alive(s) && s.loaded && hasData(left)) {
+    startMigration(s);
+    schedule(s, 0);
+  }
+}
+
+/* ---- Lecture et envoi ---- */
+
+/*
+ * Lit la version du serveur ; les opérations en attente y sont rejouées. Une réponse plus ancienne que la copie
+ * (un envoi a été confirmé pendant la lecture) est ignorée.
  */
 async function fetchState(s) {
   if (s.loading) return s.loading;
@@ -220,17 +343,12 @@ async function fetchState(s) {
     try {
       const { rev, data } = await (await api()).getAccountData();
       if (!alive(s)) return;
+      if (s.loaded && rev < s.rev) return;
       s.rev = rev;
       s.base = normalize(data);
       s.loaded = true;
       s.fetchedAt = Date.now();
-      if (!s.migrating) {
-        const legacy = readFor(s.id);
-        if (hasData(legacy)) {
-          s.migrating = true;
-          s.ops.unshift(mergeOp(legacy));
-        }
-      }
+      if (!s.migrationTried) startMigration(s);
       s.view = null;
       changed();
       if (s.ops.length) schedule(s, 0);
@@ -245,32 +363,35 @@ async function fetchState(s) {
   return s.loading;
 }
 
-/* Envoie les opérations en attente ; sur conflit, relit et rejoue. Une seule série d'envois à la fois. */
+/*
+ * Envoie les opérations en attente ; sur conflit, relit et rejoue. Une seule série d'envois à la fois.
+ * Élément précis refusé (400 avec path) : il est retiré par une opération de réparation, le reste repart.
+ * Refus d'ensemble (quota, taille, trop d'éléments) : les opérations du lot sont essayées une à une (avec leurs
+ * réparations), dans l'ordre ; seules celles que le serveur refuse seules sont retirées, et nommées.
+ */
 function send(s) {
   if (s.sending) return s.sending;
   s.sending = (async () => {
     let conflicts = 0;
     let repairs = 0;
+    let queue = [];   // isolement : opérations d'un lot refusé, à essayer seules
+    let group = null; // l'opération essayée seule et ses réparations
     while (alive(s) && s.ops.length) {
       if (!s.loaded) {
         await fetchState(s);
         if (!s.loaded) return;
         continue;
       }
-      const count = s.ops.length;
-      const data = toWire(structuredClone(view(s)));
+      queue = queue.filter(op => s.ops.includes(op));
+      if (group && !s.ops.includes(group[0])) group = null;
+      if (!group && queue.length) { group = [queue[0]]; repairs = 0; }
+      const batch = group ? group.filter(op => s.ops.includes(op)) : [...s.ops];
+      const data = toWire(apply(s.base, batch));
       try {
         const { rev } = await (await api()).putAccountData(s.rev, data);
         if (!alive(s)) return;
-        s.rev = rev;
-        s.base = normalize(data);
-        s.ops = s.ops.slice(count);
-        s.view = null;
-        s.fetchedAt = Date.now();
-        if (s.migrating) {
-          s.migrating = false;
-          try { localStorage.removeItem(keyOf(s.id)); } catch { /* déjà absent */ }
-        }
+        commit(s, batch, rev, data);
+        if (group) { queue = queue.filter(op => !batch.includes(op)); group = null; }
         channel?.postMessage({ id: s.id, rev });
       } catch (err) {
         if (err?.name !== 'ApiError') throw err;
@@ -280,23 +401,23 @@ function send(s) {
         }
         if (err.unreachable || err.status === 409) { scheduleRetry(s); return; }
         if (err.status === 401) return;
-        // Un élément précis est refusé : il est retiré, le reste repart.
-        const repair = err.status === 400 && ++repairs <= MAX_REPAIRS ? repairOp(err.path || '', data) : null;
-        if (repair) {
-          s.ops.push(repair);
+        const refusal = err.status === 400 && ++repairs <= MAX_REPAIRS ? refusalAt(err.path || '', data) : null;
+        if (refusal) {
+          const repair = { apply: refusal.apply, label: refusal.label, repair: true };
+          s.ops.splice(s.ops.indexOf(batch.at(-1)) + 1, 0, repair);
+          if (group) group.push(repair);
+          s.refusals.push({ kind: refusal.kind, id: refusal.id, reason: err.message });
           s.view = null;
           changed();
-          onRejected(err);
+          if (!reportedByCaller(s, refusal)) onRejected(err, refusal.label);
           continue;
         }
-        // Refus d'ensemble (quota, taille) : ces modifications ne passeront pas, la copie revient à celle du serveur.
-        console.warn('Données du compte refusées par le serveur :', err.message);
-        s.ops = s.ops.slice(count);
-        s.migrating = false;
-        s.view = null;
-        changed();
-        onRejected(err);
-        return;
+        if (!group && batch.length > 1) {
+          queue = [...batch];
+          continue;
+        }
+        drop(s, batch, err);
+        if (group) { queue = queue.filter(op => !batch.includes(op)); group = null; }
       }
     }
   })().finally(() => { s.sending = null; });
@@ -309,6 +430,8 @@ function syncState(s) {
   return Promise.resolve();
 }
 
+const anyUnsent = () => [...accounts.values()].some(s => s.ops.length > 0);
+
 function listen() {
   if (listening) return;
   listening = true;
@@ -317,7 +440,7 @@ function listen() {
     channel = new BroadcastChannel('baro-donnees-compte');
     channel.onmessage = e => {
       const s = current && accounts.get(current);
-      if (s && e.data?.id === s.id && e.data.rev > s.rev && !s.sending) fetchState(s);
+      if (s?.loaded && e.data?.id === s.id && e.data.rev > s.rev && !s.sending) fetchState(s);
     };
   }
   addEventListener('online', () => syncPending());
@@ -331,14 +454,40 @@ function listen() {
     const s = current && accounts.get(current);
     if (!s?.loaded || !s.ops.length || s.sending) return;
     clearTimeout(s.timer);
+    s.timer = null;
     api().then(a => a.putAccountData(s.rev, toWire(structuredClone(view(s))), { keepalive: true })).catch(() => {});
+  });
+  // Ces modifications ne sont qu'en mémoire : les perdre en fermant l'onglet doit être une décision.
+  addEventListener('beforeunload', event => {
+    if (!anyUnsent()) return;
+    event.preventDefault();
+    event.returnValue = '';
+  });
+  // Retour depuis le cache de navigation : pagehide a arrêté le minuteur, l'envoi reprend.
+  addEventListener('pageshow', event => {
+    if (!event.persisted) return;
+    const s = current && accounts.get(current);
+    if (s?.ops.length && !s.timer && !s.sending) schedule(s, 0);
   });
 }
 
-/* Le compte connecté, ou null : sans compte, rien n'est lu ni écrit. Sa copie de travail est chargée aussitôt. */
+/*
+ * Le compte connecté, ou null : sans compte, rien n'est lu ni écrit. Sa copie de travail est chargée aussitôt.
+ * Le compte quitté (session expirée, autre compte) garde ses opérations en attente, mais sa copie sera relue du
+ * serveur à son retour dans cet onglet : un autre appareil a pu écrire entre-temps.
+ */
 export function setAccount(id) {
   listen();
-  current = id || null;
+  const next = id || null;
+  const previous = current && current !== next ? accounts.get(current) : null;
+  if (previous) {
+    previous.loaded = false;
+    previous.migrationTried = false;
+    clearTimeout(previous.timer);
+    clearTimeout(previous.retry);
+    previous.timer = previous.retry = null;
+  }
+  current = next;
   if (current && !stateOf(current).loaded) fetchState(stateOf(current));
 }
 
@@ -353,13 +502,20 @@ export function load() {
   return s.loaded ? Promise.resolve() : fetchState(s);
 }
 
-/* Envoie ce qui attend encore (déconnexion, retour de la connexion). */
-export function flush() {
-  if (!current) return Promise.resolve();
+/*
+ * Envoie ce qui attend encore (déconnexion, import) et rend la main une fois l'envoi fini : chargement compris, et
+ * envoi déjà en cours compris. Ce qui n'a pas pu partir reste en attente (hasUnsent).
+ */
+export async function flush() {
+  if (!current) return;
   const s = stateOf(current);
   clearTimeout(s.timer);
   s.timer = null;
-  return syncState(s);
+  if (!s.loaded) await fetchState(s);
+  if (!alive(s) || !s.loaded) return;
+  clearTimeout(s.timer);
+  s.timer = null;
+  if (s.ops.length || s.sending) await send(s);
 }
 
 export function syncPending() {
@@ -371,45 +527,36 @@ export function hasUnsent(id = current) {
   return !!id && (accounts.get(id)?.ops.length || 0) > 0;
 }
 
-export function isLoaded(id = current) {
-  return !!id && !!accounts.get(id)?.loaded;
-}
-
 export function read() {
   if (!current) return empty();
   return view(stateOf(current));
 }
 
 /*
- * Toute écriture passe par ici. fn reçoit une copie à modifier ; elle peut être rejouée sur la version du serveur
- * après un conflit : elle ne doit dépendre que de ses arguments. Lève si aucun compte n'est connecté ou si une limite
- * du serveur serait dépassée : rien n'est changé.
- * Pour un autre compte que le compte connecté (reprise d'anciennes données), l'écriture va à l'ancien stockage de
- * l'appareil, envoyé au serveur au prochain chargement de ce compte.
+ * Toute écriture passe par ici. Lève si aucun compte n'est connecté ou si une limite du serveur serait dépassée :
+ * rien n'est changé. op.apply reçoit une copie à modifier ; elle peut être rejouée sur la version du serveur après
+ * un conflit : elle ne doit dépendre que de ses arguments.
  */
-export function update(fn, id = current) {
-  if (!id) throw new Error('Aucun compte connecté.');
-  if (id !== current) {
-    const data = readFor(id);
-    const result = fn(data);
-    localStorage.setItem(keyOf(id), JSON.stringify(data));
-    return result;
-  }
-  const s = stateOf(id);
+function enqueue(op) {
+  if (!current) throw new Error('Aucun compte connecté.');
+  const s = stateOf(current);
   const next = structuredClone(view(s));
-  const result = fn(next);
+  op.apply(next);
   next.usage = trimUsage(next.usage);
   checkLimits(next);
-  s.ops.push(fn);
+  s.ops.push(op);
   s.view = next;
   schedule(s);
-  return result;
+}
+
+function update(apply, label) {
+  enqueue({ apply, label });
 }
 
 /* Les écritures d'organisation (favori, espace) ne doivent pas casser l'interface : l'échec est signalé par false. */
-function tryUpdate(fn) {
+function tryUpdate(fn, label) {
   try {
-    update(fn);
+    update(fn, label);
     return true;
   } catch (e) {
     console.warn('Rangement non enregistré :', e);
@@ -417,34 +564,47 @@ function tryUpdate(fn) {
   }
 }
 
-export function summary(id = current) {
-  if (!id) return { espaces: 0, favoris: 0, modèles: 0 };
-  const d = id === current ? read() : readFor(id);
-  return { espaces: d.espaces.length, favoris: d.favoris.length, modèles: d.modèles.length };
-}
-
-export function hasContent(id = current) {
-  const s = summary(id);
-  return s.espaces + s.favoris + s.modèles > 0;
-}
-
-/* Déconnexion, suppression du compte : la copie de travail et l'ancien stockage de l'appareil disparaissent. */
-export function forget(id) {
+/*
+ * Déconnexion, suppression du compte : la copie de travail disparaît. L'ancien stockage de l'appareil n'est effacé
+ * qu'avec le compte (removed) : tant qu'il existe, le serveur ne l'a pas reçu.
+ */
+export function forget(id, { removed = false } = {}) {
   if (!id) return;
   const s = accounts.get(id);
   if (s) {
     clearTimeout(s.timer);
     clearTimeout(s.retry);
     accounts.delete(id);
+    for (const op of s.ops) op.ticket?.settle({ sent: false, abandoned: true, refused: [] });
   }
-  try { localStorage.removeItem(keyOf(id)); } catch { /* déjà absent */ }
+  if (removed) {
+    try { localStorage.removeItem(keyOf(id)); } catch { /* déjà absent */ }
+  }
   if (id === current) changed();
+}
+
+/*
+ * Déconnexion faite dans un autre onglet : un dernier envoi est tenté, puis la copie de travail est oubliée.
+ * Rend false si des changements n'ont pas pu partir (la session est souvent déjà fermée) : l'appelant le signale.
+ */
+export async function forgetAfterSending(id, { removed = false } = {}) {
+  const s = id && accounts.get(id);
+  if (s?.ops.length && !removed) {
+    clearTimeout(s.timer);
+    s.timer = null;
+    try { await send(s); } catch (e) { console.error(e); }
+  }
+  const unsent = !removed && !!s && alive(s) && s.ops.length > 0;
+  // Reconnecté entre-temps dans cet onglet : la copie redevient celle du compte connecté, rien n'est oublié.
+  if (id === current) return !unsent;
+  forget(id, { removed });
+  return !unsent;
 }
 
 /*
  * Ajoute à un compte, sans doublon, ce qui lui revient : espaces et modèles par identifiant, favoris, place d'un
  * tableau (jamais écrasée), usage le plus récent d'un modèle. Seule déduplication de ces données : l'import
- * (store/local-import.js), la migration de l'ancien stockage et la reprise d'anciennes données passent par ici.
+ * (store/local-import.js), l'ancien stockage de l'appareil et les reprises passent par ici.
  */
 function mergeOp({ espaces = [], favoris = [], placement = {}, modèles = [], usage = {} } = {}) {
   const input = structuredClone({ espaces, favoris, placement, modèles, usage });
@@ -457,20 +617,50 @@ function mergeOp({ espaces = [], favoris = [], placement = {}, modèles = [], us
   };
 }
 
-export function merge(data = {}, id = current) {
-  update(mergeOp(data), id);
+/*
+ * Import dans le compte connecté (espaces et modèles d'avant les comptes). Lève si une limite serait dépassée : rien
+ * n'est changé. Rend le ticket de l'envoi (voir ticketFor) : l'appelant ne retire ses données de l'appareil qu'une fois
+ * ticket.result connu, et seulement pour ce qui n'est pas dans result.refused. Ce que le serveur refuserait à coup sûr
+ * n'est pas envoyé, et figure d'emblée dans refused.
+ */
+export function importItems({ espaces = [], modèles = [], usage = {} }) {
+  const refused = [
+    ...espaces.filter(x => !validSpace(x)).map(x => ({ kind: 'espace', id: x.id, nom: x.nom, reason: INVALID_SPACE })),
+    ...modèles.filter(x => !validTemplate(x)).map(x => ({ kind: 'modèle', id: x.id, nom: x.nom, reason: INVALID_TEMPLATE }))
+  ];
+  const input = { espaces: espaces.filter(validSpace), modèles: modèles.filter(validTemplate), usage };
+  const ticket = ticketFor(input, { quiet: true, refused });
+  if (!input.espaces.length && !input.modèles.length) {
+    ticket.settle({ sent: true, refused: [] });
+    return ticket;
+  }
+  enqueue({ apply: mergeOp(input), label: 'l’import des espaces et modèles de cet appareil', ticket });
+  return ticket;
 }
 
-/* Reprise silencieuse (espaces d'avant cette version, favoris d'un ancien miroir) : l'échec est signalé par false. */
+/*
+ * Reprise (espaces d'avant cette version marqués à un compte, favoris d'un ancien miroir) : écrite dans l'ancien
+ * stockage de l'appareil de ce compte, qui part au serveur au chargement du compte (ou aussitôt s'il est déjà chargé)
+ * et n'en est effacé qu'après son accord. Rend false si le stockage est plein : l'appelant garde alors sa copie.
+ */
 export function adopt(id, { espaces = [], favoris = [], placement = {} } = {}) {
   if (!id || (!espaces.length && !favoris.length && !Object.keys(placement).length)) return true;
   try {
-    merge({ espaces, favoris, placement }, id);
-    return true;
+    const d = readFor(id);
+    mergeOp({ espaces, favoris, placement })(d);
+    writeFor(id, d);
   } catch (e) {
     console.warn('Reprise impossible :', e);
     return false;
   }
+  const s = id === current ? accounts.get(id) : null;
+  if (s?.loaded && !s.migration) {
+    s.migrationTried = false;
+    startMigration(s);
+    changed();
+    schedule(s, 0);
+  }
+  return true;
 }
 
 /* ---- Favoris et place dans les espaces ---- */
@@ -490,14 +680,14 @@ export function setFavori(boardId, on) {
   return tryUpdate(d => {
     d.favoris = d.favoris.filter(f => f !== boardId);
     if (on) d.favoris.push(boardId);
-  });
+  }, on ? 'l’ajout d’un favori' : 'le retrait d’un favori');
 }
 
 export function setPlacement(boardId, spaceId) {
   return tryUpdate(d => {
     if (spaceId) d.placement[boardId] = spaceId;
     else delete d.placement[boardId];
-  });
+  }, 'le rangement d’un tableau dans un espace');
 }
 
 export function forgetBoard(boardId) {
@@ -507,7 +697,7 @@ export function forgetBoard(boardId) {
   tryUpdate(x => {
     x.favoris = x.favoris.filter(f => f !== boardId);
     delete x.placement[boardId];
-  });
+  }, 'le retrait d’un tableau des favoris et des espaces');
 }
 
 /* ---- Espaces ---- */
@@ -522,7 +712,7 @@ function newId(prefix) {
 
 export function createSpace(nom) {
   const space = { id: newId('space'), nom };
-  update(d => { if (!d.espaces.some(s => s.id === space.id)) d.espaces.push({ ...space }); });
+  update(d => { if (!d.espaces.some(s => s.id === space.id)) d.espaces.push({ ...space }); }, `la création de l’espace « ${nom} »`);
   return space;
 }
 
@@ -530,14 +720,15 @@ export function renameSpace(id, nom) {
   update(d => {
     const space = d.espaces.find(s => s.id === id);
     if (space) space.nom = nom;
-  });
+  }, `le nouveau nom d’espace « ${nom} »`);
 }
 
 export function removeSpace(id) {
+  const nom = read().espaces.find(s => s.id === id)?.nom;
   update(d => {
     d.espaces = d.espaces.filter(s => s.id !== id);
     for (const [board, space] of Object.entries(d.placement)) if (space === id) delete d.placement[board];
-  });
+  }, nom ? `la suppression de l’espace « ${nom} »` : 'la suppression d’un espace');
 }
 
 /* ---- Mes modèles ---- */
@@ -547,7 +738,8 @@ export function templates() {
 }
 
 export function addTemplates(list) {
-  merge({ modèles: list });
+  const label = list.length === 1 ? `le modèle « ${list[0].nom} »` : `${list.length} modèles`;
+  update(mergeOp({ modèles: list }), label);
 }
 
 /*
@@ -559,6 +751,8 @@ export function setTemplates(list) {
   const after = structuredClone(list);
   const kept = new Set(after.map(t => t.id));
   const removed = before.filter(id => !kept.has(id));
+  const gone = read().modèles.find(t => removed.includes(t.id));
+  const label = removed.length === 1 && gone ? `la suppression du modèle « ${gone.nom} »` : 'la modification de « Mes modèles »';
   update(d => {
     d.modèles = d.modèles.filter(t => !removed.includes(t.id));
     for (const t of after) {
@@ -566,7 +760,7 @@ export function setTemplates(list) {
       if (i >= 0) d.modèles[i] = structuredClone(t);
       else d.modèles.push(structuredClone(t));
     }
-  });
+  }, label);
 }
 
 export function usage() {
@@ -576,7 +770,7 @@ export function usage() {
 export function markUsed(templateId) {
   if (!current) return;
   const at = Date.now();
-  tryUpdate(d => { if (!(d.usage[templateId] >= at)) d.usage[templateId] = at; });
+  tryUpdate(d => { if (!(d.usage[templateId] >= at)) d.usage[templateId] = at; }, 'l’historique d’usage d’un modèle');
 }
 
 /* ---- Données d'avant les comptes, communes à l'appareil ---- */

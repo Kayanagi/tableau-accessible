@@ -2,7 +2,7 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
-## [1.11.0] - à paraître
+## [1.11.0] - 2026-11-09
 
 ### Ajouté
 - « Mot de passe oublié ? » sur la page de connexion et sur l’écran de connexion de l’application : un lien valable une heure, à usage unique, est envoyé par e-mail. Le message affiché est le même qu’un compte existe ou non.

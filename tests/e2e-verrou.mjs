@@ -678,11 +678,24 @@ try {
     await page.click('#btn-comments');
     log('Commentaires : auteur = nom affiché du compte, sans champ à remplir', (await page.locator('.comments-author').textContent()).includes('Ana') && await page.locator('#comment-author').count() === 0);
     await page.keyboard.press('Escape');
+    // Une modification du tableau qui ne part pas : la déconnexion propose de la garder ou non. Espaces, favoris et
+    // modèles sont sur le serveur (v1.11.0) : envoyés avant la déconnexion, ils ne sont plus listés.
+    await page.route('**/api/boards/*/data', r => r.abort());
+    await page.locator('.canvas-item[data-id="item-1"]').first().focus();
+    await page.keyboard.press('Control+d');
+    await page.waitForTimeout(2500);
     await page.goto(`${BASE}/#/`);
     await page.waitForSelector('#dashboard-title');
-    // Espaces, favoris et modèles sont sur le serveur (v1.11.0) : envoyés avant la déconnexion, rien à garder ici.
-    await logout(null);
-    log('Déconnexion : sans avertissement, l’organisation du compte étant sur le serveur', true);
+    await page.click('#btn-account');
+    await page.getByRole('button', { name: 'Se déconnecter' }).click();
+    await page.getByRole('heading', { name: 'Modifications non envoyées' }).waitFor();
+    const warning = await page.locator('.account-dialog').textContent();
+    log('Déconnexion : le tableau non envoyé est listé, pas l’organisation du compte', warning.includes('Tableau d’Ana') && !warning.includes('espaces, de favoris ou de modèles n’ont pas pu'), warning.slice(0, 200));
+    log('Déconnexion : garder ou effacer, au choix du propriétaire', await page.getByRole('button', { name: 'Les garder sur cet appareil et me déconnecter' }).count() === 1 && await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).count() === 1);
+    await axe(page, 'avertissement de déconnexion');
+    await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).click();
+    await gateShown(page);
+    await page.unroute('**/api/boards/*/data');
     log('Déconnexion : plus rien du compte dans la page', !(await page.evaluate(() => document.body.innerText)).includes('Ana'));
     const leftover = await allStored();
     log('Déconnexion : rien d’Ana sur l’appareil (miroir, espace, favori, modèle)', !/Ana|Tableau d’Ana|Espace d’Ana|Modèle d’Ana/.test(leftover) && (await accountKeys()).length === 0, leftover.slice(0, 200));

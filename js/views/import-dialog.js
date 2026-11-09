@@ -12,6 +12,8 @@ import { button, focusMessage, formMessage } from './account-forms.js';
 
 const objectsLabel = n => `${n} objet${n > 1 ? 's' : ''}`;
 const count = (n, one, many) => `${n} ${n > 1 ? many : one}`;
+// Les messages du serveur ne finissent pas tous par un point : la phrase suivante ne doit pas s'y coller.
+const sentence = text => (/[.!?…]$/.test(text.trim()) ? text.trim() : `${text.trim()}.`);
 const FULL = 'La limite des données du compte est atteinte (200 espaces, 100 modèles, 2 Mio).';
 
 export function openImportDialog() {
@@ -186,14 +188,15 @@ export function openImportDialog() {
       body.append(progress);
       const results = [];
       // Espaces et modèles d'abord : ils rejoignent le compte, et les tableaux importés retrouvent leur espace.
-      for (const [kind, list, fn] of [['space', sel.space, localImport.importSpaces], ['template', sel.template, localImport.importTemplates]]) {
-        if (!list.length) continue;
+      // Le résultat n'est connu qu'après la réponse du serveur : rien ne quitte l'appareil avant.
+      if (sel.space.length || sel.template.length) {
+        progress.textContent = 'Envoi des espaces et modèles…';
         try {
-          fn(list);
-          list.forEach(x => results.push({ kind, nom: x.nom, ok: true }));
+          results.push(...await localImport.importOrganisation({ spaces: sel.space, templates: sel.template }));
         } catch (err) {
           console.warn(err);
-          list.forEach(x => results.push({ kind, nom: x.nom, ok: false, reason: FULL }));
+          [...sel.space.map(x => ['space', x]), ...sel.template.map(x => ['template', x])]
+            .forEach(([kind, x]) => results.push({ kind, nom: x.nom, ok: false, reason: FULL }));
         }
       }
       for (const [index, board] of sel.board.entries()) {
@@ -241,8 +244,10 @@ export function openImportDialog() {
     if (boards || (!spaces && !templates)) parts.push(`${boards} tableau${boards > 1 ? 'x' : ''} importé${boards > 1 ? 's' : ''}`);
     if (spaces) parts.push(`${count(spaces, 'espace importé', 'espaces importés')}`);
     if (templates) parts.push(`${count(templates, 'modèle importé', 'modèles importés')}`);
-    const failed = results.filter(r => !r.ok).length;
+    const failed = results.filter(r => !r.ok && !r.pending).length;
     if (failed) parts.push(`${failed} refusé${failed > 1 ? 's' : ''}`);
+    const waiting = results.filter(r => r.pending).length;
+    if (waiting) parts.push(`${waiting} en attente d’envoi`);
     return `${parts.join(', ')}.`;
   }
 
@@ -265,7 +270,7 @@ export function openImportDialog() {
         if (r.ok) {
           name.textContent = `${nameOf(r)} : importé`;
           li.append(name);
-          // Espaces et modèles ont déjà quitté l'espace commun de l'appareil : rien à supprimer.
+          // Espaces et modèles enregistrés ont déjà quitté l'espace commun de l'appareil : rien à supprimer.
           if (r.kind !== 'board') { ul.append(li); continue; }
           if (r.removed) {
             const gone = document.createElement('span');
@@ -278,8 +283,12 @@ export function openImportDialog() {
               ul.closest('dialog')?.querySelector('h2')?.focus();
             }));
           }
+        } else if (r.pending) {
+          name.textContent = `${nameOf(r)} : pas encore enregistré, le serveur n’a pas répondu. Il reste sur cet appareil et en sera retiré une fois enregistré.`;
+          li.classList.add('is-refused');
+          li.append(name);
         } else {
-          name.textContent = `${nameOf(r)} : refusé. ${r.reason} Il reste sur cet appareil.`;
+          name.textContent = `${nameOf(r)} : refusé. ${sentence(r.reason)} Il reste sur cet appareil.`;
           li.classList.add('is-refused');
           li.append(name);
         }

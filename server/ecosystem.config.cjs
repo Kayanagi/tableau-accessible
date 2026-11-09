@@ -9,6 +9,8 @@ module.exports = {
       exec_mode: 'fork',
       instances: 1,
       max_memory_restart: '400M',
+      // Laisse le temps de finir un envoi d'e-mail en cours (sendmail : 30 s au plus) avant SIGKILL.
+      kill_timeout: 35000,
       env: {
         // Sans cette valeur, les garde-fous du cookie et de scrypt ne s'appliquent pas.
         NODE_ENV: 'production',

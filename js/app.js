@@ -197,7 +197,16 @@ function onAccountEvent(event) {
   } else if (type === 'retrying') {
     notify(`save-${entry.id}`, `« ${entry.nom} » n’a pas pu être enregistré : ${event.error.message} Nouvel essai automatique, vos modifications restent sur cet appareil.`, { tone: 'error' });
   } else if (type === 'account-data-rejected') {
-    notify('account-data', `Un changement d’espaces, de favoris ou de modèles n’a pas été enregistré : ${event.error.message}`, { tone: 'error' });
+    notify('account-data', `Non enregistré sur le serveur : ${event.what || 'un changement d’espaces, de favoris ou de modèles'}. ${event.error.message}`, { tone: 'error' });
+  } else if (type === 'account-data-unsent') {
+    // Déconnexion faite dans un autre onglet : l'écran de connexion est déjà là, le message s'y ajoute.
+    const message = 'Vos derniers changements d’espaces, de favoris ou de modèles faits dans cet onglet n’ont pas pu être envoyés au serveur avant la déconnexion : ils n’ont pas été enregistrés.';
+    if (locked) {
+      lockNotice = lockNotice ? `${lockNotice} ${message}` : message;
+      loginScreen.update(lockView(account.getStatus()));
+    } else {
+      notify('account-data', message, { tone: 'error' });
+    }
   } else if (type === 'sent') {
     clearNotice(`save-${entry.id}`);
   } else if (type === 'copy-failed') {
