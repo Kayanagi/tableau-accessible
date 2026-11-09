@@ -933,17 +933,15 @@ try {
       await context.close();
     },
     async C15() {
+      // Importer un fichier remplacerait la version du serveur : la vue tableau n'en propose plus, l'accueil l'importe dans un nouveau tableau.
       const { context, page, id } = await connected('C15');
       await openBoard(page, id);
-      let picker = false;
-      page.once('filechooser', () => { picker = true; });
-      await page.click('#btn-import');
-      await page.locator('.notice-error', { hasText: 'Import refusé' }).waitFor();
-      log('C15 : import refusé avant le choix du fichier', !picker);
-      await page.setInputFiles('#file-import', { name: 't.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify({ name: 'x', items: [] })) });
-      await page.waitForTimeout(3500);
+      log('C15 : vue tableau sans bouton Importer ni sélecteur de fichier', await page.locator('#btn-import, #file-import').count() === 0 && await page.locator('#app-board').getByRole('button', { name: /^Importer/ }).count() === 0);
+      await page.goto(`${BASE}/#/`);
+      await page.waitForSelector('#dashboard-title');
+      log('C15 : l’import de fichier reste à l’accueil, dans un nouveau tableau', await page.getByRole('button', { name: 'Importer JSON' }).count() === 1);
       const s = await fetchBoard(page, id);
-      log('C15 : tableau et serveur intacts', s.rev === 0 && s.board.items.length === 1 && await page.locator('.canvas-item').count() === 1);
+      log('C15 : tableau et serveur intacts', s.rev === 0 && s.board.items.length === 1);
       await context.close();
     },
     async A11Y() {

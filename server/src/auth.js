@@ -154,7 +154,9 @@ export function createSessions(db, config) {
       return { session: null };
     }
     let setCookie = null;
-    if (t - row.last_seen_at >= HOUR) {
+    const fetchSite = req.headers['sec-fetch-site'];
+    const mayRefresh = fetchSite === undefined || fetchSite === 'same-origin';
+    if (mayRefresh && t - row.last_seen_at >= HOUR) {
       const expires = guest ? row.expires_at : t + SESSION_TTL;
       if (guest) queries.touch.run(t, expires, hash);
       else touchAccount(t, expires, hash, row.user_id);

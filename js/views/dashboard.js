@@ -120,13 +120,13 @@ export function render(route) {
     const link = document.createElement('a'); link.href = `#/espace/${space.id}`; link.textContent = space.nom;
     if (route.spaceId === space.id) link.setAttribute('aria-current', 'page');
     const rename = document.createElement('button'); rename.textContent = 'Renommer'; rename.setAttribute('aria-label', `Renommer l’espace ${space.nom}`);
-    rename.onclick = () => ask('Renommer l’espace', space.nom, nom => { boards.renameSpace(space.id, nom); render(router.getRoute()); announce('Espace renommé'); });
+    rename.onclick = () => ask('Renommer l’espace', space.nom, nom => { const ok = boards.renameSpace(space.id, nom); render(router.getRoute()); announce(ok ? 'Espace renommé' : 'Stockage de cet appareil plein : espace non renommé'); });
     const del = document.createElement('button'); del.textContent = 'Supprimer'; del.setAttribute('aria-label', `Supprimer l’espace ${space.nom}`);
-    del.onclick = () => ask(`Supprimer l’espace « ${space.nom} » ? Les tableaux seront conservés.`, '', () => { boards.removeSpace(space.id); if (route.spaceId === space.id) router.navigate('/'); else render(router.getRoute()); announce('Espace supprimé, tableaux conservés'); }, true);
+    del.onclick = () => ask(`Supprimer l’espace « ${space.nom} » ? Les tableaux seront conservés.`, '', () => { if (!boards.removeSpace(space.id)) { announce('Stockage de cet appareil indisponible : espace non supprimé'); return; } if (route.spaceId === space.id) router.navigate('/'); else render(router.getRoute()); announce('Espace supprimé, tableaux conservés'); }, true);
     row.append(link, rename, del); nav.append(row);
   }
   const add = document.createElement('button'); add.id = 'btn-create-space'; add.textContent = 'Créer un espace';
-  add.onclick = () => ask('Créer un espace', '', nom => { boards.createSpace(nom); render(router.getRoute()); announce('Espace créé'); });
+  add.onclick = () => ask('Créer un espace', '', nom => { const ok = boards.createSpace(nom); render(router.getRoute()); announce(ok ? 'Espace créé' : 'Stockage de cet appareil plein : espace non créé'); });
   nav.append(add);
   container.appendChild(nav);
 
@@ -276,9 +276,18 @@ function renderInvites(main) {
     status.setAttribute('role', 'status');
     const list = document.createElement('ul');
     list.className = 'invites-list';
-    section.append(h2, status, list);
+    const all = document.createElement('div');
+    all.className = 'invite-actions invites-all';
+    const declineAll = document.createElement('button');
+    declineAll.id = 'btn-decline-all';
+    declineAll.className = 'btn-sm';
+    declineAll.textContent = 'Tout refuser';
+    declineAll.addEventListener('click', () => confirmDeclineAll());
+    all.append(declineAll);
+    section.append(h2, status, list, all);
     main.prepend(section);
   }
+  section.querySelector('#btn-decline-all').setAttribute('aria-label', `Tout refuser : ${inviteCount(invites.length)}`);
   section.querySelector('#invites-count').textContent = inviteCount(invites.length);
   const list = section.querySelector('.invites-list');
   list.replaceChildren();
@@ -308,6 +317,63 @@ function renderInvites(main) {
   if (hadFocus) ([...section.querySelectorAll('button')].find(b => b.getAttribute('aria-label') === label) || section.querySelector('button'))?.focus();
 }
 
+/* Résultat lu en role="status" : la zone existe avant que son texte ne change, et survit au retrait du bandeau. */
+function inviteResult(main) {
+  let p = main.querySelector('#invites-result');
+  if (!p) {
+    p = document.createElement('p');
+    p.id = 'invites-result';
+    p.className = 'invites-result';
+    p.setAttribute('role', 'status');
+    main.prepend(p);
+  }
+  return p;
+}
+
+/* Confirmation explicite avant d'envoyer : les tableaux refusés ne reviennent qu'avec une nouvelle invitation. */
+function confirmDeclineAll() {
+  const n = account.getInvites().length;
+  const main = lastMain;
+  const result = inviteResult(main);
+  result.textContent = '';
+  const el = dialog('Refuser toutes les invitations ?', d => {
+    d.classList.add('account-dialog');
+    const p = document.createElement('p');
+    p.textContent = `${n > 1 ? `Les ${n} invitations en attente seront refusées` : 'L’invitation en attente sera refusée'}. Pour accéder à ces tableaux, il faudra être invité de nouveau.`;
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+    const yes = document.createElement('button');
+    yes.type = 'button';
+    yes.className = 'btn-danger';
+    yes.textContent = 'Refuser toutes les invitations';
+    const no = document.createElement('button');
+    no.type = 'button';
+    no.textContent = 'Annuler';
+    no.addEventListener('click', () => d.close());
+    let busy = false;
+    yes.addEventListener('click', async () => {
+      if (busy) return;
+      busy = true;
+      d.close();
+      try {
+        const declined = await account.declineAllInvites();
+        if (!main?.isConnected) return;
+        renderInvites(main);
+        result.textContent = declined > 1 ? `${declined} invitations refusées.` : declined === 1 ? 'Invitation refusée.' : 'Aucune invitation à refuser.';
+        document.getElementById('dashboard-title')?.focus();
+      } catch (err) {
+        if (err.name !== 'ApiError') throw err;
+        account.refreshBoards();
+        reportError('invites', err);
+      }
+    });
+    actions.append(yes, no);
+    d.append(p, actions);
+  });
+  // Action irréversible : le focus part sur Annuler.
+  el.querySelector('.dialog-actions button:last-child').focus();
+}
+
 async function answerInvite(invite, yes) {
   try {
     const res = yes ? await account.acceptInvite(invite.id) : await account.declineInvite(invite.id);
@@ -321,6 +387,8 @@ async function answerInvite(invite, yes) {
     if (err.name !== 'ApiError') throw err;
     // Invitation expirée ou annulée entre-temps : la liste est relue.
     if (err.notFound) account.refreshBoards();
+    // Tableau complet (100 membres) : l'invitation reste en attente, la raison est dite telle quelle.
+    if (yes && err.code === 'quota_exceeded') err.message = `Invitation non acceptée : ${err.message} L’invitation reste en attente.`;
     reportError('invites', err);
   }
 }

@@ -5,6 +5,7 @@
 import * as api from '../sync/api.js';
 import * as account from '../store/account.js';
 import * as boards from '../store/boards.js';
+import * as local from '../store/account-local.js';
 import { dialog } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
 import { button, checkName, checkNewPassword, clean, formMessage, makeField, makeForm, PASSWORD_MAX, PASSWORD_MIN, privacyHint, setMessage } from './account-forms.js';
@@ -132,22 +133,23 @@ export function openAccountDialog({ onClose } = {}) {
     });
   }
 
-  function clearSessionAndClose(message) {
-    account.signedOut();
+  function clearSessionAndClose(message, options) {
+    account.signedOut(options);
     el.close();
     announce(message);
   }
 
+  /* Rien ne reste du compte sur l'appareil sans que la personne l'ait choisi : l'avertissement le lui demande. */
   async function startLogout(message) {
     announce('Déconnexion en cours…');
     const remote = boards.remoteStore();
     await remote?.flushAll();
     const waiting = remote?.pending() || [];
-    if (waiting.length) { showLogoutWarning(waiting); return; }
+    if (waiting.length || local.hasContent()) { showLogoutWarning(waiting); return; }
     await logoutNow(message);
   }
 
-  async function logoutNow(message) {
+  async function logoutNow(message, { keepLocal = false } = {}) {
     try {
       await api.logout();
     } catch (err) {
@@ -158,15 +160,41 @@ export function openAccountDialog({ onClose } = {}) {
         return;
       }
     }
-    clearSessionAndClose('Vous êtes déconnecté.');
+    clearSessionAndClose('Vous êtes déconnecté.', { keepLocal });
   }
 
+  /*
+   * Proposé au seul propriétaire, depuis sa session : ses modifications non envoyées, et ce qui n'existe que sur
+   * cet appareil (espaces, favoris, modèles). Gardé, tout reste réservé à son compte ; sinon tout est effacé.
+   */
   function showLogoutWarning(waiting) {
-    show('Modifications non envoyées', root => {
-      const intro = document.createElement('p');
-      intro.textContent = 'Ces tableaux ont des modifications qui n’ont pas pu être envoyées. La déconnexion efface les données du compte sur cet appareil :';
-      const ul = document.createElement('ul');
-      for (const e of waiting) { const li = document.createElement('li'); li.textContent = e.nom; ul.append(li); }
+    const counts = local.summary();
+    const plural = (n, one, many) => `${n} ${n > 1 ? many : one}`;
+    const localItems = [
+      counts.espaces && plural(counts.espaces, 'espace', 'espaces'),
+      counts.favoris && plural(counts.favoris, 'favori', 'favoris'),
+      counts.modèles && plural(counts.modèles, 'modèle dans « Mes modèles »', 'modèles dans « Mes modèles »')
+    ].filter(Boolean);
+    show(waiting.length ? 'Modifications non envoyées' : 'Avant de vous déconnecter', root => {
+      const parts = [];
+      const list = items => {
+        const ul = document.createElement('ul');
+        for (const text of items) { const li = document.createElement('li'); li.textContent = text; ul.append(li); }
+        return ul;
+      };
+      if (waiting.length) {
+        const p = document.createElement('p');
+        p.textContent = 'Ces tableaux ont des modifications qui n’ont pas pu être envoyées. La déconnexion efface les données du compte sur cet appareil :';
+        parts.push(p, list(waiting.map(e => e.nom)));
+      }
+      if (localItems.length) {
+        const p = document.createElement('p');
+        p.textContent = 'Ces éléments de votre compte ne sont enregistrés que sur cet appareil, pas sur le serveur :';
+        parts.push(p, list(localItems));
+      }
+      const advice = document.createElement('p');
+      advice.textContent = '« Les garder sur cet appareil » les laisse ici, à l’usage de votre seul compte : une autre personne connectée ici ne les voit pas. Sur un appareil partagé, choisissez « Me déconnecter sans les garder ».';
+      parts.push(advice);
       const message = formMessage();
       const actions = document.createElement('div');
       actions.className = 'dialog-actions';
@@ -181,14 +209,14 @@ export function openAccountDialog({ onClose } = {}) {
               return;
             }
           }
-          await logoutNow(message);
+          await logoutNow(message, { keepLocal: true });
         }, 'btn-primary'),
         button('Me déconnecter sans les garder', () => logoutNow(message), 'btn-danger'),
         button('Annuler', () => showAccount('logout'))
       );
-      root.append(intro, ul, message, actions);
+      root.append(...parts, message, actions);
       // Le focus part sur le titre, puis Tab mène aux boutons : l'avertissement serait sauté.
-      announce(`${intro.textContent} ${waiting.map(e => e.nom).join(', ')}.`);
+      announce(parts.map(p => p.textContent).join(' '));
       return heading;
     });
   }
@@ -223,7 +251,7 @@ export function openAccountDialog({ onClose } = {}) {
       warning.className = 'account-warning';
       warning.id = `account-warning-${++nextWarning}`;
       const intro = document.createElement('p');
-      intro.textContent = `Cette suppression est définitive. Votre compte et ${owned.length === 0 ? 'vos données seront effacés' : owned.length === 1 ? 'votre tableau enregistré sur le compte seront effacés' : `vos ${owned.length} tableaux enregistrés sur le compte seront effacés`}. Les tableaux restés sur cet appareil ne sont pas touchés.`;
+      intro.textContent = `Cette suppression est définitive. Votre compte et ${owned.length === 0 ? 'vos données seront effacés' : owned.length === 1 ? 'votre tableau enregistré sur le compte seront effacés' : `vos ${owned.length} tableaux enregistrés sur le compte seront effacés`}. Vos espaces, favoris et modèles enregistrés sur cet appareil le seront aussi. Les tableaux d’avant les comptes restés sur cet appareil ne sont pas touchés.`;
       warning.append(intro);
       if (shared.length) {
         const p = document.createElement('p');
@@ -246,7 +274,7 @@ export function openAccountDialog({ onClose } = {}) {
         fields: [password], submitLabel: 'Supprimer définitivement mon compte', submitClass: 'btn-danger', busyMessage: 'Suppression du compte…',
         validate: v => clean({ password: v.password ? null : 'Saisissez votre mot de passe pour confirmer.' }),
         send: v => api.deleteMe({ password: v.password }),
-        done: () => clearSessionAndClose('Votre compte a été supprimé.')
+        done: () => clearSessionAndClose('Votre compte a été supprimé.', { removed: true })
       });
       actions.append(button('Annuler', () => showAccount('delete')));
       root.append(warning, form);

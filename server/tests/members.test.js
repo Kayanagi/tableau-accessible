@@ -7,7 +7,10 @@ import Database from 'better-sqlite3';
 import { hashToken } from '../src/auth.js';
 import { openDb } from '../src/db.js';
 import { MIGRATIONS } from '../src/migrations.js';
-import { INVITE_TTL, MAX_INVITE_CREATIONS_PER_HOUR, MAX_PENDING_INVITES } from '../src/routes/members.js';
+import {
+  INVITE_TTL, MAX_BOARD_MEMBERS, MAX_INVITE_CREATIONS_PER_HOUR,
+  MAX_PENDING_INVITES, MAX_PENDING_INVITES_PER_EMAIL
+} from '../src/routes/members.js';
 import { ORIGIN, PASSWORD, startServer, sticky } from './helpers.js';
 
 const DAY = 24 * 3600 * 1000;
@@ -30,6 +33,15 @@ describe('Partage par tableau', () => {
   const count = (table, where, ...args) => s.app.db.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${where}`).get(...args).n;
   const expire = id => s.app.db.prepare('UPDATE board_invites SET expires_at = ? WHERE id = ?').run(Date.now() - 1, id);
   const addMember = (boardId, user, role) => s.app.db.prepare('INSERT INTO board_members (board_id, user_id, role, created_at) VALUES (?, ?, ?, 0)').run(boardId, user.id, role);
+  const fillMembers = (boardId, total) => {
+    const insertUser = s.app.db.prepare('INSERT INTO users (id, email, display_name, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0)');
+    const insertMember = s.app.db.prepare("INSERT INTO board_members (board_id, user_id, role, created_at) VALUES (?, ?, 'viewer', 0)");
+    for (let i = count('board_members', 'board_id = ?', boardId); i < total; i++) {
+      const userId = `u_quota_${boardId}_${i}`;
+      insertUser.run(userId, `${userId}@exemple.test`, `Membre ${i}`, 'scrypt$test');
+      insertMember.run(boardId, userId);
+    }
+  };
 
   /* Tableau avec ses trois rôles, partagé par le vrai parcours d'invitation. */
   const sharedBoard = async () => {
@@ -72,8 +84,18 @@ describe('Partage par tableau', () => {
       assert.equal(second.status, 200);
       assert.equal(second.body.invite.id, first.body.invite.id);
       assert.equal(second.body.invite.role, 'editor');
-      assert.ok(second.body.invite.expiresAt > Date.now() + 29 * DAY);
+      assert.ok(second.body.invite.expiresAt <= Date.now() + DAY);
       assert.equal(count('board_invites', 'board_id = ?', id), 1);
+    });
+
+    it('ne prolonge jamais l’expiration lors d’une mise à jour', async () => {
+      const id = await newBoard();
+      const first = await invite(id, freshEmail(), 'viewer');
+      const fixedExpiry = Date.now() + 2 * DAY;
+      s.app.db.prepare('UPDATE board_invites SET expires_at = ? WHERE id = ?').run(fixedExpiry, first.body.invite.id);
+      const second = await invite(id, first.body.invite.email, 'editor');
+      assert.equal(second.status, 200);
+      assert.equal(second.body.invite.expiresAt, fixedExpiry);
     });
 
     it('annule une invitation, une seule fois et seulement sur son tableau', async () => {
@@ -215,6 +237,52 @@ describe('Partage par tableau', () => {
       assert.equal(count('board_invites', 'id = ?', body.invite.id), 0);
       assert.equal(count('board_members', 'board_id = ? AND user_id = ?', id, invitee.id), 0);
       assert.equal((await decline(body.invite.id, invitee)).status, 404);
+    });
+
+    it('refuse toutes les invitations en attente du compte et renvoie leur nombre', async () => {
+      const invitee = await s.signUp('Invitée');
+      const first = await invite(await newBoard(), invitee.email);
+      await invite(await newBoard(), invitee.email);
+      const expired = await invite(await newBoard(), invitee.email);
+      expire(expired.body.invite.id);
+      await invite(await newBoard(), stranger.email);
+      const res = await s.call('POST', '/api/invites/decline-all', { cookie: invitee.token, body: {} });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, { declined: 2 });
+      assert.equal(count('board_invites', 'email = ? AND expires_at > ?', invitee.email, Date.now()), 0);
+      assert.equal(count('board_invites', 'id = ?', expired.body.invite.id), 1);
+      assert.equal(count('board_invites', 'email = ?', stranger.email), 1);
+      assert.equal(count('board_invites', 'id = ?', first.body.invite.id), 0);
+    });
+
+    it('répond declined 0 quand le compte n’a rien à refuser', async () => {
+      const res = await s.call('POST', '/api/invites/decline-all', { cookie: stranger.token, body: {} });
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, { declined: 0 });
+    });
+
+    it(`garde l’invitation si le tableau a déjà ${MAX_BOARD_MEMBERS} membres`, async () => {
+      const invitee = await s.signUp('Invitée');
+      const id = await newBoard();
+      const sent = await invite(id, invitee.email);
+      fillMembers(id, MAX_BOARD_MEMBERS);
+      const res = await accept(sent.body.invite.id, invitee);
+      assert.equal(res.status, 403);
+      assert.equal(res.body.code, 'quota_exceeded');
+      assert.equal(count('board_members', 'board_id = ?', id), MAX_BOARD_MEMBERS);
+      assert.equal(count('board_invites', 'id = ?', sent.body.invite.id), 1);
+    });
+
+    it('laisse une personne déjà membre accepter au plafond sans doublon', async () => {
+      const id = await newBoard();
+      addMember(id, stranger, 'editor');
+      const sent = await invite(id, stranger.email, 'viewer');
+      fillMembers(id, MAX_BOARD_MEMBERS);
+      const res = await accept(sent.body.invite.id, stranger);
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, { boardId: id, role: 'editor' });
+      assert.equal(count('board_members', 'board_id = ?', id), MAX_BOARD_MEMBERS);
+      assert.equal(count('board_invites', 'id = ?', sent.body.invite.id), 0);
     });
 
     it('annule entièrement l’acceptation si une étape échoue', async t => {
@@ -462,6 +530,16 @@ describe('Partage par tableau', () => {
       const insert = s.app.db.prepare("INSERT INTO board_invites (id, board_id, email, role, created_at, expires_at) VALUES (?, ?, ?, 'viewer', 0, ?)");
       for (let i = 0; i < n; i++) insert.run(`inv_${boardId}_${i}`.slice(0, 120), boardId, `plafond-${i}@ailleurs.test`, expiresAt);
     };
+    const insertInvitesForEmail = async (email, n, expiresAt = Date.now() + DAY) => {
+      const insert = s.app.db.prepare("INSERT INTO board_invites (id, board_id, email, role, created_at, expires_at) VALUES (?, ?, ?, 'viewer', 0, ?)");
+      const boardIds = [];
+      for (let i = 0; i < n; i++) {
+        const boardId = await newBoard();
+        boardIds.push(boardId);
+        insert.run(`inv_email_${boardId}`, boardId, email, expiresAt);
+      }
+      return boardIds;
+    };
 
     it(`plafonne à ${MAX_PENDING_INVITES} invitations en attente par tableau`, async () => {
       const id = await newBoard();
@@ -479,6 +557,41 @@ describe('Partage par tableau', () => {
       insertInvites(id, MAX_PENDING_INVITES, Date.now() - 1);
       assert.equal((await invite(id, freshEmail())).status, 201);
       assert.equal(count('board_invites', 'board_id = ?', id), 1);
+    });
+
+    it(`plafonne à ${MAX_PENDING_INVITES_PER_EMAIL} invitations actives par adresse, tous tableaux confondus`, async () => {
+      const email = freshEmail();
+      await insertInvitesForEmail(email, MAX_PENDING_INVITES_PER_EMAIL);
+      const full = await invite(await newBoard(), email);
+      assert.equal(full.status, 403);
+      assert.deepEqual(full.body, { code: 'quota_exceeded', message: 'Cette adresse a atteint la limite d’invitations en attente.' });
+    });
+
+    it('ne compte pas les invitations expirées dans le plafond par adresse', async () => {
+      const email = freshEmail();
+      const boardIds = await insertInvitesForEmail(email, MAX_PENDING_INVITES_PER_EMAIL);
+      expire(s.app.db.prepare('SELECT id FROM board_invites WHERE board_id = ?').get(boardIds[0]).id);
+      assert.equal((await invite(await newBoard(), email)).status, 201);
+    });
+
+    it('autorise la mise à jour du même tableau quand l’adresse est au plafond', async () => {
+      const email = freshEmail();
+      const [first] = await insertInvitesForEmail(email, MAX_PENDING_INVITES_PER_EMAIL);
+      const updated = await invite(first, email, 'viewer');
+      assert.equal(updated.status, 200);
+      assert.equal(updated.body.invite.role, 'viewer');
+    });
+
+    it('renvoie le même refus de quota avec ou sans compte destinataire', async () => {
+      const known = stranger.email;
+      const unknown = freshEmail();
+      for (const email of [known, unknown]) {
+        await insertInvitesForEmail(email, MAX_PENDING_INVITES_PER_EMAIL);
+      }
+      const knownRefusal = await invite(await newBoard(), known);
+      const unknownRefusal = await invite(await newBoard(), unknown);
+      assert.equal(knownRefusal.status, 403);
+      assert.deepEqual(knownRefusal.body, unknownRefusal.body);
     });
 
     it(`limite à ${MAX_INVITE_CREATIONS_PER_HOUR} créations par heure et par compte`, async () => {
@@ -508,7 +621,8 @@ describe('Partage par tableau', () => {
         ['PATCH', `/api/boards/${id}/members/${viewer.id}`],
         ['DELETE', `/api/boards/${id}/members/${viewer.id}`],
         ['POST', `/api/invites/${body.invite.id}/accept`],
-        ['POST', `/api/invites/${body.invite.id}/decline`]
+        ['POST', `/api/invites/${body.invite.id}/decline`],
+        ['POST', '/api/invites/decline-all']
       ];
       for (const [method, path] of writes) {
         const payload = { cookie: stranger.token, body: { email: freshEmail(), role: 'viewer' } };
@@ -538,7 +652,8 @@ describe('Partage par tableau', () => {
         ['DELETE', `/api/boards/${id}/members/${owner.id}`],
         ['GET', '/api/invites'],
         ['POST', '/api/invites/inv_x/accept'],
-        ['POST', '/api/invites/inv_x/decline']
+        ['POST', '/api/invites/inv_x/decline'],
+        ['POST', '/api/invites/decline-all']
       ];
       const guest = 'g'.repeat(43);
       const t = Date.now();

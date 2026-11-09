@@ -464,7 +464,7 @@ try {
     await g.goto(`${BASE}/#/tableau/${id}`);
     await g.waitForSelector('.canvas-item[data-id="item-1"]');
     log('Lecture seule : message persistant', await g.locator('#board-readonly').isVisible() && (await g.locator('#board-readonly').textContent()) === 'Lecture seule');
-    const hidden = await g.evaluate(() => ['btn-sticky', 'btn-shape', 'btn-line', 'btn-text', 'btn-card', 'btn-frame', 'btn-more-tools', 'btn-link', 'btn-duplicate', 'btn-lock', 'btn-undo', 'btn-import', 'btn-share'].filter(id => document.getElementById(id).offsetParent !== null));
+    const hidden = await g.evaluate(() => ['btn-sticky', 'btn-shape', 'btn-line', 'btn-text', 'btn-card', 'btn-frame', 'btn-more-tools', 'btn-link', 'btn-duplicate', 'btn-lock', 'btn-undo', 'btn-share'].filter(id => document.getElementById(id).offsetParent !== null));
     log('Lecture seule : outils d’écriture retirés', hidden.length === 0, hidden.join(','));
     log('Lecture seule : outils de lecture présents', await g.locator('#btn-zoom-in').isVisible() && await g.locator('#btn-search').isVisible() && await g.locator('#btn-leave').isVisible());
     await axe(g, 'tableau en lecture seule');
@@ -567,32 +567,296 @@ try {
     await other.context.close();
   }
 
+  // === Lecture seule au clavier : kanban et tableau de données ===
+  {
+    console.log('--- Lecture seule au clavier ---');
+    const owner = await signed('Ana');
+    const viewer = await signed('Bruno');
+    await owner.page.goto(`${BASE}/#/`);
+    await owner.page.waitForSelector('#dashboard-title');
+    const kb = { id: 'kb', type: 'kanban', x: 100, y: 100, content: 'Sprint', columns: [{ id: 'c1', name: 'À faire', cards: [{ id: 'k1', text: 'Tâche A' }, { id: 'k2', text: 'Tâche B' }] }, { id: 'c2', name: 'En cours', cards: [{ id: 'k3', text: 'Tâche C' }] }] };
+    const dt = { id: 'dt', type: 'datatable', x: 100, y: 600, content: 'Budget', rows: [['Poste', 'Montant'], ['Loyer', '800']] };
+    const id = await createBoard(owner.page, 'Lecture clavier', [kb, dt]);
+    const invited = await owner.page.evaluate(async ([i, mail]) => (await fetch(`/api/boards/${i}/invites`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: mail, role: 'viewer' }) })).status, [id, viewer.email]);
+    await viewer.page.goto(`${BASE}/#/`);
+    await viewer.page.waitForSelector('#dashboard-title');
+    const accepted = await viewer.page.evaluate(async () => {
+      const { invites } = await (await fetch('/api/invites')).json();
+      return (await fetch(`/api/invites/${invites[0].id}/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })).status;
+    }).catch(() => 0);
+    log('Viewer : invitation acceptée', invited === 201 && accepted === 200, `${invited} ${accepted}`);
+    const v = viewer.page;
+    viewer.api.length = 0;
+    await v.goto(`${BASE}/#/tableau/${id}`);
+    await v.waitForSelector('.canvas-item[data-id="kb"]');
+    await v.locator('#board-readonly').waitFor();
+    const snap = () => v.evaluate(async () => JSON.stringify((await import('/js/state.js')).getSnapshot().items));
+    const before = await snap();
+    const sub = () => v.evaluate(() => document.activeElement?.dataset?.sub || document.activeElement?.getAttribute('data-id') || document.activeElement?.tagName);
+    const heard = text => v.waitForFunction(t => document.getElementById('announcer').textContent.includes(t), text, { timeout: 3000 }).then(() => true, () => false);
+    await v.locator('.canvas-item[data-id="kb"]').first().focus();
+    await v.keyboard.press('Enter');
+    log('Kanban, lecture seule : Entrée mène à la première carte', await sub() === 'card:k1');
+    log('Kanban, lecture seule : consigne adaptée annoncée', await heard('Entrée dans le kanban, lecture seule'));
+    const path = [];
+    for (const key of ['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft', 'ArrowDown']) { await v.keyboard.press(key); path.push(await sub()); }
+    log('Kanban, lecture seule : flèches de carte en carte et de colonne en colonne', path.join() === 'card:k2,card:k3,col:c2,col:c1,card:k1', path.join());
+    for (const key of ['Enter', 'F2', 'Insert', 'Delete', 'Backspace', 'Control+ArrowRight', 'Control+ArrowDown']) await v.keyboard.press(key);
+    log('Kanban, lecture seule : ni éditeur, ni ajout, ni suppression, ni déplacement', await snap() === before && await v.locator('.inline-editor').count() === 0 && await sub() === 'card:k1');
+    log('Kanban, lecture seule : refus annoncé', await heard('Lecture seule : ce tableau ne peut pas être modifié.'));
+    await v.keyboard.press('Escape');
+    log('Kanban : Échap rend le focus à l’objet', await sub() === 'kb');
+    await v.locator('.canvas-item[data-id="dt"]').first().focus();
+    await v.keyboard.press('Enter');
+    log('Tableau de données, lecture seule : Entrée mène à la première cellule', await sub() === 'cell:0:0');
+    log('Tableau de données, lecture seule : consigne adaptée annoncée', await heard('Entrée dans le tableau, lecture seule'));
+    const cells = [];
+    for (const key of ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'End', 'Home', 'Control+End', 'Control+Home']) { await v.keyboard.press(key); cells.push(await sub()); }
+    log('Tableau de données, lecture seule : cellule par cellule', cells.join() === 'cell:0:1,cell:1:1,cell:1:0,cell:1:1,cell:1:0,cell:1:1,cell:0:0', cells.join());
+    log('Tableau de données : la cellule porte son contenu', await v.evaluate(() => document.activeElement.getAttribute('aria-label')) === 'Poste');
+    await v.keyboard.press('ArrowDown');
+    for (const key of ['Enter', 'F2', 'Delete', 'Backspace', 'x']) await v.keyboard.press(key);
+    log('Tableau de données, lecture seule : rien ne s’édite ni ne s’efface', await snap() === before && await v.locator('.inline-editor').count() === 0 && await sub() === 'cell:1:0');
+    await v.keyboard.press('Escape');
+    log('Tableau de données : Échap rend le focus à l’objet', await sub() === 'dt');
+    await axe(v, 'kanban et tableau de données en lecture seule');
+    await v.waitForTimeout(3500);
+    log('Lecture seule au clavier : aucun PUT émis', !viewer.api.some(a => a.startsWith('PUT') || a.startsWith('PATCH')), viewer.api.filter(a => !a.startsWith('GET')).join(','));
+    log('Lecture seule au clavier : pas d’erreur console', viewer.errors.length === 0, viewer.errors.join(' | '));
+    await owner.context.close();
+    await viewer.context.close();
+  }
+
   // === Séparation entre comptes sur un même appareil ===
   {
     console.log('--- Comptes sur un même appareil ---');
-    const { context, page } = await signed('Ana');
+    const ana = await signed('Ana');
+    const { context, page, errors } = ana;
+    const accountKeys = () => page.evaluate(() => Object.keys(localStorage).filter(k => k.startsWith('tableau-accessible-compte-')));
+    const allStored = () => page.evaluate(() => Object.keys(localStorage).map(k => `${k}=${localStorage.getItem(k)}`).join('\n'));
+    const register = async (name, email) => {
+      await page.getByRole('button', { name: 'Créer un compte' }).click();
+      await page.getByLabel('Nom affiché').fill(name);
+      await page.getByLabel('Adresse e-mail').fill(email);
+      await page.getByLabel('Mot de passe').fill(TEST_PASSWORD);
+      await page.getByRole('button', { name: 'Créer mon compte' }).click();
+      await page.waitForSelector('#dashboard-title');
+    };
+    const login = async email => {
+      await page.getByLabel('Adresse e-mail').fill(email);
+      await page.getByLabel('Mot de passe').fill(TEST_PASSWORD);
+      await page.locator('.account-form').getByRole('button', { name: 'Se connecter', exact: true }).click();
+      await page.waitForSelector('#dashboard-title');
+    };
+    const logout = async choice => {
+      await page.click('#btn-account');
+      await page.getByRole('button', { name: 'Se déconnecter' }).click();
+      if (choice) await page.getByRole('button', { name: choice }).click();
+      await gateShown(page);
+    };
+    const createSpace = async nom => {
+      await page.click('#btn-create-space');
+      await page.locator('dialog[open] input').fill(nom);
+      await page.locator('dialog[open] form button').first().click();
+      await page.locator('.space-row a', { hasText: nom }).waitFor();
+    };
     await page.goto(`${BASE}/#/`);
     await page.waitForSelector('#dashboard-title');
-    await createBoard(page, 'Tableau d’Ana', [sticky('item-1', 'A')]);
-    await page.click('#btn-create-space');
-    await page.locator('dialog[open] input').fill('Espace d’Ana');
-    await page.locator('dialog[open] form button').first().click();
-    await page.waitForFunction(() => document.querySelector('.space-row a')?.textContent === 'Espace d’Ana');
+    const anaBoard = await createBoard(page, 'Tableau d’Ana', [sticky('item-1', 'A')]);
+    await createSpace('Espace d’Ana');
+    await page.evaluate(async i => {
+      (await import('/js/store/boards.js')).toggleFavori(i);
+      (await import('/js/store/templates.js')).saveTemplate('Modèle d’Ana', { name: 'Modèle d’Ana', items: [], tags: [] });
+    }, anaBoard);
+    await page.goto(`${BASE}/#/tableau/${anaBoard}`);
+    await page.waitForSelector('.canvas-item[data-id="item-1"]');
+    await page.click('#btn-comments');
+    log('Commentaires : auteur = nom affiché du compte, sans champ à remplir', (await page.locator('.comments-author').textContent()).includes('Ana') && await page.locator('#comment-author').count() === 0);
+    await page.keyboard.press('Escape');
+    await page.goto(`${BASE}/#/`);
+    await page.waitForSelector('#dashboard-title');
     await page.click('#btn-account');
     await page.getByRole('button', { name: 'Se déconnecter' }).click();
+    await page.getByRole('heading', { name: 'Avant de vous déconnecter' }).waitFor();
+    const warning = await page.locator('.account-dialog').textContent();
+    log('Déconnexion : ce qui n’existe que sur l’appareil est listé', warning.includes('1 espace') && warning.includes('1 favori') && warning.includes('1 modèle dans « Mes modèles »'), warning.slice(0, 160));
+    log('Déconnexion : garder ou effacer, au choix du propriétaire', await page.getByRole('button', { name: 'Les garder sur cet appareil et me déconnecter' }).count() === 1 && await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).count() === 1);
+    await axe(page, 'avertissement de déconnexion');
+    await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).click();
     await gateShown(page);
     log('Déconnexion : plus rien du compte dans la page', !(await page.evaluate(() => document.body.innerText)).includes('Ana'));
-    const email = nextEmail();
+    const leftover = await allStored();
+    log('Déconnexion sans garder : rien d’Ana sur l’appareil (miroir, espace, favori, modèle)', !/Ana|Tableau d’Ana|Espace d’Ana|Modèle d’Ana/.test(leftover) && (await accountKeys()).length === 0, leftover.slice(0, 200));
+
+    const brunoEmail = nextEmail();
+    await register('Bruno', brunoEmail);
+    await page.waitForTimeout(400);
+    const text = await page.locator('#app-dashboard').textContent();
+    log('Autre compte : ni tableau ni espace du précédent', !text.includes('Tableau d’Ana') && !text.includes('Espace d’Ana'));
+    log('Autre compte : aucun modèle, aucun favori du précédent', await page.evaluate(async () => (await import('/js/store/templates.js')).getCustomTemplates().length === 0 && (await import('/js/store/boards.js')).getFavoris().length === 0));
+    log('Autre compte : commentaires signés de son propre nom', await page.evaluate(async () => (await import('/js/state.js')).getAuthor()) === 'Bruno');
+    log('Autre compte : aucun import proposé', await page.locator('.import-dialog').count() === 0);
+    log('Autre compte : le miroir ne garde rien du précédent', !(await page.evaluate(k => localStorage.getItem(k) || '', MIRROR_KEY)).includes('Tableau d’Ana'));
+
+    // Bruno garde son espace : réservé à lui, invisible pour Ana
+    await createSpace('Espace de Bruno');
+    await logout('Les garder sur cet appareil et me déconnecter');
+    log('Garder : l’espace reste sur l’appareil, sous la clé du compte', (await accountKeys()).length === 1 && (await allStored()).includes('Espace de Bruno'));
+    await login(ana.email);
+    await page.waitForTimeout(400);
+    const anaText = await page.locator('#app-dashboard').textContent();
+    log('Retour d’Ana : rien de Bruno, et ce qu’elle a effacé ne revient pas', !anaText.includes('Espace de Bruno') && !anaText.includes('Espace d’Ana') && anaText.includes('Tableau d’Ana'));
+    log('Retour d’Ana : son tableau n’est plus en favori, aucun modèle', await page.evaluate(async () => (await import('/js/store/boards.js')).getFavoris().length === 0 && (await import('/js/store/templates.js')).getCustomTemplates().length === 0));
+    await logout(null);
+    log('Sans rien de local : déconnexion directe, sans avertissement', true);
+    await login(brunoEmail);
+    log('Retour de Bruno : son espace gardé est là', (await page.locator('.space-row a').allTextContents()).join() === 'Espace de Bruno');
+    log('Comptes successifs : pas d’erreur console', errors.length === 0, errors.join(' | '));
+    await context.close();
+  }
+
+  // === Données d'avant les comptes : proposées une fois, puis effacées de l'espace commun ===
+  {
+    console.log('--- Données d’avant les comptes ---');
+    const { context, page, errors } = await signed('Carole');
+    const legacyBoards = [
+      localBoard('board-1-ancien', 'Ancien', [sticky('item-1', 'x')], { espaceId: 'space-ancien', favori: true }),
+      localBoard('board-1-pas-a-moi', 'Pas à moi')
+    ];
+    const seeds = {
+      [BOARDS_KEY]: JSON.stringify({ version: 4, tableaux: legacyBoards, espaces: [{ id: 'space-ancien', nom: 'Ancien espace' }, { id: 'space-autre', nom: 'Espace d’un autre' }] }),
+      'tableau-accessible-templates': JSON.stringify([{ id: 'custom-ancien', nom: 'Ancien modèle', description: '', créé: 1, snapshot: { name: 'Ancien modèle', items: [] } }]),
+      'tableau-accessible-template-usage': JSON.stringify({ 'custom-ancien': 5 }),
+      'tableau-accessible-auteur': 'Quelqu’un'
+    };
+    await page.addInitScript(s => { if (!sessionStorage.getItem('semé')) { for (const [k, v] of Object.entries(s)) localStorage.setItem(k, v); sessionStorage.setItem('semé', '1'); } }, seeds);
+    await page.goto(`${BASE}/#/`);
+    const dlg = page.locator('.import-dialog');
+    await dlg.waitFor();
+    const offered = await dlg.textContent();
+    log('Import : tableaux, espaces et modèles proposés', ['Tableaux à importer', 'Espaces à importer', 'Modèles à importer dans « Mes modèles »', 'Ancien espace', 'Ancien modèle', 'Pas à moi'].every(t => offered.includes(t)));
+    log('Ancien nom d’auteur des commentaires : effacé de l’appareil', await page.evaluate(() => localStorage.getItem('tableau-accessible-auteur')) === null);
+    await axe(page, 'dialogue d’import avec espaces et modèles');
+    for (const width of [320, 768, 1280]) {
+      await page.setViewportSize({ width, height: 700 });
+      log(`Import complet sans débordement à ${width} px`, await noOverflow(page));
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.getByRole('checkbox', { name: 'Espace d’un autre' }).uncheck();
+    await page.getByRole('checkbox', { name: /Pas à moi/ }).uncheck();
+    await page.getByRole('button', { name: 'Importer dans mon compte' }).click();
+    await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
+    const results = await page.locator('.import-results').textContent();
+    log('Compte rendu : espace, modèle et tableau importés', results.includes('Espace « Ancien espace » : importé') && results.includes('Modèle « Ancien modèle » : importé') && results.includes('Ancien : importé'), results);
+    log('Compte rendu : résumé', (await dlg.locator('[role="status"]').textContent()).includes('1 tableau importé, 1 espace importé, 1 modèle importé'));
+    const common = await page.evaluate(k => ({ boards: JSON.parse(localStorage.getItem(k)), templates: localStorage.getItem('tableau-accessible-templates'), usage: localStorage.getItem('tableau-accessible-template-usage') }), BOARDS_KEY);
+    log('Espace et modèle importés : retirés de l’espace commun', common.boards.espaces.map(s => s.nom).join() === 'Espace d’un autre' && common.templates === null && common.usage === null);
+    await page.getByRole('button', { name: 'Terminer' }).click();
+    await dlg.waitFor({ state: 'detached' });
+    const org = await page.evaluate(async () => {
+      const boards = await import('/js/store/boards.js');
+      const b = boards.getAll().find(x => x.nom === 'Ancien');
+      return { favori: b?.favori, espace: boards.getSpaces().find(s => s.id === b?.espaceId)?.nom, modèles: (await import('/js/store/templates.js')).getCustomTemplates().map(t => t.nom).join() };
+    });
+    log('Import : le tableau retrouve son espace et son favori, le modèle est dans Mes modèles', org.favori === true && org.espace === 'Ancien espace' && org.modèles === 'Ancien modèle', JSON.stringify(org));
+
+    // Refuser ce qui n'est pas à soi : supprimer de l'appareil sans importer
+    await page.click('#btn-account');
+    await page.getByRole('button', { name: 'Importer vos tableaux de cet appareil…' }).click();
+    await dlg.waitFor();
+    log('Second passage : seul ce qui n’a pas été importé reste proposé', await page.getByRole('checkbox', { name: 'Espace d’un autre' }).count() === 1 && await page.getByRole('checkbox', { name: /Pas à moi/ }).count() === 1 && await page.getByRole('checkbox', { name: /Ancien/ }).count() === 0);
+    await page.getByRole('button', { name: 'Supprimer de cet appareil sans importer…' }).click();
+    await page.getByRole('heading', { name: 'Supprimer sans importer' }).waitFor();
+    const confirmText = await dlg.textContent();
+    log('Supprimer sans importer : confirmation explicite avec la liste', confirmText.includes('irréversible') && confirmText.includes('Tableau « Pas à moi »') && confirmText.includes('Espace « Espace d’un autre »'));
+    log('Supprimer sans importer : focus sur le titre', await page.evaluate(() => document.activeElement.tagName === 'H2'));
+    await axe(page, 'confirmation de suppression sans import');
+    await page.getByRole('button', { name: 'Annuler' }).click();
+    await page.getByRole('heading', { name: 'Importer vos tableaux de cet appareil' }).waitFor();
+    log('Annuler : rien n’est supprimé', await page.evaluate(k => JSON.parse(localStorage.getItem(k)).tableaux.some(b => b.id === 'board-1-pas-a-moi'), BOARDS_KEY));
+    await page.getByRole('button', { name: 'Supprimer de cet appareil sans importer…' }).click();
+    await page.getByRole('button', { name: 'Supprimer définitivement de cet appareil' }).click();
+    await dlg.locator('[role="status"]', { hasText: '2 éléments supprimés de cet appareil, sans import.' }).waitFor();
+    const after = await page.evaluate(k => JSON.parse(localStorage.getItem(k)), BOARDS_KEY);
+    log('Supprimer sans importer : effacés de l’appareil, rien envoyé', !after.tableaux.some(b => b.id === 'board-1-pas-a-moi') && after.espaces.length === 0 && !(await serverBoards(page)).some(b => b.name === 'Pas à moi'));
+    log('Supprimer sans importer : plus rien à proposer', (await dlg.textContent()).includes('Aucun tableau à importer depuis cet appareil.'));
+    await page.keyboard.press('Escape');
+    await dlg.waitFor({ state: 'detached' });
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('.account-dialog', { state: 'detached' });
+
+    // Un second compte sur l'appareil : plus rien d'avant les comptes à lui proposer
+    await page.click('#btn-account');
+    await page.getByRole('button', { name: 'Se déconnecter' }).click();
+    await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).click();
+    await gateShown(page);
     await page.getByRole('button', { name: 'Créer un compte' }).click();
-    await page.getByLabel('Nom affiché').fill('Bruno');
-    await page.getByLabel('Adresse e-mail').fill(email);
+    await page.getByLabel('Nom affiché').fill('Daniel');
+    await page.getByLabel('Adresse e-mail').fill(nextEmail());
     await page.getByLabel('Mot de passe').fill(TEST_PASSWORD);
     await page.getByRole('button', { name: 'Créer mon compte' }).click();
     await page.waitForSelector('#dashboard-title');
-    const text = await page.locator('#app-dashboard').textContent();
-    log('Autre compte : ni tableau ni espace du précédent', !text.includes('Tableau d’Ana') && !text.includes('Espace d’Ana'));
-    log('Autre compte : le miroir ne garde rien du précédent', !(await page.evaluate(k => localStorage.getItem(k) || '', MIRROR_KEY)).includes('Tableau d’Ana'));
+    await page.waitForTimeout(400);
+    log('Second compte : rien d’avant les comptes ne lui est proposé', await dlg.count() === 0 && !(await page.locator('#app-dashboard').textContent()).includes('Ancien'));
+    log('Données d’avant les comptes : pas d’erreur console', errors.length === 0, errors.join(' | '));
     await context.close();
+  }
+
+  // === Tout refuser ===
+  {
+    console.log('--- Tout refuser ---');
+    const owner = await signed('Ana');
+    const guest = await signed('Bruno');
+    await owner.page.goto(`${BASE}/#/`);
+    await owner.page.waitForSelector('#dashboard-title');
+    for (const name of ['Premier', 'Second']) {
+      const id = await createBoard(owner.page, name);
+      await owner.page.evaluate(async ([i, mail]) => fetch(`/api/boards/${i}/invites`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: mail, role: 'editor' }) }), [id, guest.email]);
+    }
+    const g = guest.page;
+    await g.goto(`${BASE}/#/`);
+    await g.locator('#invites-section').waitFor();
+    const all = g.getByRole('button', { name: /^Tout refuser/ });
+    log('Tout refuser : bouton dans le bandeau, nommé avec le nombre', await all.getAttribute('aria-label') === 'Tout refuser : 2 invitations en attente');
+    await all.focus();
+    await g.keyboard.press('Enter');
+    const confirm = g.locator('dialog[open]');
+    await confirm.getByRole('heading', { name: 'Refuser toutes les invitations ?' }).waitFor();
+    log('Tout refuser : confirmation explicite, focus sur Annuler', (await confirm.textContent()).includes('Les 2 invitations en attente seront refusées') && await g.evaluate(() => document.activeElement.textContent === 'Annuler'));
+    await axe(g, 'confirmation Tout refuser');
+    await g.keyboard.press('Enter');
+    await confirm.waitFor({ state: 'detached' });
+    log('Tout refuser : Annuler n’envoie rien', !guest.api.includes('POST /api/invites/decline-all') && await g.locator('#invites-section').count() === 1);
+    await all.click();
+    await g.getByRole('button', { name: 'Refuser toutes les invitations' }).click();
+    const result = g.locator('#invites-result');
+    await result.filter({ hasText: '2 invitations refusées.' }).waitFor();
+    log('Tout refuser : résultat en role="status", bandeau retiré', await result.getAttribute('role') === 'status' && await g.locator('#invites-section').count() === 0);
+    log('Tout refuser : plus aucune invitation sur le serveur', (await g.evaluate(async () => (await (await fetch('/api/invites')).json()).invites.length)) === 0);
+    log('Tout refuser : pas d’erreur console', guest.errors.length === 0, guest.errors.join(' | '));
+
+    // Acceptation refusée par le serveur (tableau complet) : message clair, invitation gardée
+    const id = await createBoard(owner.page, 'Complet');
+    await owner.page.evaluate(async ([i, mail]) => fetch(`/api/boards/${i}/invites`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: mail, role: 'viewer' }) }), [id, guest.email]);
+    await g.reload();
+    await g.locator('#invites-section').waitFor();
+    await g.route('**/api/invites/*/accept', r => r.fulfill({ status: 403, json: { code: 'quota_exceeded', message: 'Ce tableau a atteint la limite de 100 membres.' } }));
+    await g.getByRole('button', { name: /Accepter l’invitation/ }).click();
+    await g.locator('.notice-error', { hasText: 'Invitation non acceptée : Ce tableau a atteint la limite de 100 membres. L’invitation reste en attente.' }).waitFor();
+    log('Acceptation au-delà de 100 membres : message clair, invitation gardée', await g.locator('#invites-section').count() === 1);
+    await g.unroute('**/api/invites/*/accept');
+
+    // Invitation refusée par le serveur (plafond de l'adresse) : message clair dans le dialogue de partage
+    await owner.page.goto(`${BASE}/#/parcourir`);
+    await owner.page.reload();
+    await row(owner.page, 'Complet').getByRole('button', { name: /Partager…/ }).click();
+    await owner.page.route('**/api/boards/*/invites', r => r.request().method() === 'POST' ? r.fulfill({ status: 403, json: { code: 'quota_exceeded', message: 'Cette adresse a atteint la limite d’invitations en attente.' } }) : r.continue());
+    await owner.page.getByLabel('Adresse e-mail de la personne').fill('pleine@exemple.test');
+    await owner.page.getByRole('button', { name: 'Inviter' }).click();
+    await owner.page.locator('.share-dialog').getByText('Invitation non enregistrée : Cette adresse a atteint la limite d’invitations en attente.').waitFor();
+    log('Invitation au-delà de 20 en attente : message clair', true);
+    await owner.context.close();
+    await guest.context.close();
   }
 } catch (err) {
   log('Exception', false, err.stack || err.message);

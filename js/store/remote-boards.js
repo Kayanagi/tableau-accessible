@@ -4,6 +4,7 @@
  */
 import * as api from '../sync/api.js';
 import * as boards from './boards.js';
+import * as local from './account-local.js';
 import { SESSION_FLAG } from './account.js';
 import { normalizeBoardIcon } from '../ui/icons.js';
 
@@ -53,10 +54,17 @@ export function setEventHandler(fn) {
 /* ---- Lecture ---- */
 
 export const has = id => entries.has(id);
-export const get = id => entries.get(id) || null;
+/* Favori et espace sont rangés au compte (store/account-local.js), pas dans le miroir. */
+const decorate = e => {
+  if (!e) return null;
+  e.favori = local.isFavori(e.id);
+  e.espaceId = local.spaceOf(e.id);
+  return e;
+};
+export const get = id => decorate(entries.get(id));
 /* Une entrée marquée perduPour est le travail d'un autre compte, gardé en attendant de la place : elle n'est jamais montrée. */
 const allEntries = () => [...entries.values()];
-export const list = () => allEntries().filter(e => !e.perduPour);
+export const list = () => allEntries().filter(e => !e.perduPour).map(decorate);
 export const pending = () => list().filter(e => e.sortants);
 export const isSuspended = () => suspended;
 export const getOwner = () => owner;
@@ -64,7 +72,7 @@ export const getOwner = () => owner;
 /* ---- Miroir ---- */
 
 function stored(entry, withData) {
-  const { distant, horsCopie, ...rest } = entry;
+  const { distant, horsCopie, favori, espaceId, ...rest } = entry;
   return withData ? rest : { ...rest, données: null, sortants: false };
 }
 
@@ -211,6 +219,18 @@ function adopt(raw) {
   return { ...raw, distant: true, icon: normalizeBoardIcon(raw.icon), espaceId: raw.espaceId || null, favori: !!raw.favori, sortants: !!raw.sortants };
 }
 
+/* Miroir d'une version précédente : ses favoris et espaces rejoignent le compte qui l'a écrit. */
+function adoptOrganisation(saved) {
+  if (!saved.owner?.id) return;
+  const favoris = [], placement = {};
+  for (const t of saved.tableaux) {
+    if (!t?.id) continue;
+    if (t.favori) favoris.push(t.id);
+    if (t.espaceId) placement[t.id] = t.espaceId;
+  }
+  local.adopt(saved.owner.id, { favoris, placement });
+}
+
 /*
  * Un autre onglet a réécrit le miroir : on reprend ce que le serveur a confirmé, jamais ses sortants,
  * qui restent à l'onglet qui les a écrits : les envoyer d'ici produirait de faux conflits.
@@ -260,6 +280,7 @@ function onBeforeUnload(event) {
 export function init() {
   const saved = readMirror();
   owner = saved.owner || null;
+  adoptOrganisation(saved);
   entries.clear();
   for (const raw of saved.tableaux) if (raw?.id) entries.set(raw.id, adopt(raw));
   suspended = false;
@@ -694,26 +715,6 @@ export function touch(id) {
   schedulePersist();
 }
 
-export function toggleFavori(id) {
-  const e = entries.get(id);
-  if (!e) return false;
-  e.favori = !e.favori;
-  schedulePersist();
-  return e.favori;
-}
-
-export function setSpace(id, espaceId) {
-  const e = entries.get(id);
-  if (!e) return;
-  e.espaceId = espaceId;
-  schedulePersist();
-}
-
-export function clearSpace(espaceId) {
-  for (const e of entries.values()) if (e.espaceId === espaceId) e.espaceId = null;
-  schedulePersist();
-}
-
 export async function rename(id, nom) {
   const row = await api.patchBoard(id, { name: nom });
   const e = entries.get(id);
@@ -736,7 +737,14 @@ export async function remove(id) {
   await api.deleteBoard(id);
   removed.add(id);
   forget(id);
+  local.forgetBoard(id);
   persistNow();
+}
+
+/* Favori et espace d'un tableau neuf : un espace inconnu du compte est simplement ignoré à l'affichage. */
+function organise(id, { favori, espaceId } = {}) {
+  if (favori) local.setFavori(id, true);
+  if (espaceId) local.setPlacement(id, espaceId);
 }
 
 /* Tableau neuf sur le compte, tel qu'à la création, l'import d'un fichier ou la duplication. */
@@ -744,17 +752,19 @@ export async function create(nom, données, extra = {}) {
   const data = JSON.parse(JSON.stringify(données || { name: nom, items: [] }));
   data.name = nom;
   const res = await api.createBoard({ name: nom, icon: normalizeBoardIcon(extra.icon), data });
-  const entry = applyServer(res, { favori: !!extra.favori, espaceId: extra.espaceId || null, dernièreOuverture: extra.dernièreOuverture || new Date().toISOString(), nbÉléments: res.board.items.length });
+  const entry = applyServer(res, { dernièreOuverture: extra.dernièreOuverture || new Date().toISOString(), nbÉléments: res.board.items.length });
+  organise(entry.id, extra);
   persistNow();
-  return entry;
+  return decorate(entry);
 }
 
 /* Un tableau de la réserve envoyé sur le compte. La réserve n'est jamais touchée ici : l'en retirer demande un clic. */
-export async function upload(local) {
-  const res = await api.createBoard({ name: local.nom, icon: normalizeBoardIcon(local.icon), data: local.données || { name: local.nom, items: [] } });
-  const entry = applyServer(res, { favori: !!local.favori, dernièreOuverture: local.dernièreOuverture || new Date().toISOString(), nbÉléments: res.board.items.length });
+export async function upload(reserved) {
+  const res = await api.createBoard({ name: reserved.nom, icon: normalizeBoardIcon(reserved.icon), data: reserved.données || { name: reserved.nom, items: [] } });
+  const entry = applyServer(res, { dernièreOuverture: reserved.dernièreOuverture || new Date().toISOString(), nbÉléments: res.board.items.length });
+  organise(entry.id, reserved);
   persistNow();
-  return { entry };
+  return { entry: decorate(entry) };
 }
 
 /*
@@ -783,5 +793,6 @@ export function keepOnDevice(id) {
 export function drop(id) {
   removed.add(id);
   forget(id);
+  local.forgetBoard(id);
   persistNow();
 }

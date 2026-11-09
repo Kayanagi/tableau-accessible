@@ -18,7 +18,6 @@ export const STICKY_SIZES = { s: 100, m: 150, l: 220 };
 export const SIZE_NAMES = { s: 'petit', m: 'moyen', l: 'grand' };
 export const ALIGN_NAMES = { left: 'à gauche', center: 'au centre', right: 'à droite' };
 const DEFAULT_FONT = { text: 16, card: 13, code: 13, mindmap: 14, flipcard: 'auto' };
-const AUTHOR_KEY = 'tableau-accessible-auteur';
 
 function generateId() {
   return 'item-' + (nextId++);
@@ -663,12 +662,15 @@ export function mutateItem(id, fn, message) {
   return transact(() => fn(getItem(id)), message);
 }
 
+/* Nom des commentaires et réactions : le nom affiché du compte connecté, fourni par app.js. */
+let authorName = '';
+
 export function getAuthor() {
-  try { return localStorage.getItem(AUTHOR_KEY) || ''; } catch { return ''; }
+  return authorName;
 }
 
 export function setAuthor(name) {
-  try { localStorage.setItem(AUTHOR_KEY, name); } catch { /* stockage indisponible */ }
+  authorName = name || '';
 }
 
 /* Groupes */

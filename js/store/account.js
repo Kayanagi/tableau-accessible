@@ -11,6 +11,7 @@
  *   unreachable serveur injoignable et rien sur cet appareil.
  */
 import * as boards from './boards.js';
+import * as local from './account-local.js';
 
 export const SESSION_FLAG = 'tableau-accessible-compte';
 
@@ -163,7 +164,7 @@ async function restore() {
     return;
   }
   silentExpiry = false;
-  if (me.guest) { signedOut(); return; }
+  if (me.guest) { signedOut({ keepLocal: true }); return; }
   await enter(me.user);
 }
 
@@ -207,6 +208,14 @@ export async function declineInvite(id) {
   changed();
 }
 
+/* Rend le nombre d'invitations refusées par le serveur. */
+export async function declineAllInvites() {
+  const { declined } = await api.declineAllInvites();
+  invites = [];
+  changed();
+  return declined;
+}
+
 export async function signedIn(account) {
   await loadModules();
   emit({ type: 'signed-in' });
@@ -234,8 +243,15 @@ function expire({ keepFlag = false, otherTab = false, silent = false } = {}) {
   changed();
 }
 
-/* Déconnexion ou suppression du compte : le miroir est purgé. */
-export function signedOut() {
+/*
+ * Déconnexion ou suppression du compte : le miroir est purgé. Les espaces, favoris et modèles du compte, qui
+ * n'existent que sur cet appareil, ne restent que si leur propriétaire l'a choisi (keepLocal).
+ * removed : le compte n'existe plus, le travail mis de côté pour lui sur l'appareil part aussi.
+ */
+export function signedOut({ keepLocal = false, removed = false } = {}) {
+  const id = user?.id || remote?.getOwner()?.id || null;
+  if (id && (!keepLocal || removed)) local.forget(id);
+  if (id && removed) boards.removeReservedFor(id);
   remote?.purge();
   boards.detachRemote();
   remote = null;

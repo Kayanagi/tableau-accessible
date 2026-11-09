@@ -53,7 +53,11 @@ export function openShareDialog(board) {
   const { form, actions } = makeForm({
     fields: [email], submitLabel: 'Inviter', busyMessage: 'Envoi de l’invitation…',
     validate: v => clean({ email: checkEmail(v.email) }),
-    send: v => api.createInvite(board.id, { email: v.email.trim(), role: role.value }),
+    send: v => api.createInvite(board.id, { email: v.email.trim(), role: role.value }).catch(err => {
+      // Plafond atteint (adresse ou tableau) : dire que rien n'a été enregistré, puis la raison donnée par le serveur.
+      if (err.name === 'ApiError' && err.code === 'quota_exceeded') err.message = `Invitation non enregistrée : ${err.message}`;
+      throw err;
+    }),
     done: async (res, { form: f, message }) => {
       f.reset();
       role.value = 'editor';

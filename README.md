@@ -10,7 +10,8 @@ Application de tableau blanc accessible (WCAG 2.2 AA) et multi-tableaux. L’int
 - **Trois vues synchronisées** par tableau : Canevas (SVG interactif), Plan (arborescence), Tableau (table triable).
 - **Import/export** : JSON (depuis le dashboard ou le tableau), menu Exporter dans le tableau : JSON, Markdown, CSV des éléments, SVG et PNG du canevas entier (échelle 2). Les couleurs calculées du thème sont intégrées au SVG.
 - **Accessibilité** : landmarks, lien d'évitement, annonces aria-live, focus visible, cibles ≥ 24 px, contraste AA, thème clair/sombre/contraste élevé, `prefers-reduced-motion`, responsive ≥ 320 px.
-- **Comptes** : inscription, connexion, modification du nom et du mot de passe, export des données et suppression du compte. Sans compte, l’application reste entièrement locale et n’émet aucune requête vers le serveur.
+- **Comptes** : inscription, connexion, modification du nom et du mot de passe, export des données et suppression du compte. À partir de la 1.10.0, la connexion est obligatoire : les tableaux locaux de l’appareil peuvent être importés dans le compte.
+- **Partage** (1.10.0) : par tableau, avec une personne invitée par son adresse e-mail (rôle « Peut modifier » ou « Peut lire »), sans e-mail envoyé. Les invitations reçues et la section « Partagés avec moi » sont dans le tableau de bord.
 
 Les raccourcis de création et d’organisation s’appliquent au Canevas, hors champs et dialogues. Les flèches permettent de parcourir les boutons des barres d’outils avec un seul arrêt de tabulation par barre.
 
@@ -87,6 +88,8 @@ Variables d’environnement lues par `server/src/config.js` :
 | `BARO_INSECURE_COOKIE` | `1` autorise le cookie HTTP pour les tests locaux ; refusé en production. |
 | `BARO_SCRYPT_N` | Coût de dérivation des mots de passe ; ne peut pas être abaissé en production. |
 | `BARO_ACCOUNT_BOARD_QUOTA_BYTES` | Quota total de tableaux par compte, 100 Mio par défaut. |
+
+La connexion est obligatoire : sans session, le serveur web ne sert que la page de connexion, la page de confidentialité et `/api/`. Le verrou est appliqué par nginx (`server/deploy/nginx-baro.dwes.fr.conf`, route de contrôle `GET /api/session`). L’ordre de déploiement, les contrôles et le retour arrière sont décrits dans `docs/verrou-et-partage.md`, section 7. Le partage par tableau et les invitations sont décrits dans le même document.
 
 Il n’existe pas encore de formulaire public « mot de passe oublié ». Un administrateur peut utiliser `server/scripts/reset-password.mjs` ; le nouveau mot de passe est lu sans écho et toutes les sessions du compte sont fermées.
 
@@ -210,8 +213,10 @@ Mise en forme (hors liens) : `fontSize` (`"auto"` ou nombre de pixels), `bold`, 
 
 ## Limites
 
-- Pas de synchronisation en temps réel ni de partage dans cette version : ces fonctions sont prévues respectivement pour les versions 1.10.0 et 1.11.0.
-- Pas de procédure publique de mot de passe oublié ; la réinitialisation passe par le script d’administration.
+- Pas de synchronisation en temps réel (prévue en 1.12.0) ni d’équipes (1.11.0).
+- Adresses e-mail non vérifiées et aucun e-mail d’invitation : le propriétaire prévient la personne invitée.
+- Pas de chargement de page hors ligne : le site est verrouillé par nginx.
+- Pas de procédure publique de mot de passe oublié : écrire à rgpd@dwes.fr ; la réinitialisation passe par le script d’administration.
 - Pas d’historique des versions côté serveur.
 - Pas de mise en forme riche du texte (italique, souligné).
 - Le dessin à main levée se fait au pointeur uniquement (les tracés existants restent manipulables au clavier).

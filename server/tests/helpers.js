@@ -23,11 +23,12 @@ export async function startServer(env = {}, tweak = config => config) {
   const base = `http://127.0.0.1:${port}`;
 
   /* Appel HTTP : les valeurs par défaut sont celles d'une page légitime du même site. */
-  async function call(method, path, { body, cookie, ip = nextIp(), origin = ORIGIN, contentType = 'application/json', raw, cookieName = COOKIE } = {}) {
+  async function call(method, path, { body, cookie, ip = nextIp(), origin = ORIGIN, contentType = 'application/json', raw, cookieName = COOKIE, headers: extraHeaders = {} } = {}) {
     const headers = { 'X-Real-IP': ip };
     if (origin) headers.Origin = origin;
     if (contentType && method !== 'GET') headers['Content-Type'] = contentType;
     if (cookie) headers.Cookie = `${cookieName}=${cookie}`;
+    Object.assign(headers, extraHeaders);
     const res = await fetch(base + path, { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)) });
     const text = await res.text();
     return { status: res.status, headers: res.headers, body: text ? JSON.parse(text) : null, setCookie: res.headers.getSetCookie() };

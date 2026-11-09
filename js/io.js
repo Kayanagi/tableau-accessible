@@ -8,26 +8,6 @@ export function exportJSON() {
   announce('Tableau exporté en JSON');
 }
 
-export function importJSON(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const data = JSON.parse(reader.result);
-        if (!data.items || !Array.isArray(data.items)) throw new Error('Format invalide');
-        state.loadBoard(data);
-        announce('Tableau importé avec succès');
-        resolve();
-      } catch (e) {
-        announce('Erreur lors de l\'import');
-        reject(e);
-      }
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsText(file);
-  });
-}
-
 export function exportMarkdown() {
   const board = state.getBoard();
   const lines = [];

@@ -1,4 +1,5 @@
 import { LIBRARY, CATEGORIES } from './template-library.js';
+import * as local from './account-local.js';
 export { CATEGORIES };
 export const TEMPLATES = [
   {
@@ -93,37 +94,30 @@ const LEGACY = {
 };
 TEMPLATES.forEach(t => Object.assign(t, LEGACY[t.id]));
 TEMPLATES.push(...LIBRARY);
-const KEY = 'tableau-accessible-templates';
-const USE_KEY = 'tableau-accessible-template-usage';
+/* « Mes modèles » et l'historique d'usage sont rangés au compte connecté, sur cet appareil (store/account-local.js). */
+const asTemplate = t => ({ ...t, categorie: 'Mes modèles', tags: [], données: () => JSON.parse(JSON.stringify(t.snapshot)) });
+const stored = list => list.map(({ données, categorie, tags, ...t }) => t);
 export function getCustomTemplates() {
-  try { return JSON.parse(localStorage.getItem(KEY) || '[]').map(t => ({ ...t, categorie: 'Mes modèles', tags: [], données: () => JSON.parse(JSON.stringify(t.snapshot)) })); }
-  catch { return []; }
+  return local.templates().map(asTemplate);
 }
-function writeCustom(list) {
-  localStorage.setItem(KEY, JSON.stringify(list.map(({ données, categorie, tags, ...t }) => t)));
-}
+/* Lève si aucun compte n'est connecté ou si le stockage est plein : l'appelant le dit. */
 export function saveTemplate(nom, snapshot) {
-  const list = getCustomTemplates();
-  const t = { id: 'custom-' + Date.now() + Math.random().toString(36).slice(2, 6), nom, description: 'Modèle enregistré sur cet appareil.', créé: Date.now(), snapshot: JSON.parse(JSON.stringify(snapshot)) };
-  writeCustom([...list, t]);
+  const t = { id: 'custom-' + Date.now() + Math.random().toString(36).slice(2, 6), nom, description: 'Modèle enregistré sur cet appareil, pour votre compte.', créé: Date.now(), snapshot: JSON.parse(JSON.stringify(snapshot)) };
+  local.addTemplates([t]);
   return t;
 }
 export function removeTemplate(id) {
-  writeCustom(getCustomTemplates().filter(t => t.id !== id));
+  local.setTemplates(stored(getCustomTemplates().filter(t => t.id !== id)));
 }
 export function setTemplateShared(id, partage) {
-  writeCustom(getCustomTemplates().map(t => (t.id === id ? { ...t, partage } : t)));
+  local.setTemplates(stored(getCustomTemplates().map(t => (t.id === id ? { ...t, partage } : t))));
 }
 export function getTemplate(id) {
   return [...TEMPLATES, ...getCustomTemplates()].find(t => t.id === id) || null;
 }
 export function markUsed(id) {
-  try {
-    const usage = JSON.parse(localStorage.getItem(USE_KEY) || '{}');
-    usage[id] = Date.now();
-    localStorage.setItem(USE_KEY, JSON.stringify(usage));
-  } catch { /* stockage indisponible */ }
+  local.markUsed(id);
 }
 export function getUsage() {
-  try { return JSON.parse(localStorage.getItem(USE_KEY) || '{}'); } catch { return {}; }
+  return local.usage();
 }

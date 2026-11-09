@@ -87,11 +87,10 @@ function render() {
   who.className = 'comments-author';
   if (state.isReadOnly()) {
     who.textContent = 'Lecture seule : vous pouvez lire les commentaires sans en ajouter.';
-  } else if (author) {
-    who.innerHTML = `<p>Vous commentez en tant que <strong></strong>. <button type="button" class="btn-sm" data-act="rename" data-focus-key="rename">Changer de nom</button></p>`;
-    who.querySelector('strong').textContent = author;
   } else {
-    who.innerHTML = `<form class="author-form"><label for="comment-author">Votre nom (mémorisé sur cet appareil)</label><div class="author-row"><input id="comment-author" type="text" autocomplete="name" required><button type="submit" class="btn-sm">Enregistrer</button></div></form>`;
+    // Le nom vient du compte : il se change dans « Mon compte », pas ici.
+    who.innerHTML = `<p>Vous commentez en tant que <strong></strong>, le nom affiché de votre compte (modifiable dans « Mon compte »).</p>`;
+    who.querySelector('strong').textContent = author || 'Anonyme';
   }
   body.appendChild(who);
   const filter = document.createElement('label');
@@ -187,20 +186,10 @@ function thread(c) {
 function onSubmit(e) {
   e.preventDefault();
   const form = e.target;
-  if (form.classList.contains('author-form')) {
-    const name = form.querySelector('input').value.trim();
-    if (!name) return;
-    state.setAuthor(name);
-    render();
-    announce(`Nom enregistré : ${name}`);
-    body.querySelector('textarea')?.focus();
-    return;
-  }
   const id = form.dataset.reply;
   const area = form.querySelector('textarea');
   const text = area.value.trim();
   if (!text) { announce('Message vide'); area.focus(); return; }
-  if (!state.getAuthor()) { announce('Indiquez d’abord votre nom'); body.querySelector('#comment-author')?.focus(); return; }
   drafts.delete(id);
   area.value = '';
   state.postMessage(id, text);
@@ -212,7 +201,6 @@ function onClick(e) {
   if (!b) return;
   const id = b.closest('[data-thread]')?.dataset.thread;
   const act = b.dataset.act;
-  if (act === 'rename') { state.setAuthor(''); render(); body.querySelector('#comment-author')?.focus(); return; }
   const c = state.getItem(id);
   if (!c) return;
   forced = id;

@@ -8,7 +8,9 @@ const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 export const INVITE_TTL = 30 * DAY;
 export const MAX_PENDING_INVITES = 50;
+export const MAX_PENDING_INVITES_PER_EMAIL = 20;
 export const MAX_INVITE_CREATIONS_PER_HOUR = 20;
+export const MAX_BOARD_MEMBERS = 100;
 const MAX_LISTED_INVITES = 100;
 const SHARED_ROLES = new Set(['editor', 'viewer']);
 const OPTIONS = { auth: 'account', bodyLimit: ACCOUNT_BODY };
@@ -36,6 +38,7 @@ export function registerMemberRoutes(router, app) {
     FROM board_members m JOIN users u ON u.id = m.user_id
     WHERE m.board_id = ? ORDER BY m.role = 'owner' DESC, u.display_name, m.user_id`);
   const memberOf = db.prepare('SELECT role FROM board_members WHERE board_id = ? AND user_id = ?');
+  const countMembers = db.prepare('SELECT COUNT(*) AS n FROM board_members WHERE board_id = ?');
   const insertMember = db.prepare('INSERT INTO board_members (board_id, user_id, role, created_at) VALUES (?, ?, ?, ?)');
   const setMemberRole = db.prepare('UPDATE board_members SET role = ? WHERE board_id = ? AND user_id = ?');
   const deleteMember = db.prepare('DELETE FROM board_members WHERE board_id = ? AND user_id = ?');
@@ -47,9 +50,10 @@ export function registerMemberRoutes(router, app) {
   const inviteView = db.prepare('SELECT id, email, role, created_at AS createdAt, expires_at AS expiresAt FROM board_invites WHERE id = ?');
   const inviteOfEmail = db.prepare('SELECT id FROM board_invites WHERE board_id = ? AND email = ?');
   const countInvites = db.prepare('SELECT COUNT(*) AS n FROM board_invites WHERE board_id = ?');
+  const countInvitesOfEmail = db.prepare('SELECT COUNT(*) AS n FROM board_invites WHERE email = ? AND expires_at > ?');
   const purgeBoardInvites = db.prepare('DELETE FROM board_invites WHERE board_id = ? AND expires_at <= ?');
   const insertInvite = db.prepare('INSERT INTO board_invites (id, board_id, email, role, invited_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)');
-  const updateInvite = db.prepare('UPDATE board_invites SET role = ?, invited_by = ?, expires_at = ? WHERE id = ?');
+  const updateInvite = db.prepare('UPDATE board_invites SET role = ?, invited_by = ? WHERE id = ?');
   const cancelInvite = db.prepare('DELETE FROM board_invites WHERE id = ? AND board_id = ? AND expires_at > ?');
 
   const invitesOfAccount = db.prepare(`SELECT i.id, i.board_id AS boardId, b.name AS boardName, u.display_name AS invitedByName,
@@ -61,15 +65,23 @@ export function registerMemberRoutes(router, app) {
   const inviteOfAccount = db.prepare('SELECT id, board_id AS boardId, role FROM board_invites WHERE id = ? AND email = ? AND expires_at > ?');
   const deleteInvite = db.prepare('DELETE FROM board_invites WHERE id = ?');
   const declineInvite = db.prepare('DELETE FROM board_invites WHERE id = ? AND email = ? AND expires_at > ?');
+  const declineAllInvites = db.prepare('DELETE FROM board_invites WHERE email = ? AND expires_at > ?');
 
-  /* La table users n'est jamais consultée : même traitement et même réponse, que l'adresse ait un compte ou non. */
+  /*
+   * La table users n'est jamais consultée : le quota et son message générique sont identiques,
+   * que l'adresse ait un compte ou non. Ce 403 révèle seulement qu'une adresse reçoit déjà
+   * beaucoup d'invitations ; c'est le compromis retenu pour empêcher l'inondation inter-tableaux.
+   */
   const saveInvite = db.transaction((boardId, email, role, userId) => {
     const t = Date.now();
     purgeBoardInvites.run(boardId, t);
     const existing = inviteOfEmail.get(boardId, email);
     if (existing) {
-      updateInvite.run(role, userId, t + INVITE_TTL, existing.id);
+      updateInvite.run(role, userId, existing.id);
       return { id: existing.id, created: false };
+    }
+    if (countInvitesOfEmail.get(email, t).n >= MAX_PENDING_INVITES_PER_EMAIL) {
+      throw new HttpError(403, 'quota_exceeded', 'Cette adresse a atteint la limite d’invitations en attente.');
     }
     const wait = limiter.check('invite-create', userId, MAX_INVITE_CREATIONS_PER_HOUR, HOUR);
     if (wait) throw tooMany(wait);
@@ -87,7 +99,12 @@ export function registerMemberRoutes(router, app) {
     const invite = inviteOfAccount.get(id, session.user.email, t);
     if (!invite) throw inviteNotFound();
     const current = memberOf.get(invite.boardId, session.userId);
-    if (!current) insertMember.run(invite.boardId, session.userId, invite.role, t);
+    if (!current) {
+      if (countMembers.get(invite.boardId).n >= MAX_BOARD_MEMBERS) {
+        throw new HttpError(403, 'quota_exceeded', `Ce tableau a atteint la limite de ${MAX_BOARD_MEMBERS} membres.`);
+      }
+      insertMember.run(invite.boardId, session.userId, invite.role, t);
+    }
     deleteInvite.run(id);
     return { boardId: invite.boardId, role: current?.role ?? invite.role };
   }).immediate;
@@ -151,5 +168,10 @@ export function registerMemberRoutes(router, app) {
   router.add('POST', '/api/invites/:id/decline', ctx => {
     if (!declineInvite.run(ctx.params.id, ctx.session.user.email, Date.now()).changes) throw inviteNotFound();
     return { status: 204 };
+  }, OPTIONS);
+
+  router.add('POST', '/api/invites/decline-all', ctx => {
+    const declined = declineAllInvites.run(ctx.session.user.email, Date.now()).changes;
+    return { body: { declined } };
   }, OPTIONS);
 }

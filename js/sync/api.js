@@ -128,3 +128,4 @@ export const removeMember = (id, userId) => request('DELETE', `${board(id)}/memb
 export const listInvites = () => request('GET', '/invites');
 export const acceptInvite = id => request('POST', `/invites/${encodeURIComponent(id)}/accept`);
 export const declineInvite = id => request('POST', `/invites/${encodeURIComponent(id)}/decline`);
+export const declineAllInvites = () => request('POST', '/invites/decline-all', { body: {} });

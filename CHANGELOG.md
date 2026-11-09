@@ -2,6 +2,32 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
+## [1.10.0] - à paraître
+
+### Ajouté
+- Une page de connexion verrouille le site : sans session, ni le tableau de bord ni les tableaux ne sont affichés. Après connexion, la route demandée (`#/tableau/<id>`) est conservée.
+- Les tableaux locaux de l’appareil peuvent être importés dans le compte, avec un compte rendu tableau par tableau. Un tableau déjà importé n’est jamais dupliqué et rien n’est supprimé de l’appareil sans clic.
+- Partage par tableau : le propriétaire invite une personne par son adresse e-mail avec le rôle « Peut modifier » ou « Peut lire », change les rôles, retire des membres et annule les invitations en attente. Une personne invitée peut quitter le tableau.
+- Invitations : un bandeau du tableau de bord liste les invitations reçues avec Accepter et Refuser, et « Tout refuser ». Les changements sont annoncés aux lecteurs d’écran.
+- Section « Partagés avec moi » dans le tableau de bord, avec le rôle de chaque tableau.
+- Lecture seule : un tableau partagé en lecture n’est pas modifiable dans l’interface et affiche le message « Lecture seule ». Le serveur refuse aussi toute écriture.
+
+### Modifié
+- Fin du mode sans compte : un compte est obligatoire pour utiliser Baro. Les tableaux locaux historiques ne sont plus affichés ; ils ne sont accessibles que pour l’import.
+- Le cookie de session passe de `SameSite=Strict` à `SameSite=Lax`, pour que les liens vers un tableau fonctionnent depuis un autre site. Les cookies déjà posés restent en Strict jusqu’à leur renouvellement.
+- Sur un appareil partagé, les tableaux sont séparés par compte.
+- La page de confidentialité décrit la connexion obligatoire, le partage et la conservation des adresses invitées.
+
+### Sécurité
+- Au plus 50 invitations en attente par tableau et 20 créations d’invitations par heure et par compte. La réponse est identique que l’adresse ait un compte ou non, pour éviter de révéler quels comptes existent.
+- Verrou nginx : sans session valide, seuls `connexion.html`, ses deux fichiers, `confidentialite.html` et `/api/` sont servis. Si le serveur Baro ne répond pas, le site reste fermé (503). Déploiement : `docs/verrou-et-partage.md`, section 7.
+
+### Limites connues
+- Les adresses e-mail ne sont pas vérifiées : une adresse invitée, inscrite par un tiers avant la personne visée, lui montre l’invitation. Le propriétaire voit l’invitation en attente et peut l’annuler.
+- L’invitation n’envoie aucun e-mail : le propriétaire doit prévenir la personne.
+- Le chargement d’une page hors ligne n’est pas possible : le site est verrouillé par nginx. Un onglet déjà ouvert garde son miroir hors ligne.
+- Pas de « mot de passe oublié » en libre-service : écrire à rgpd@dwes.fr.
+
 ## [1.9.0] - 2026-11-06
 
 ### Ajouté

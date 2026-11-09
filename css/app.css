@@ -1196,9 +1196,7 @@ dialog ul {
 .comments-author, .comments-filter, .comments-summary { font-size: 0.85rem; margin-bottom: 0.5rem; }
 .comments-filter { display: flex; align-items: center; gap: 0.4rem; min-height: 24px; }
 .comments-filter input { width: 20px; height: 20px; accent-color: var(--primary); }
-.author-form label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
-.author-row { display: flex; gap: 0.25rem; }
-.author-row input, .comment-reply textarea { flex: 1; min-width: 0; width: 100%; padding: 0.3rem 0.4rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit; font-size: 0.9rem; }
+.comment-reply textarea { flex: 1; min-width: 0; width: 100%; padding: 0.3rem 0.4rem; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg); font: inherit; font-size: 0.9rem; }
 .comments-list { list-style: none; display: grid; gap: 0.75rem; }
 .comment-thread { border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem; background: var(--surface); }
 .comment-thread.is-selected { border: 2px solid var(--primary); }
@@ -1633,6 +1631,9 @@ body:has(.notice) #app-board:not([hidden]) { height: auto; flex: 1 1 0; min-heig
 .invites-list li { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; }
 .invites-list p { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere; }
 .invite-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
+.invites-all { margin-top: .75rem; }
+.invites-result { margin: .5rem 0; }
+.invites-result:empty { margin: 0; }
 .board-badge-viewer, .board-badge-editor, .board-badge-owner { border: 2px solid var(--primary); font-weight: 600; }
 .board-badge-lost { border: 2px solid var(--danger); font-weight: 600; }
 .board-owner { display: block; margin-top: .15rem; font-size: .85rem; overflow-wrap: anywhere; }

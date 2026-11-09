@@ -5,7 +5,6 @@ import * as announcer from './a11y/announcer.js';
 import * as canvas from './views/canvas.js';
 import * as outline from './views/outline.js';
 import * as table from './views/table.js';
-import * as io from './io.js';
 import * as router from './router.js';
 import * as boards from './store/boards.js';
 import { setBoardLabel } from './ui/icons.js';
@@ -33,7 +32,7 @@ const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky':
 const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', l: 'line', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
 const MORE_TOOLS = ['pen', 'eraser', 'comment', 'mindmap', 'kanban', 'datatable', 'code', 'flipcard'];
 // Ce qui ne sert qu'à écrire disparaît en lecture seule : zoom, recherche, cadres et exports restent.
-const READ_ONLY_HIDDEN = ['btn-sticky', 'btn-shape', 'btn-line', 'btn-text', 'btn-card', 'btn-frame', 'btn-more-tools', 'btn-link', 'board-group-organize', 'board-group-history', 'btn-import'];
+const READ_ONLY_HIDDEN = ['btn-sticky', 'btn-shape', 'btn-line', 'btn-text', 'btn-card', 'btn-frame', 'btn-more-tools', 'btn-link', 'board-group-organize', 'board-group-history'];
 
 let currentView = 'canvas';
 let editingId = null;
@@ -70,6 +69,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function onAccountChange() {
   const status = account.getStatus();
+  // Commentaires et réactions portent le nom affiché du compte, jamais un nom resté sur l'appareil.
+  state.setAuthor(account.getUser()?.displayName || '');
   if (status === 'loading') return;
   if (status === 'signed-in' || status === 'offline') {
     if (locked) unlock();
@@ -144,6 +145,7 @@ async function promptImport() {
   const userId = account.getUser()?.id;
   if (!userId) return;
   importAsked = true;
+  localImport.cleanupLegacy();
   if (!localImport.shouldPrompt(userId)) return;
   const { openImportDialog } = await import('./views/import-dialog.js');
   // Après le rendu de la route, pour que le focus revienne au bon endroit à la fermeture.
@@ -583,27 +585,11 @@ function setupToolbar() {
   document.getElementById('btn-zoom-out').addEventListener('click', () => canvas.zoomOut());
   document.getElementById('btn-zoom-reset').addEventListener('click', () => canvas.zoomReset());
   document.getElementById('btn-zoom-fit').addEventListener('click', () => canvas.zoomToFit());
-  document.getElementById('btn-import').addEventListener('click', () => {
-    if (refuseRemoteImport()) return;
-    document.getElementById('file-import').click();
-  });
-  document.getElementById('file-import').addEventListener('change', async (e) => {
-    const file = e.target.files[0];
-    if (file && refuseRemoteImport()) { e.target.value = ''; return; }
-    if (file) { try { await io.importJSON(file); } catch (err) { console.error(err); } }
-    e.target.value = '';
-  });
   document.getElementById('btn-help').addEventListener('click', () => document.getElementById('dialog-help').showModal());
   state.subscribe(() => {
     document.getElementById('btn-undo').disabled = !state.canUndo();
     document.getElementById('btn-redo').disabled = !state.canRedo();
   });
-}
-
-/* Importer remplacerait la version du serveur, sans confirmation possible et sans historique à restaurer. */
-function refuseRemoteImport() {
-  notify('board-action', 'Import refusé : ce tableau est enregistré sur votre compte et serait remplacé. Importez le fichier dans un nouveau tableau, depuis l’accueil.', { tone: 'error' });
-  return true;
 }
 
 function setupToolPalette() {

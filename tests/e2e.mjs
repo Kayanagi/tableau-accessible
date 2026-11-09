@@ -602,7 +602,11 @@ try {
   await page.keyboard.press('Control+Shift+g');
   log('Groupe : nœud parent dans le Plan, Ctrl+Maj+G dégroupe', /Groupe de 2 éléments/.test(groupNode) && nested === 2 && !(await snapshot()).items.some(i => i.groupId));
 
-  await page.evaluate(() => localStorage.setItem('tableau-accessible-auteur', 'Wesley'));
+  // L'auteur des commentaires est le nom affiché du compte : on le renomme, l'auteur suit.
+  await page.evaluate(async () => {
+    const res = await fetch('/api/me', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: 'Wesley' }) });
+    (await import('/js/store/account.js')).updateUser((await res.json()).user);
+  });
   await fresh([note('item-1', 100, 100, { content: 'Idée' })]);
   await focus('item-1');
   await page.keyboard.press('c');
@@ -614,7 +618,7 @@ try {
   await announced(/Message publié/);
   snap = await snapshot();
   const cm = snap.items.find(i => i.type === 'comment');
-  log('Commentaire (C) : posé sur l’objet, fil avec auteur mémorisé et date', replyFocused && cm?.targetId === 'item-1' && cm.messages[0]?.author === 'Wesley' && !!cm.messages[0].date && /Commentaire de Wesley : « À revoir », 1 message, non résolu, sur Post-it/.test(await label(cm.id)) && /1 commentaire/.test(await label('item-1')) && await page.locator('.comment-messages time[datetime]').count() === 1);
+  log('Commentaire (C) : posé sur l’objet, fil avec le nom affiché du compte et la date', replyFocused && cm?.targetId === 'item-1' && cm.messages[0]?.author === 'Wesley' && !!cm.messages[0].date && /Commentaire de Wesley : « À revoir », 1 message, non résolu, sur Post-it/.test(await label(cm.id)) && /1 commentaire/.test(await label('item-1')) && await page.locator('.comment-messages time[datetime]').count() === 1);
   await page.click('.comment-actions [data-act="resolve"]');
   await announced(/Commentaire résolu/);
   const resolved = (await snapshot()).items.find(i => i.type === 'comment').resolved;

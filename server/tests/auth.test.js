@@ -324,6 +324,37 @@ describe('API d’authentification', () => {
     assert.equal(s.app.db.prepare('SELECT COUNT(*) n FROM sessions WHERE token_hash = ?').get(hash).n, 0);
   });
 
+  it('sert une navigation cross-site sans glisser la session ni marquer le compte actif', async () => {
+    const { id, token } = await s.signUp();
+    const hash = hashToken(token);
+    const longAgo = Date.now() - 2 * 3600 * 1000;
+    const oldExpiry = Date.now() + 60 * 1000;
+    s.app.db.prepare('UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?').run(longAgo, oldExpiry, hash);
+    s.app.db.prepare('UPDATE users SET last_active_at = ?, inactivity_warned_at = ? WHERE id = ?').run(longAgo, longAgo, id);
+    const res = await s.call('GET', '/api/me', { cookie: token, headers: { 'Sec-Fetch-Site': 'cross-site' } });
+    assert.equal(res.status, 200);
+    assert.deepEqual(res.setCookie, []);
+    assert.deepEqual(s.app.db.prepare('SELECT last_seen_at, expires_at FROM sessions WHERE token_hash = ?').get(hash), { last_seen_at: longAgo, expires_at: oldExpiry });
+    assert.deepEqual(s.app.db.prepare('SELECT last_active_at, inactivity_warned_at FROM users WHERE id = ?').get(id), { last_active_at: longAgo, inactivity_warned_at: longAgo });
+  });
+
+  it('glisse la session et marque le compte actif avec Sec-Fetch-Site same-origin', async () => {
+    const { id, token } = await s.signUp();
+    const hash = hashToken(token);
+    const longAgo = Date.now() - 2 * 3600 * 1000;
+    s.app.db.prepare('UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?').run(longAgo, Date.now() + 60 * 1000, hash);
+    s.app.db.prepare('UPDATE users SET last_active_at = ?, inactivity_warned_at = ? WHERE id = ?').run(longAgo, longAgo, id);
+    const res = await s.call('GET', '/api/me', { cookie: token, headers: { 'Sec-Fetch-Site': 'same-origin' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.setCookie[0], sessionCookie({ name: COOKIE, secure: true }, token, 2592000));
+    const session = s.app.db.prepare('SELECT last_seen_at, expires_at FROM sessions WHERE token_hash = ?').get(hash);
+    assert.ok(session.last_seen_at > longAgo);
+    assert.ok(session.expires_at > Date.now() + 29 * 24 * 3600 * 1000);
+    const user = s.app.db.prepare('SELECT last_active_at, inactivity_warned_at FROM users WHERE id = ?').get(id);
+    assert.ok(user.last_active_at > longAgo);
+    assert.equal(user.inactivity_warned_at, null);
+  });
+
   it('change le mot de passe : ancien vérifié, toutes les sessions purgées, nouveau jeton', async () => {
     const { email, token } = await s.signUp();
     const other = tokenFrom(await s.call('POST', '/api/auth/login', { body: { email, password: PASSWORD } }));

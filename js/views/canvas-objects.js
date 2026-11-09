@@ -303,6 +303,12 @@ export function onSubKey(e, item, sub) {
   const ctrl = e.ctrlKey || e.metaKey;
   const go = s => { e.preventDefault(); focusSub(item.id, s); };
   if (e.key === 'Escape') { e.preventDefault(); focusItem(item.id); return true; }
+  // Lecture seule : on parcourt cellule par cellule, carte par carte ; tout ce qui modifie est refusé et dit.
+  if (state.isReadOnly() && (['Enter', 'F2', 'Insert', 'Delete', 'Backspace'].includes(e.key) || (ctrl && e.key.startsWith('Arrow')))) {
+    e.preventDefault();
+    announce('Lecture seule : ce tableau ne peut pas être modifié.');
+    return true;
+  }
   if ((e.key === 'Enter' || e.key === 'F2') && !ctrl) { e.preventDefault(); editSub(item.id, sub); return true; }
   if (item.type === 'kanban') {
     const cols = item.columns;
@@ -368,12 +374,16 @@ export function enterSub(item) {
   if (item.type === 'kanban') {
     const col = item.columns.find(cl => cl.cards.length);
     focusSub(item.id, col ? `card:${col.cards[0].id}` : `col:${item.columns[0].id}`);
-    announce('Entrée dans le kanban : flèches pour parcourir, Ctrl+flèches pour déplacer une carte, Insertion pour ajouter, Échap pour sortir');
+    announce(state.isReadOnly()
+      ? 'Entrée dans le kanban, lecture seule : flèches pour parcourir les colonnes et les cartes, Échap pour sortir'
+      : 'Entrée dans le kanban : flèches pour parcourir, Ctrl+flèches pour déplacer une carte, Insertion pour ajouter, Échap pour sortir');
     return true;
   }
   if (item.type === 'datatable') {
     focusSub(item.id, 'cell:0:0');
-    announce('Entrée dans le tableau : flèches pour parcourir, Entrée pour modifier une cellule, Échap pour sortir');
+    announce(state.isReadOnly()
+      ? 'Entrée dans le tableau, lecture seule : flèches pour parcourir les cellules, Début et Fin pour la ligne, Échap pour sortir'
+      : 'Entrée dans le tableau : flèches pour parcourir, Entrée pour modifier une cellule, Échap pour sortir');
     return true;
   }
   return false;
