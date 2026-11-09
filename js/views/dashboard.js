@@ -263,6 +263,9 @@ function renderInvites(main) {
     if (hadFocus) document.getElementById('dashboard-title')?.focus();
     return;
   }
+  // Bandeau qui apparaît en cours d'usage (page déjà affichée) : une zone role="status" insérée déjà remplie n'est pas
+  // lue de façon fiable, l'annonceur dit donc le nombre une fois. Au premier rendu, il fait partie de la page.
+  const appearing = !section && main.isConnected;
   if (!section) {
     section = document.createElement('section');
     section.id = 'invites-section';
@@ -274,6 +277,8 @@ function renderInvites(main) {
     const status = document.createElement('p');
     status.id = 'invites-count';
     status.setAttribute('role', 'status');
+    // Rempli avant l'insertion : seule l'annonce ci-dessous le lit, pas un changement de la zone.
+    status.textContent = inviteCount(invites.length);
     const list = document.createElement('ul');
     list.className = 'invites-list';
     const all = document.createElement('div');
@@ -288,7 +293,10 @@ function renderInvites(main) {
     main.prepend(section);
   }
   section.querySelector('#btn-decline-all').setAttribute('aria-label', `Tout refuser : ${inviteCount(invites.length)}`);
-  section.querySelector('#invites-count').textContent = inviteCount(invites.length);
+  // Le texte ne change que s'il diffère : une zone live réécrite à l'identique peut être relue.
+  const count = section.querySelector('#invites-count');
+  if (count.textContent !== inviteCount(invites.length)) count.textContent = inviteCount(invites.length);
+  if (appearing) announce(inviteCount(invites.length));
   const list = section.querySelector('.invites-list');
   list.replaceChildren();
   for (const invite of invites) {

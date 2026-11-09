@@ -335,7 +335,9 @@ try {
     await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
     const results = await page.locator('.import-results').textContent();
     log('Compte rendu : réussi et refusé avec la raison', results.includes('Un : importé') && results.includes('Deux : importé') && results.includes('Refusé : refusé') && results.includes(refusal));
-    log('Compte rendu : 2 importés, 1 refusé', (await dlg.locator('[role="status"]').textContent()).includes('2 tableaux importés, 1 refusé'));
+    log('Compte rendu : 2 importés, 1 refusé', (await dlg.locator('.import-summary').textContent()).includes('2 tableaux importés, 1 refusé'));
+    // Une seule annonce : le résumé passe par l'annonceur, il n'est pas en plus une zone role="status" insérée remplie.
+    log('Compte rendu : annoncé une fois, sans role="status" rempli à l’insertion', await dlg.locator('.import-summary').getAttribute('role') === null && await page.waitForFunction(() => document.querySelector('.import-dialog [data-announcer]')?.textContent.includes('2 tableaux importés, 1 refusé'), null, { timeout: 3000 }).then(() => true, () => false));
     await axe(page, 'compte rendu de l’import');
     await shot(page, 'import-resultat');
     let local = JSON.parse(await page.evaluate(k => localStorage.getItem(k), BOARDS_KEY)).tableaux;
@@ -751,7 +753,7 @@ try {
     await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
     const results = await page.locator('.import-results').textContent();
     log('Compte rendu : espace, modèle et tableau importés', results.includes('Espace « Ancien espace » : importé') && results.includes('Modèle « Ancien modèle » : importé') && results.includes('Ancien : importé'), results);
-    log('Compte rendu : résumé', (await dlg.locator('[role="status"]').textContent()).includes('1 tableau importé, 1 espace importé, 1 modèle importé'));
+    log('Compte rendu : résumé', (await dlg.locator('.import-summary').textContent()).includes('1 tableau importé, 1 espace importé, 1 modèle importé'));
     const common = await page.evaluate(k => ({ boards: JSON.parse(localStorage.getItem(k)), templates: localStorage.getItem('tableau-accessible-templates'), usage: localStorage.getItem('tableau-accessible-template-usage') }), BOARDS_KEY);
     log('Espace et modèle importés : retirés de l’espace commun', common.boards.espaces.map(s => s.nom).join() === 'Espace d’un autre' && common.templates === null && common.usage === null);
     await page.getByRole('button', { name: 'Terminer' }).click();
@@ -779,7 +781,8 @@ try {
     log('Annuler : rien n’est supprimé', await page.evaluate(k => JSON.parse(localStorage.getItem(k)).tableaux.some(b => b.id === 'board-1-pas-a-moi'), BOARDS_KEY));
     await page.getByRole('button', { name: 'Supprimer de cet appareil sans importer…' }).click();
     await page.getByRole('button', { name: 'Supprimer définitivement de cet appareil' }).click();
-    await dlg.locator('[role="status"]', { hasText: '2 éléments supprimés de cet appareil, sans import.' }).waitFor();
+    await dlg.locator('.import-status', { hasText: '2 éléments supprimés de cet appareil, sans import.' }).waitFor();
+    log('Suppression sans import : message lu par l’annonceur seul', await dlg.locator('.import-status').getAttribute('role') === null && await page.waitForFunction(() => document.querySelector('.import-dialog [data-announcer]')?.textContent.includes('2 éléments supprimés'), null, { timeout: 3000 }).then(() => true, () => false));
     const after = await page.evaluate(k => JSON.parse(localStorage.getItem(k)), BOARDS_KEY);
     log('Supprimer sans importer : effacés de l’appareil, rien envoyé', !after.tableaux.some(b => b.id === 'board-1-pas-a-moi') && after.espaces.length === 0 && !(await serverBoards(page)).some(b => b.name === 'Pas à moi'));
     log('Supprimer sans importer : plus rien à proposer', (await dlg.textContent()).includes('Aucun tableau à importer depuis cet appareil.'));
@@ -858,6 +861,252 @@ try {
     await owner.page.getByRole('button', { name: 'Inviter' }).click();
     await owner.page.locator('.share-dialog').getByText('Invitation non enregistrée : Cette adresse a atteint la limite d’invitations en attente.').waitFor();
     log('Invitation au-delà de 20 en attente : message clair', true);
+    await owner.context.close();
+    await guest.context.close();
+  }
+
+  // === Import : deux onglets, « Plus tard » périmé, coupure, compte supprimé ===
+  {
+    console.log('--- Import : deux onglets et coupure ---');
+    const IMPORT_KEY = 'tableau-accessible-import';
+    const { context, page, errors } = await signed('Deux onglets');
+    await seedInit(page, [localBoard('board-2-a', 'Onglet A', [sticky('item-1', 'a')]), localBoard('board-2-b', 'Onglet B'), localBoard('board-2-c', 'Onglet C')]);
+    await page.goto(`${BASE}/#/`);
+    const dlg = p => p.locator('.import-dialog');
+    await dlg(page).waitFor();
+    // Deux autres onglets du même compte ont lu le suivi avant l'import
+    const tab2 = await context.newPage();
+    const tab3 = await context.newPage();
+    for (const t of [tab2, tab3]) { await t.goto(`${BASE}/#/`); await dlg(t).waitFor(); }
+    const posts = [];
+    page.on('request', r => { if (r.method() === 'POST' && new URL(r.url()).pathname === '/api/boards') posts.push(r.postDataJSON()); });
+    await page.getByRole('checkbox', { name: /Onglet C/ }).uncheck();
+    await page.getByRole('button', { name: 'Importer dans mon compte' }).click();
+    await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
+    log('Import : chaque tableau porte une clé d’import stable', posts.length === 2 && posts.map(b => b.importKey).sort().join() === 'local-board-2-a,local-board-2-b', posts.map(b => b.importKey).join());
+    // Onglet 2, liste périmée : il importe à son tour
+    await tab2.getByRole('checkbox', { name: /Onglet C/ }).uncheck();
+    await tab2.getByRole('button', { name: 'Importer dans mon compte' }).click();
+    await tab2.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
+    const names = (await serverBoards(page)).map(b => b.name).sort().join();
+    log('Deux onglets : aucun doublon sur le compte', names === 'Onglet A,Onglet B', names);
+    // Onglet 3, liste périmée : « Plus tard » n'efface pas les marques « importé »
+    await tab3.getByRole('button', { name: 'Plus tard' }).click();
+    await dlg(tab3).waitFor({ state: 'detached' });
+    const track = JSON.parse(await page.evaluate(k => localStorage.getItem(k), IMPORT_KEY));
+    log('« Plus tard » périmé : les marques « importé » d’un autre onglet restent', !!track.imported['board-2-a'] && !!track.imported['board-2-b'] && track.later.includes('board-2-c'), JSON.stringify(track));
+    await tab3.reload();
+    await tab3.waitForSelector('#dashboard-title');
+    await tab3.waitForTimeout(400);
+    log('« Plus tard » périmé : rien n’est reproposé au rechargement', await dlg(tab3).count() === 0);
+    await tab2.close();
+    await tab3.close();
+
+    // Coupure : le serveur crée le tableau, la réponse se perd ; le nouvel essai ne le duplique pas
+    await page.getByRole('button', { name: 'Terminer' }).click();
+    await dlg(page).waitFor({ state: 'detached' });
+    await page.click('#btn-account');
+    await page.getByRole('button', { name: 'Importer vos tableaux de cet appareil…' }).click();
+    await dlg(page).waitFor();
+    let cut = true;
+    await page.route('**/api/boards', async r => {
+      if (r.request().method() === 'POST' && cut) { cut = false; await r.fetch(); return r.abort(); }
+      return r.continue();
+    });
+    await page.getByRole('button', { name: 'Importer dans mon compte' }).click();
+    await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
+    log('Coupure : réponse perdue, le tableau reste proposé', (await page.locator('.import-results').textContent()).includes('Onglet C : refusé') && !JSON.parse(await page.evaluate(k => localStorage.getItem(k), IMPORT_KEY)).imported['board-2-c']);
+    await page.unroute('**/api/boards');
+    await page.getByRole('button', { name: 'Revenir à la liste' }).click();
+    await page.getByRole('button', { name: 'Importer dans mon compte' }).click();
+    await page.getByRole('heading', { name: 'Résultat de l’import' }).waitFor();
+    const afterCut = (await serverBoards(page)).map(b => b.name).sort().join();
+    log('Réimport après coupure : pas de doublon', afterCut === 'Onglet A,Onglet B,Onglet C', afterCut);
+    log('Réimport après coupure : marqué importé', !!JSON.parse(await page.evaluate(k => localStorage.getItem(k), IMPORT_KEY)).imported['board-2-c']);
+    await page.getByRole('button', { name: 'Terminer' }).click();
+    await dlg(page).waitFor({ state: 'detached' });
+
+    // Compte supprimé : ce qu'il avait importé redevient proposé (à importer ailleurs, ou à supprimer de l'appareil)
+    await page.getByRole('button', { name: 'Supprimer mon compte…' }).click();
+    await page.getByRole('heading', { name: 'Supprimer le compte' }).waitFor();
+    await page.getByLabel('Mot de passe', { exact: true }).fill(TEST_PASSWORD);
+    await page.getByRole('button', { name: 'Supprimer définitivement mon compte' }).click();
+    await gateShown(page);
+    await page.getByRole('button', { name: 'Créer un compte' }).click();
+    await page.getByLabel('Nom affiché').fill('Suivant');
+    await page.getByLabel('Adresse e-mail').fill(nextEmail());
+    await page.getByLabel('Mot de passe').fill(TEST_PASSWORD);
+    await page.getByRole('button', { name: 'Créer mon compte' }).click();
+    await dlg(page).waitFor();
+    log('Compte supprimé : ses tableaux importés sont de nouveau proposés', await page.getByRole('checkbox', { name: /Onglet A/ }).count() === 1 && await page.getByRole('button', { name: 'Supprimer de cet appareil sans importer…' }).count() === 1);
+    log('Import, deux onglets et coupure : pas d’erreur console', errors.filter(e => !/Failed to fetch|ERR_FAILED/.test(e)).length === 0, errors.join(' | '));
+    await context.close();
+  }
+
+  // === Session fermée : la fin de session ne vaut pas « Plus tard » ===
+  {
+    console.log('--- Import et fin de session ---');
+    const { context, page } = await signed('Fin de session');
+    await seedInit(page, [localBoard('board-3-a', 'Pas encore répondu')]);
+    await page.goto(`${BASE}/#/`);
+    await page.locator('.import-dialog').waitFor();
+    await page.evaluate(() => fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' } }));
+    // Le prochain appel reçoit 401 : la session expire, l'écran de connexion ferme le dialogue.
+    await page.evaluate(async () => (await import('/js/store/account.js')).refreshBoards());
+    await gateShown(page);
+    const later = JSON.parse(await page.evaluate(() => localStorage.getItem('tableau-accessible-import')) || '{"later":[]}').later;
+    log('Fin de session : la fermeture du dialogue ne vaut pas « Plus tard »', !later.includes('board-3-a'), JSON.stringify(later));
+    await context.close();
+  }
+
+  // === Quitter un tableau avec des modifications non envoyées ===
+  {
+    console.log('--- Quitter avec envoi échoué ---');
+    const owner = await signed('Ana');
+    const guest = await signed('Bruno');
+    await owner.page.goto(`${BASE}/#/`);
+    await owner.page.waitForSelector('#dashboard-title');
+    await guest.page.goto(`${BASE}/#/`);
+    await guest.page.waitForSelector('#dashboard-title');
+    const share = async (id, role) => {
+      await owner.page.evaluate(async ([i, mail, r]) => fetch(`/api/boards/${i}/invites`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: mail, role: r }) }), [id, guest.email, role]);
+      await guest.page.evaluate(async () => { const { invites } = await (await fetch('/api/invites')).json(); for (const inv of invites) await fetch(`/api/invites/${inv.id}/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }); });
+    };
+    const g = guest.page;
+    const editUnsent = async id => {
+      await g.goto(`${BASE}/#/tableau/${id}`);
+      await g.waitForSelector('.canvas-item[data-id="item-1"]');
+      await g.route('**/api/boards/*/data', r => r.abort());
+      await g.locator('.canvas-item[data-id="item-1"]').first().focus();
+      await g.keyboard.press('Control+d');
+      await g.waitForFunction(i => { const e = JSON.parse(localStorage.getItem('tableau-accessible-distants') || '{"tableaux":[]}').tableaux.find(t => t.id === i); return e?.sortants && e.données?.items.length === 2; }, id, { timeout: 8000 });
+    };
+    const leave = async name => {
+      await g.goto(`${BASE}/#/`);
+      const r = g.locator('#shared-section tr', { hasText: name });
+      await r.waitFor();
+      await r.getByRole('button', { name: /Quitter le tableau/ }).click();
+      await g.locator('dialog[open]').getByRole('button', { name: 'Quitter le tableau' }).click();
+      return r;
+    };
+
+    // Envoi impossible, copie possible : le travail part dans une copie avant de quitter
+    const id1 = await createBoard(owner.page, 'Quitté', [sticky('item-1', 'x')]);
+    await share(id1, 'editor');
+    await editUnsent(id1);
+    // Toutes les annonces, pas seulement la dernière : d'autres peuvent suivre (liste relue).
+    await g.evaluate(() => { window.heard = []; new MutationObserver(() => window.heard.push(document.getElementById('announcer').textContent)).observe(document.getElementById('announcer'), { childList: true, characterData: true, subtree: true }); });
+    const r1 = await leave('Quitté');
+    await r1.waitFor({ state: 'detached', timeout: 10000 });
+    const copy1 = (await serverBoards(g)).find(b => b.name === 'Quitté (copie)' && b.role === 'owner');
+    log('Quitter, envoi échoué : copie sur le compte avec le travail non envoyé', !!copy1 && (await g.evaluate(async i => (await (await fetch(`/api/boards/${i}`)).json()).board.items.length, copy1.id)) === 2);
+    log('Quitter, envoi échoué : le tableau est bien quitté', await fetchStatus(g, id1) === 404);
+    log('Quitter, envoi échoué : la copie est annoncée', await g.waitForFunction(() => window.heard.some(t => t.includes('gardées dans la copie « Quitté (copie) »')), null, { timeout: 3000 }).then(() => true, async () => { console.log(await g.evaluate(() => JSON.stringify(window.heard))); return false; }));
+
+    // Ni envoi ni copie possibles : on ne quitte pas, et on le dit
+    const id2 = await createBoard(owner.page, 'Gardé', [sticky('item-1', 'y')]);
+    await share(id2, 'editor');
+    await editUnsent(id2);
+    await g.route('**/api/boards', r => (r.request().method() === 'POST' ? r.abort() : r.continue()));
+    await leave('Gardé');
+    const refusal = g.locator('dialog[open] .account-message', { hasText: 'n’ont pas pu être mises à l’abri' });
+    await refusal.waitFor({ timeout: 10000 });
+    log('Quitter, ni envoi ni copie : refusé avec un message clair', (await refusal.textContent()).includes('Vous n’avez pas quitté le tableau'));
+    log('Quitter, ni envoi ni copie : toujours membre, travail gardé', await fetchStatus(g, id2) === 200 && await g.evaluate(i => JSON.parse(localStorage.getItem('tableau-accessible-distants')).tableaux.find(t => t.id === i)?.sortants === true, id2));
+    await g.unroute('**/api/boards');
+    await g.unroute('**/api/boards/*/data');
+    await g.locator('dialog[open]').getByRole('button', { name: 'Annuler' }).click();
+    log('Quitter : pas d’erreur console', guest.errors.filter(e => !/Failed to fetch|ERR_FAILED/.test(e)).length === 0, guest.errors.join(' | '));
+    await owner.context.close();
+    await guest.context.close();
+  }
+
+  // === Droit d'écrire retiré alors que du travail attend : copie, puis version du serveur ===
+  {
+    console.log('--- Perte du droit d’écrire avec travail local ---');
+    const owner = await signed('Ana');
+    const guest = await signed('Bruno');
+    await owner.page.goto(`${BASE}/#/`);
+    await owner.page.waitForSelector('#dashboard-title');
+    const g = guest.page;
+    await g.goto(`${BASE}/#/`);
+    await g.waitForSelector('#dashboard-title');
+    const id = await createBoard(owner.page, 'Rétrogradé', [sticky('item-1', 'serveur')]);
+    await owner.page.evaluate(async ([i, mail]) => fetch(`/api/boards/${i}/invites`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: mail, role: 'editor' }) }), [id, guest.email]);
+    await g.evaluate(async () => { const { invites } = await (await fetch('/api/invites')).json(); await fetch(`/api/invites/${invites[0].id}/accept`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }); });
+    await g.goto(`${BASE}/#/tableau/${id}`);
+    await g.waitForSelector('.canvas-item[data-id="item-1"]');
+    await g.route('**/api/boards/*/data', r => r.abort());
+    await g.locator('.canvas-item[data-id="item-1"]').first().focus();
+    await g.keyboard.press('Control+d');
+    await g.waitForFunction(i => JSON.parse(localStorage.getItem('tableau-accessible-distants') || '{"tableaux":[]}').tableaux.find(t => t.id === i)?.sortants === true, id, { timeout: 8000 });
+    const guestId = await g.evaluate(async () => (await import('/js/store/account.js')).getUser().id);
+    await owner.page.evaluate(async ([i, u]) => fetch(`/api/boards/${i}/members/${u}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'viewer' }) }), [id, guestId]);
+    await g.unroute('**/api/boards/*/data');
+    await g.reload();
+    await g.locator('.notice-error', { hasText: 'gardées dans la copie' }).waitFor({ timeout: 10000 });
+    await g.waitForFunction(i => { const e = JSON.parse(localStorage.getItem('tableau-accessible-distants')).tableaux.find(t => t.id === i); return e && !e.sortants && e.données?.items.length === 1; }, id, { timeout: 8000 }).catch(() => {});
+    const copies = (await serverBoards(g)).filter(b => b.name === 'Rétrogradé (copie)');
+    log('Droit retiré : une seule copie, avec le travail non envoyé', copies.length === 1 && (await g.evaluate(async i => (await (await fetch(`/api/boards/${i}`)).json()).board.items.length, copies[0].id)) === 2, `${copies.length} copie(s)`);
+    log('Droit retiré : le tableau affiche la version du serveur, en lecture seule', await g.locator('.canvas-item[data-id]').evaluateAll(els => new Set(els.map(e => e.dataset.id)).size) === 1 && await g.locator('#board-readonly').isVisible());
+    const mirrored = await g.evaluate(i => JSON.parse(localStorage.getItem('tableau-accessible-distants')).tableaux.find(t => t.id === i), id);
+    log('Droit retiré : le miroir reprend la version du serveur', mirrored && !mirrored.sortants && mirrored.données?.items.length === 1, JSON.stringify({ sortants: mirrored?.sortants, n: mirrored?.données?.items.length }));
+    await g.reload();
+    await g.waitForSelector('.canvas-item[data-id="item-1"]');
+    await g.waitForTimeout(1500);
+    log('Droit retiré : rechargé, pas de seconde copie', (await serverBoards(g)).filter(b => b.name.startsWith('Rétrogradé (copie)')).length === 1);
+    log('Droit retiré : pas d’erreur console', guest.errors.filter(e => !/Failed to fetch|ERR_FAILED/.test(e)).length === 0, guest.errors.join(' | '));
+    await owner.context.close();
+    await guest.context.close();
+  }
+
+  // === Déconnexion dans un autre onglet : son choix vaut pour tous les onglets du compte ===
+  {
+    console.log('--- Déconnexion avec un autre onglet ouvert ---');
+    const { context, page } = await signed('Deux onglets');
+    await page.goto(`${BASE}/#/`);
+    await page.waitForSelector('#dashboard-title');
+    const id = await createBoard(page, 'Pas gardé', [sticky('item-1', 'x')]);
+    const tabB = await context.newPage();
+    await tabB.goto(`${BASE}/#/tableau/${id}`);
+    await tabB.waitForSelector('.canvas-item[data-id="item-1"]');
+    await tabB.route('**/api/boards/*/data', r => r.abort());
+    await tabB.locator('.canvas-item[data-id="item-1"]').first().focus();
+    await tabB.keyboard.press('Control+d');
+    await tabB.waitForFunction(i => JSON.parse(localStorage.getItem('tableau-accessible-distants') || '{"tableaux":[]}').tableaux.find(t => t.id === i)?.sortants === true, id, { timeout: 8000 });
+    // Un favori, rangé sur l'appareil seulement : la déconnexion pose la question, et la réponse est « sans les garder ».
+    await page.evaluate(async i => (await import('/js/store/boards.js')).toggleFavori(i), id);
+    await page.click('#btn-account');
+    await page.getByRole('button', { name: 'Se déconnecter' }).click();
+    await page.getByRole('button', { name: 'Me déconnecter sans les garder' }).click();
+    await gateShown(page);
+    await gateShown(tabB);
+    await tabB.waitForTimeout(1500);
+    const left = await tabB.evaluate(() => ({ mirror: localStorage.getItem('tableau-accessible-distants'), reserve: localStorage.getItem('tableau-accessible-boards') || '' }));
+    log('Déconnexion ailleurs, sans garder : le miroir vidé n’est pas réécrit', left.mirror === null, (left.mirror || '').slice(0, 120));
+    log('Déconnexion ailleurs, sans garder : rien n’est mis de côté', !left.reserve.includes('Pas gardé'));
+    log('Déconnexion ailleurs : message adapté', (await tabB.locator('.login-screen').textContent()).includes('déconnecté dans un autre onglet sans garder'));
+    await context.close();
+  }
+
+  // === Bandeau d'invitations apparu en cours d'usage : annoncé une fois ===
+  {
+    console.log('--- Invitation reçue en cours d’usage ---');
+    const owner = await signed('Ana');
+    const guest = await signed('Bruno');
+    await owner.page.goto(`${BASE}/#/`);
+    await owner.page.waitForSelector('#dashboard-title');
+    const g = guest.page;
+    await g.goto(`${BASE}/#/`);
+    await g.waitForSelector('#dashboard-title');
+    await g.evaluate(() => { window.heard = []; new MutationObserver(() => window.heard.push(document.getElementById('announcer').textContent)).observe(document.getElementById('announcer'), { childList: true, characterData: true, subtree: true }); });
+    const id = await createBoard(owner.page, 'Arrivée');
+    await owner.page.evaluate(async ([i, mail]) => fetch(`/api/boards/${i}/invites`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: mail, role: 'viewer' }) }), [id, guest.email]);
+    await g.evaluate(async () => (await import('/js/store/account.js')).refreshBoards());
+    await g.locator('#invites-section').waitFor();
+    await g.waitForTimeout(300);
+    const heard = await g.evaluate(() => window.heard.filter(t => t === '1 invitation en attente').length);
+    log('Bandeau apparu en cours d’usage : nombre annoncé une fois', heard === 1, `${heard} annonce(s)`);
     await owner.context.close();
     await guest.context.close();
   }

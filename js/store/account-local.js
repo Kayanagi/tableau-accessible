@@ -100,15 +100,26 @@ export function forget(id) {
   if (id === current) cache = null;
 }
 
-/* Ajoute à un compte, sans doublon, ce qui lui revient (espaces d'avant cette version, favoris d'un ancien miroir). */
+/*
+ * Ajoute à un compte, sans doublon, ce qui lui revient : espaces et modèles par identifiant, favoris, place d'un
+ * tableau (jamais écrasée), usage le plus récent d'un modèle. Seule déduplication de ces données : l'import
+ * (store/local-import.js) et la reprise d'anciennes données passent par ici. Lève si le stockage est plein.
+ */
+export function merge({ espaces = [], favoris = [], placement = {}, modèles = [], usage = {} } = {}, id = current) {
+  update(d => {
+    for (const s of espaces) if (!d.espaces.some(e => e.id === s.id)) d.espaces.push({ id: s.id, nom: s.nom });
+    for (const f of favoris) if (!d.favoris.includes(f)) d.favoris.push(f);
+    for (const [board, space] of Object.entries(placement)) if (space && !d.placement[board]) d.placement[board] = space;
+    for (const t of modèles) if (!d.modèles.some(m => m.id === t.id)) d.modèles.push(t);
+    for (const [template, at] of Object.entries(usage)) if (typeof at === 'number' && !(d.usage[template] >= at)) d.usage[template] = at;
+  }, id);
+}
+
+/* Reprise silencieuse (espaces d'avant cette version, favoris d'un ancien miroir) : l'échec est signalé par false. */
 export function adopt(id, { espaces = [], favoris = [], placement = {} } = {}) {
   if (!id || (!espaces.length && !favoris.length && !Object.keys(placement).length)) return true;
   try {
-    update(d => {
-      for (const s of espaces) if (!d.espaces.some(e => e.id === s.id)) d.espaces.push({ id: s.id, nom: s.nom });
-      for (const f of favoris) if (!d.favoris.includes(f)) d.favoris.push(f);
-      for (const [board, space] of Object.entries(placement)) if (space && !d.placement[board]) d.placement[board] = space;
-    }, id);
+    merge({ espaces, favoris, placement }, id);
     return true;
   } catch (e) {
     console.warn('Reprise impossible :', e);
@@ -190,9 +201,7 @@ export function templates() {
 }
 
 export function addTemplates(list) {
-  update(d => {
-    for (const t of list) if (!d.modèles.some(m => m.id === t.id)) d.modèles.push(t);
-  });
+  merge({ modèles: list });
 }
 
 export function setTemplates(list) {

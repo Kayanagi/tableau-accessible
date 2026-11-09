@@ -32,7 +32,7 @@ const runtime = new Map();
 
 function runtimeOf(id) {
   let rt = runtime.get(id);
-  if (!rt) { rt = { timer: null, firstEdit: 0, inflight: null, lastJson: null, sent: null, retry: 0, warned: false, blocked: false, addedAt: 0 }; runtime.set(id, rt); }
+  if (!rt) { rt = { timer: null, firstEdit: 0, inflight: null, lastJson: null, sent: null, retry: 0, warned: false, blocked: false, addedAt: 0, copying: null, copied: null }; runtime.set(id, rt); }
   return rt;
 }
 
@@ -101,9 +101,14 @@ function isForeign(disk) {
   return !mayReplaceOwner && !!disk.owner?.id && !!owner?.id && disk.owner.id !== owner.id;
 }
 
-/* Une version écrite par un autre onglet, plus avancée que la nôtre, ne doit pas être écrasée à notre sortie. */
+/*
+ * Une version écrite par un autre onglet, plus avancée que la nôtre, ne doit pas être écrasée à notre sortie.
+ * Exception : les sortants que cet onglet vient de mettre dans une copie (droit d'écrire retiré) ; la version du
+ * serveur doit les remplacer sur le disque aussi, sinon ils reviendraient au prochain chargement.
+ */
 function otherTabIsAhead(e, seen) {
   if (!seen || e.sortants) return false;
+  if (seen.sortants && runtime.get(e.id)?.copied != null && contentOf(seen.données) === runtime.get(e.id).copied) return false;
   return (seen.rev ?? 0) > (e.rev ?? 0) || (seen.rev === e.rev && !!seen.sortants);
 }
 
@@ -116,6 +121,8 @@ function otherTabIsAhead(e, seen) {
 function persistNow() {
   clearTimeout(persistTimer);
   persistTimer = null;
+  // Sans compte (après une déconnexion), rien n'est à nous : ne jamais réécrire un miroir vidé ou celui d'un autre.
+  if (!owner?.id) return false;
   if (!hasFlag() && !suspended) return false;
 
   const disk = readMirror();
@@ -335,11 +342,20 @@ export function resume() {
   suspended = false;
 }
 
-export function purge() {
+/*
+ * Oublie tout en mémoire sans toucher au disque : déconnexion décidée dans un autre onglet, qui a déjà vidé le miroir
+ * (ou dont un nouveau compte l'occupe déjà). Plus rien n'est écrit ni envoyé ensuite.
+ */
+export function discard() {
   for (const id of [...entries.keys()]) forget(id);
   clearTimeout(persistTimer);
   persistTimer = null;
   owner = null;
+  suspended = true;
+}
+
+export function purge() {
+  discard();
   try { localStorage.removeItem(MIRROR_KEY); } catch { /* déjà absent */ }
 }
 
@@ -663,7 +679,23 @@ export async function open(id) {
   }
   if (e?.sortants && e.données) {
     if (res.role === 'viewer') {
-      if (e.role !== 'viewer') { e.role = 'viewer'; emit({ type: 'role-lost', entry: e }); }
+      // Droit d'écrire retiré : le travail part dans une copie, et le tableau montre la version du serveur.
+      e.role = 'viewer';
+      let copy;
+      try {
+        copy = await copyUnsent(e, `${e.nom} (copie)`);
+      } catch (err) {
+        if (err.name !== 'ApiError') throw err;
+        if (err.code === 'unauthenticated') return { status: 'expired', entry: e };
+        // Nulle part où mettre le travail : il reste affiché, en lecture seule, et l'interface propose la copie.
+        schedulePersist();
+        emit({ type: 'role-lost', entry: e, error: err });
+        return { status: 'ok', entry: e };
+      }
+      await restoreServer(e, res);
+      persistNow();
+      emit({ type: 'role-lost', entry: e, copy });
+      if (!e.données) return { status: 'error', error: { message: 'La version à jour de ce tableau n’a pas pu être chargée.' } };
       return { status: 'ok', entry: e };
     }
     if (res.rev > e.rev) await onConflict(e, res);
@@ -758,9 +790,14 @@ export async function create(nom, données, extra = {}) {
   return decorate(entry);
 }
 
-/* Un tableau de la réserve envoyé sur le compte. La réserve n'est jamais touchée ici : l'en retirer demande un clic. */
-export async function upload(reserved) {
-  const res = await api.createBoard({ name: reserved.nom, icon: normalizeBoardIcon(reserved.icon), data: reserved.données || { name: reserved.nom, items: [] } });
+/*
+ * Un tableau de la réserve envoyé sur le compte. La réserve n'est jamais touchée ici : l'en retirer demande un clic.
+ * importKey : le serveur rend le tableau déjà créé avec cette clé (200, existing) au lieu d'en créer un second.
+ */
+export async function upload(reserved, { importKey } = {}) {
+  const fields = { name: reserved.nom, icon: normalizeBoardIcon(reserved.icon), data: reserved.données || { name: reserved.nom, items: [] } };
+  if (importKey) fields.importKey = importKey;
+  const res = await api.createBoard(fields);
   const entry = applyServer(res, { dernièreOuverture: reserved.dernièreOuverture || new Date().toISOString(), nbÉléments: res.board.items.length });
   organise(entry.id, reserved);
   persistNow();
@@ -768,16 +805,57 @@ export async function upload(reserved) {
 }
 
 /*
+ * Une seule copie à la fois par tableau, même si l'ouverture et l'alerte de perte de droit la demandent ensemble.
+ * Copie faite, le travail est en sûreté : il cesse aussitôt d'être « à envoyer », pour qu'aucun autre chemin
+ * (ouverture en cours, rechargement) n'en fasse une seconde avant que la version du serveur ne soit relue.
+ */
+function copyUnsent(e, nom) {
+  const rt = runtimeOf(e.id);
+  if (!rt.copying) {
+    const snapshot = e.données;
+    const content = contentOf(snapshot);
+    rt.copying = create(nom, snapshot, { icon: e.icon, espaceId: e.espaceId })
+      .then(copy => {
+        rt.copied = content;
+        if (e.données === snapshot) e.sortants = false;
+        return copy;
+      })
+      .finally(() => { rt.copying = null; });
+  }
+  return rt.copying;
+}
+
+/*
+ * Le travail est dans la copie : l'entrée reprend la version du serveur, en mémoire comme dans le miroir.
+ * Sans réponse du serveur, la copie locale n'est plus celle du tableau : elle est vidée et sera relue à l'ouverture.
+ */
+async function restoreServer(e, known = null) {
+  let res = known;
+  if (!res) {
+    try { res = await api.getBoard(e.id); }
+    catch (err) { if (err.name !== 'ApiError') throw err; }
+  }
+  e.sortants = false;
+  if (res && res.rev >= (e.rev ?? 0)) applyServer(res);
+  else {
+    if (e.données) e.nbÉléments = e.données.items?.length ?? 0;
+    e.données = null;
+  }
+  schedulePersist();
+}
+
+/*
  * « Garder une copie » : un nouveau tableau sur le compte, comme pour un conflit.
  * Accès perdu : l'entrée disparaît une fois la copie en sûreté.
- * Droit d'écriture retiré : le travail est dans la copie, la version du serveur reste celle du tableau.
+ * Droit d'écriture retiré : le travail est dans la copie, et l'entrée reprend la version du serveur.
  */
 export async function keepCopy(id) {
   const e = await ensureData(id);
   const lost = e.perdu;
-  const copy = await create(lost ? e.nom : `${e.nom} (copie)`, e.données, { icon: e.icon, espaceId: e.espaceId });
+  const unsent = e.sortants;
+  const copy = await copyUnsent(e, lost ? e.nom : `${e.nom} (copie)`);
   if (lost) forget(id);
-  else if (e.role === 'viewer') e.sortants = false;
+  else if (e.role === 'viewer' && unsent) await restoreServer(e);
   persistNow();
   return copy;
 }

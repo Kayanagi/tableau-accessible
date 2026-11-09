@@ -27,6 +27,7 @@ import { showNotice, clearNotice, clearAllNotices } from './ui/notice.js';
 import * as loginScreen from './views/login-screen.js';
 import { openLeaveDialog, openShareDialog } from './views/share-dialog.js';
 import * as localImport from './store/local-import.js';
+import { cleanupLegacy } from './store/account-local.js';
 
 const TOOL_BUTTONS = { 'btn-select': 'select', 'btn-hand': 'hand', 'btn-sticky': 'sticky_note', 'btn-shape': 'shape:rectangle', 'btn-line': 'line', 'btn-text': 'text', 'btn-card': 'card', 'btn-frame': 'frame' };
 const TOOL_KEYS = { v: 'select', h: 'hand', n: 'sticky_note', t: 'text', s: 'shape:rectangle', r: 'shape:rectangle', o: 'shape:circle', l: 'line', f: 'frame', p: 'pen', e: 'eraser', c: 'comment' };
@@ -145,7 +146,7 @@ async function promptImport() {
   const userId = account.getUser()?.id;
   if (!userId) return;
   importAsked = true;
-  localImport.cleanupLegacy();
+  cleanupLegacy();
   if (!localImport.shouldPrompt(userId)) return;
   const { openImportDialog } = await import('./views/import-dialog.js');
   // Après le rendu de la route, pour que le focus revienne au bon endroit à la fermeture.
@@ -178,9 +179,13 @@ function onAccountEvent(event) {
   } else if (type === 'expired') {
     // L'état affiché part à la fermeture : ce qui était en cours de saisie doit d'abord rejoindre le miroir.
     flushEditing();
-    lockNotice = event.otherTab
-      ? 'Cette session a pris fin dans un autre onglet. Reconnectez-vous : vos modifications non envoyées restent sur cet appareil.'
-      : 'Votre session a expiré. Reconnectez-vous : vos modifications non envoyées restent sur cet appareil.';
+    lockNotice = event.signedOut === 'removed'
+      ? 'Votre compte a été supprimé dans un autre onglet. Rien n’en a été gardé sur cet appareil.'
+      : event.signedOut
+        ? 'Vous vous êtes déconnecté dans un autre onglet sans garder vos données sur cet appareil : rien n’en a été gardé ici non plus.'
+        : event.otherTab
+          ? 'Cette session a pris fin dans un autre onglet. Reconnectez-vous : vos modifications non envoyées restent sur cet appareil.'
+          : 'Votre session a expiré. Reconnectez-vous : vos modifications non envoyées restent sur cet appareil.';
   } else if (type === 'signed-out') {
     returnHash = '/';
     lockNotice = null;
@@ -205,7 +210,7 @@ function onAccountEvent(event) {
     // Un texte en cours de saisie doit partir dans la copie, pas disparaître au rechargement.
     if (currentBoardId === entry.id) flushEditing();
   } else if (type === 'role-lost') {
-    onAccessLost(entry, `Vous ne pouvez plus modifier « ${entry.nom} » : il est passé en lecture seule.`);
+    onAccessLost(entry, `Vous ne pouvez plus modifier « ${entry.nom} » : il est passé en lecture seule.`, event);
   } else if (type === 'lost') {
     onAccessLost(entry, `Vous n’avez plus accès à « ${entry.nom} ».`);
   } else if (type === 'conflict') {
@@ -237,30 +242,51 @@ function reloadOpenBoard(entry) {
 /*
  * Droit d'écrire ou accès retiré : plus aucune modification possible, et le travail non envoyé part dans une copie
  * sur le compte, comme pour un conflit. Sans travail à sauver, la copie reste un choix.
+ * À l'ouverture, remote.open() a pu faire la copie lui-même (copy) ou échouer à la faire (error).
+ * Droit d'écrire retiré : la copie faite, le tableau d'origine affiche de nouveau la version du serveur.
  */
-async function onAccessLost(entry, reason) {
+async function onAccessLost(entry, reason, { copy = null, error = null } = {}) {
   const isOpen = currentBoardId === entry.id;
   if (isOpen) flushEditing();
   applyBoardAccess();
+  const keepAction = { label: 'Garder une copie', run: () => keepLostCopy(entry.id) };
+  if (copy) { reportCopy(entry, reason, copy); return; }
+  if (error) {
+    notify(`board-${entry.id}`, `${reason} ${error.message} Vos modifications restent sur cet appareil.`, { tone: 'error', actions: [keepAction] });
+    return;
+  }
   if (!entry.sortants || !entry.données) {
-    const actions = entry.perdu ? [{ label: 'Garder une copie', run: () => keepLostCopy(entry.id) }] : [];
-    notify(`board-${entry.id}`, reason, { tone: 'error', actions });
+    notify(`board-${entry.id}`, reason, { tone: 'error', actions: entry.perdu ? [keepAction] : [] });
     return;
   }
   try {
-    const copy = await boards.remoteStore().keepCopy(entry.id);
-    notify(`board-${entry.id}`, `${reason} Vos modifications sont gardées dans la copie « ${copy.nom} ».`, { tone: 'error', actions: [{ label: 'Ouvrir la copie', run: () => router.navigate(`/tableau/${copy.id}`) }] });
+    const made = await boards.remoteStore().keepCopy(entry.id);
+    reportCopy(entry, reason, made);
+    if (isOpen && currentBoardId === entry.id && !entry.perdu) showServerVersion(entry);
     dashboard.refresh();
   } catch (err) {
     if (err.name !== 'ApiError') throw err;
-    notify(`board-${entry.id}`, `${reason} ${err.message} Vos modifications restent sur cet appareil.`, { tone: 'error', actions: [{ label: 'Garder une copie', run: () => keepLostCopy(entry.id) }] });
+    notify(`board-${entry.id}`, `${reason} ${err.message} Vos modifications restent sur cet appareil.`, { tone: 'error', actions: [keepAction] });
   }
+}
+
+function reportCopy(entry, reason, copy) {
+  notify(`board-${entry.id}`, `${reason} Vos modifications sont gardées dans la copie « ${copy.nom} ».`, { tone: 'error', actions: [{ label: 'Ouvrir la copie', run: () => router.navigate(`/tableau/${copy.id}`) }] });
+}
+
+/* Le tableau ouvert affichait le travail mis dans la copie : la version du serveur le remplace, ou il est relu. */
+function showServerVersion(entry) {
+  if (entry.données) reloadOpenBoard(entry);
+  else showBoard(entry.id).catch(err => console.error(err));
 }
 
 async function keepLostCopy(id) {
   try {
+    const entry = boards.remoteStore().get(id);
     const copy = await boards.remoteStore().keepCopy(id);
     announcer.announce(`Copie créée : ${copy.nom}`);
+    // Droit d'écriture retiré : le tableau reste, avec la version du serveur ; la copie s'ouvre à sa place.
+    if (entry && !entry.perdu) clearNotice(`board-${id}`);
     router.navigate(`/tableau/${copy.id}`);
   } catch (err) {
     if (err.name !== 'ApiError') throw err;

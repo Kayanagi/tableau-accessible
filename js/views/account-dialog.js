@@ -149,17 +149,19 @@ export function openAccountDialog({ onClose } = {}) {
     await logoutNow(message);
   }
 
-  async function logoutNow(message, { keepLocal = false } = {}) {
+  /* Rend false si le serveur a refusé : la session reste ouverte, le message le dit. */
+  async function logoutNow(message, { keepLocal = false, discarded = false } = {}) {
     try {
       await api.logout();
     } catch (err) {
       if (err.name !== 'ApiError') throw err;
       if (err.status !== 401) {
         focusMessage(message, err.message);
-        return;
+        return false;
       }
     }
-    clearSessionAndClose('Vous êtes déconnecté.', { keepLocal });
+    clearSessionAndClose('Vous êtes déconnecté.', { keepLocal, discarded });
+    return true;
   }
 
   /*
@@ -197,20 +199,37 @@ export function openAccountDialog({ onClose } = {}) {
       const message = formMessage();
       const actions = document.createElement('div');
       actions.className = 'dialog-actions';
+      // Une seule opération à la fois : des clics répétés ne mettent pas plusieurs copies de côté.
+      let busy = false;
+      const once = run => async () => {
+        if (busy) return;
+        busy = true;
+        actions.setAttribute('aria-busy', 'true');
+        try { await run(); }
+        finally { busy = false; actions.removeAttribute('aria-busy'); }
+      };
       actions.append(
-        button('Les garder sur cet appareil et me déconnecter', async () => {
+        button('Les garder sur cet appareil et me déconnecter', once(async () => {
           // Le serveur n'a pas pu les recevoir : elles attendent ici et vous seront proposées à l'import à votre retour.
+          // Tout ou rien : si un tableau ne tient pas, ou si la déconnexion échoue, les réserves déjà posées sont retirées.
           const remote = boards.remoteStore();
+          const kept = [];
+          const undo = () => kept.forEach(b => boards.removeFromReserve(b.id));
           for (const e of waiting) {
-            if (!remote.keepOnDevice(e.id)) {
-              focusMessage(message, 'Stockage plein : ces modifications n’ont pas pu être gardées. Vous restez connecté.');
+            const saved = remote.keepOnDevice(e.id);
+            if (!saved) {
+              undo();
+              focusMessage(message, 'Stockage plein : ces modifications n’ont pas pu être gardées. Rien n’a été mis de côté et vous restez connecté.');
               return;
             }
+            kept.push(saved);
           }
-          await logoutNow(message, { keepLocal: true });
-        }, 'btn-primary'),
-        button('Me déconnecter sans les garder', () => logoutNow(message), 'btn-danger'),
-        button('Annuler', () => showAccount('logout'))
+          let done = false;
+          try { done = await logoutNow(message, { keepLocal: true }); }
+          finally { if (!done) undo(); }
+        }), 'btn-primary'),
+        button('Me déconnecter sans les garder', once(() => logoutNow(message, { discarded: true })), 'btn-danger'),
+        button('Annuler', () => { if (!busy) showAccount('logout'); })
       );
       root.append(...parts, message, actions);
       // Le focus part sur le titre, puis Tab mène aux boutons : l'avertissement serait sauté.
@@ -249,7 +268,7 @@ export function openAccountDialog({ onClose } = {}) {
       warning.className = 'account-warning';
       warning.id = `account-warning-${++nextWarning}`;
       const intro = document.createElement('p');
-      intro.textContent = `Cette suppression est définitive. Votre compte et ${owned.length === 0 ? 'vos données seront effacés' : owned.length === 1 ? 'votre tableau enregistré sur le compte seront effacés' : `vos ${owned.length} tableaux enregistrés sur le compte seront effacés`}. Vos espaces, favoris et modèles enregistrés sur cet appareil le seront aussi. Les tableaux d’avant les comptes restés sur cet appareil ne sont pas touchés.`;
+      intro.textContent = `Cette suppression est définitive. Votre compte et ${owned.length === 0 ? 'vos données seront effacés' : owned.length === 1 ? 'votre tableau enregistré sur le compte seront effacés' : `vos ${owned.length} tableaux enregistrés sur le compte seront effacés`}. Vos espaces, favoris et modèles enregistrés sur cet appareil le seront aussi. Les tableaux d’avant les comptes restés sur cet appareil y restent : ceux que vous aviez importés seront de nouveau proposés à l’import, ou à la suppression de cet appareil.`;
       warning.append(intro);
       if (shared.length) {
         const p = document.createElement('p');

@@ -29,7 +29,10 @@ export function openImportDialog() {
 
   const pendingIds = () => [...localImport.importable(userId), ...localImport.importableSpaces(), ...localImport.importableTemplates()].map(x => x.id);
   // Fermer sans importer vaut « Plus tard » : le dialogue ne revient pas de lui-même, il reste dans « Mon compte ».
-  el.addEventListener('close', () => { localImport.markLater(pendingIds()); });
+  // Pas une fermeture due à la fin de session (écran de connexion) : personne n'a répondu, la question reviendra.
+  el.addEventListener('close', () => {
+    if (account.getStatus() === 'signed-in' && account.getUser()?.id === userId) localImport.markLater(pendingIds());
+  });
   el.addEventListener('cancel', e => { if (busy) e.preventDefault(); });
 
   function deleteButton(board, after) {
@@ -80,7 +83,7 @@ export function openImportDialog() {
     return fieldset;
   }
 
-  /* status : message de réussite à afficher en tête (après une suppression), lu par les lecteurs d'écran. */
+  /* status : message de réussite à afficher en tête (après une suppression), lu une fois, par l'annonceur. */
   function showChoice({ status = null } = {}) {
     heading.textContent = 'Importer vos tableaux de cet appareil';
     body.replaceChildren();
@@ -88,9 +91,9 @@ export function openImportDialog() {
     const message = formMessage();
     body.append(message);
     if (status) {
+      // Pas de role="status" : inséré déjà rempli, il ne serait pas lu de façon fiable, et l'annonceur le lit déjà.
       const done = document.createElement('p');
-      done.setAttribute('role', 'status');
-      done.className = 'account-message is-success';
+      done.className = 'account-message is-success import-status';
       done.textContent = status;
       body.prepend(done);
     }
@@ -100,7 +103,7 @@ export function openImportDialog() {
       body.append(p);
     } else {
       const form = document.createElement('form');
-      if (offer.board.length) form.append(group('Tableaux à importer dans votre compte', 'board', offer.board, b => `${b.nom} (${objectsLabel(localImport.countItems(b))})`));
+      if (offer.board.length) form.append(group('Tableaux à importer dans votre compte', 'board', offer.board, b => `${b.nom} (${objectsLabel(localImport.itemCount(b))})`));
       if (offer.space.length) form.append(group('Espaces à importer dans votre compte', 'space', offer.space, s => s.nom));
       if (offer.template.length) form.append(group('Modèles à importer dans « Mes modèles »', 'template', offer.template, t => t.nom));
       const hint = document.createElement('p');
@@ -134,7 +137,7 @@ export function openImportDialog() {
           focusMessage(message, 'Cochez au moins un élément, ou choisissez « Plus tard ».');
           return;
         }
-        run(sel).catch(err => console.error(err));
+        run(sel);
       });
       body.append(form);
     }
@@ -174,40 +177,61 @@ export function openImportDialog() {
 
   async function run(sel) {
     busy = true;
-    // Le bouton « Importer » va disparaître : le focus attend sur le titre plutôt que de retomber sur la page.
-    heading.focus();
+    try {
+      // Le bouton « Importer » va disparaître : le focus attend sur le titre plutôt que de retomber sur la page.
+      heading.focus();
+      body.replaceChildren();
+      const progress = document.createElement('p');
+      progress.setAttribute('role', 'status');
+      body.append(progress);
+      const results = [];
+      // Espaces et modèles d'abord : ils restent sur l'appareil, et les tableaux importés retrouvent leur espace.
+      for (const [kind, list, fn] of [['space', sel.space, localImport.importSpaces], ['template', sel.template, localImport.importTemplates]]) {
+        if (!list.length) continue;
+        try {
+          fn(list);
+          list.forEach(x => results.push({ kind, nom: x.nom, ok: true }));
+        } catch (err) {
+          console.warn(err);
+          list.forEach(x => results.push({ kind, nom: x.nom, ok: false, reason: FULL }));
+        }
+      }
+      for (const [index, board] of sel.board.entries()) {
+        progress.textContent = `Import de ${board.nom} (${index + 1} sur ${sel.board.length})…`;
+        try {
+          const { skipped } = await localImport.importBoard(board, userId);
+          results.push({ kind: 'board', nom: board.nom, board, ok: true, skipped });
+        } catch (err) {
+          if (err.name !== 'ApiError') throw err;
+          results.push({ kind: 'board', nom: board.nom, board, ok: false, reason: err.message });
+          // Session perdue : l'écran de connexion prend la place, le reste attendra.
+          if (err.code === 'unauthenticated') break;
+        }
+      }
+      if (!el.open) return;
+      await account.refreshBoards();
+      if (el.open) showResults(results);
+    } catch (err) {
+      console.error(err);
+      if (el.open) showFailure();
+    } finally {
+      busy = false;
+    }
+  }
+
+  /* Erreur inattendue : rien n'est retiré de l'appareil, le dialogue reste fermable et la liste peut être reprise. */
+  function showFailure() {
+    heading.textContent = 'Import interrompu';
     body.replaceChildren();
-    const progress = document.createElement('p');
-    progress.setAttribute('role', 'status');
-    body.append(progress);
-    const results = [];
-    // Espaces et modèles d'abord : ils restent sur l'appareil, et les tableaux importés retrouvent leur espace.
-    for (const [kind, list, fn] of [['space', sel.space, localImport.importSpaces], ['template', sel.template, localImport.importTemplates]]) {
-      if (!list.length) continue;
-      try {
-        fn(list);
-        list.forEach(x => results.push({ kind, nom: x.nom, ok: true }));
-      } catch (err) {
-        console.warn(err);
-        list.forEach(x => results.push({ kind, nom: x.nom, ok: false, reason: FULL }));
-      }
-    }
-    for (const [index, board] of sel.board.entries()) {
-      progress.textContent = `Import de ${board.nom} (${index + 1} sur ${sel.board.length})…`;
-      try {
-        const { skipped } = await localImport.importBoard(board, userId);
-        results.push({ kind: 'board', nom: board.nom, board, ok: true, skipped });
-      } catch (err) {
-        if (err.name !== 'ApiError') throw err;
-        results.push({ kind: 'board', nom: board.nom, board, ok: false, reason: err.message });
-        // Session perdue : l'écran de connexion prend la place, le reste attendra.
-        if (err.code === 'unauthenticated') break;
-      }
-    }
-    busy = false;
-    if (!el.open) return;
-    await account.refreshBoards();
-    showResults(results);
+    const p = document.createElement('p');
+    p.className = 'account-message is-error';
+    p.textContent = 'Une erreur inattendue a interrompu l’import. Rien n’a été supprimé de cet appareil ; les tableaux déjà importés restent dans votre compte.';
+    const actions = document.createElement('div');
+    actions.className = 'dialog-actions';
+    actions.append(button('Revenir à la liste', () => showChoice(), 'btn-primary'), button('Fermer', () => el.close()));
+    body.append(p, actions);
+    heading.focus();
+    announce(p.textContent);
   }
 
   function summaryOf(results) {
@@ -225,8 +249,9 @@ export function openImportDialog() {
   function showResults(results) {
     heading.textContent = 'Résultat de l’import';
     body.replaceChildren();
+    // Lu par l'annonceur seulement : un role="status" inséré déjà rempli le ferait lire deux fois, ou pas du tout.
     const summary = document.createElement('p');
-    summary.setAttribute('role', 'status');
+    summary.className = 'import-summary';
     summary.textContent = summaryOf(results);
     const ul = document.createElement('ul');
     ul.className = 'import-list import-results';

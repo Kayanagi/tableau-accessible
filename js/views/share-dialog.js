@@ -161,7 +161,10 @@ export function openShareDialog(board) {
   return el;
 }
 
-/* Quitter un tableau partagé : ce qui reste à envoyer part d'abord ; une copie est proposée si l'envoi échoue. */
+/*
+ * Quitter un tableau partagé : ce qui reste à envoyer part d'abord. Si l'envoi échoue, le travail non envoyé est mis
+ * dans une copie sur le compte avant de quitter ; si la copie elle-même échoue, on ne quitte pas, et on le dit.
+ */
 export function openLeaveDialog(board, onLeft) {
   const el = dialog(`Quitter « ${board.nom} » ?`, d => {
     d.classList.add('account-dialog');
@@ -176,6 +179,8 @@ export function openLeaveDialog(board, onLeft) {
     const actions = document.createElement('div');
     actions.className = 'dialog-actions';
     let busy = false;
+    // Gardée d'un essai à l'autre : un second clic après un échec de sortie ne refait pas de copie.
+    let copy = null;
     actions.append(
       button('Quitter le tableau', async () => {
         if (busy) return;
@@ -183,16 +188,26 @@ export function openLeaveDialog(board, onLeft) {
         const remote = boards.remoteStore();
         try {
           await remote.flush(board.id);
+          // flush() ne lève pas : un envoi refusé ou impossible laisse des sortants, qui partiraient avec le tableau.
+          const left = remote.get(board.id);
+          if (!copy && left?.sortants && left.données) copy = await remote.keepCopy(board.id);
+        } catch (err) {
+          if (err.name !== 'ApiError') throw err;
+          focusMessage(message, `Vos modifications non envoyées n’ont pas pu être mises à l’abri : ${err.message} Vous n’avez pas quitté le tableau ; réessayez quand l’envoi sera possible.`);
+          busy = false;
+          return;
+        }
+        try {
           await api.removeMember(board.id, account.getUser().id);
         } catch (err) {
           if (err.name !== 'ApiError') throw err;
-          focusMessage(message, err.message);
+          focusMessage(message, copy ? `${err.message} Vos modifications sont déjà gardées dans la copie « ${copy.nom} ».` : err.message);
           busy = false;
           return;
         }
         remote.drop(board.id);
         d.close();
-        announce(`Vous avez quitté ${board.nom}`);
+        announce(copy ? `Vous avez quitté ${board.nom}. Vos modifications non envoyées sont gardées dans la copie « ${copy.nom} ».` : `Vous avez quitté ${board.nom}`);
         onLeft?.();
       }, 'btn-danger'),
       button('Annuler', () => d.close())

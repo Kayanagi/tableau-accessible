@@ -12,8 +12,16 @@
  */
 import * as boards from './boards.js';
 import * as local from './account-local.js';
+import { forgetAccount } from './local-import.js';
 
 export const SESSION_FLAG = 'tableau-accessible-compte';
+/*
+ * Laissé par une déconnexion ou une suppression voulue, juste avant de retirer l'indicateur : les autres onglets du
+ * même compte y lisent si rien ne devait rester (« sans les garder », compte supprimé) au lieu de croire à une
+ * session expirée. Sans ce choix explicite, ils gardent leur travail non envoyé, comme à une expiration.
+ */
+export const SIGNED_OUT_KEY = 'tableau-accessible-deconnexion';
+const SIGNED_OUT_FRESH = 30 * 1000;
 
 let api = null;
 let remote = null;
@@ -121,8 +129,39 @@ function onReachability(isReachable) {
 /* L'indicateur est partagé entre onglets : celui qui ne l'a pas retiré doit aussi cesser d'écrire, et suivre une connexion. */
 function onStorage(event) {
   if (event.key !== SESSION_FLAG && event.key !== null) return;
-  if (!hasSession()) expire({ otherTab: true });
-  else if (!remote || remote.isSuspended()) start();
+  if (!hasSession()) {
+    const ended = signedOutElsewhere();
+    if (ended?.discard) endedElsewhere(ended);
+    else expire({ otherTab: true });
+  } else if (!remote || remote.isSuspended()) start();
+}
+
+/* La déconnexion voulue, toute récente, du compte de cet onglet ; null sinon (expiration, autre compte). */
+function signedOutElsewhere() {
+  const id = user?.id || remote?.getOwner()?.id;
+  if (!id) return null;
+  try {
+    const ended = JSON.parse(localStorage.getItem(SIGNED_OUT_KEY) || 'null');
+    return ended?.id === id && Math.abs(Date.now() - ended.at) < SIGNED_OUT_FRESH ? ended : null;
+  } catch {
+    return null;
+  }
+}
+
+/*
+ * « Me déconnecter sans les garder » ou suppression du compte, dans un autre onglet : ce choix vaut ici aussi.
+ * Le miroir qu'il a vidé n'est pas réécrit et le travail non envoyé de cet onglet n'est pas gardé.
+ */
+function endedElsewhere({ removed = false } = {}) {
+  if (!remote || remote.isSuspended()) return;
+  emit({ type: 'expired', otherTab: true, signedOut: removed ? 'removed' : 'discarded' });
+  remote.discard();
+  boards.detachRemote();
+  remote = null;
+  setUser(null);
+  invites = [];
+  status = 'signed-out';
+  changed();
 }
 
 async function enter(account, nextStatus = 'signed-in') {
@@ -247,11 +286,19 @@ function expire({ keepFlag = false, otherTab = false, silent = false } = {}) {
  * Déconnexion ou suppression du compte : le miroir est purgé. Les espaces, favoris et modèles du compte, qui
  * n'existent que sur cet appareil, ne restent que si leur propriétaire l'a choisi (keepLocal).
  * removed : le compte n'existe plus, le travail mis de côté pour lui sur l'appareil part aussi.
+ * discarded : « Me déconnecter sans les garder » a été choisi ; les autres onglets du compte n'en gardent rien non plus.
  */
-export function signedOut({ keepLocal = false, removed = false } = {}) {
+export function signedOut({ keepLocal = false, removed = false, discarded = false } = {}) {
   const id = user?.id || remote?.getOwner()?.id || null;
+  if (id) {
+    try { localStorage.setItem(SIGNED_OUT_KEY, JSON.stringify({ id, discard: removed || discarded, removed, at: Date.now() })); }
+    catch { /* stockage plein : les autres onglets se croiront expirés et garderont leur travail */ }
+  }
   if (id && (!keepLocal || removed)) local.forget(id);
-  if (id && removed) boards.removeReservedFor(id);
+  if (id && removed) {
+    boards.removeReservedFor(id);
+    forgetAccount(id);
+  }
   remote?.purge();
   boards.detachRemote();
   remote = null;
