@@ -102,5 +102,7 @@ button:hover { background: var(--surface); }
 .account-message.is-success { border-left-color: var(--primary); }
 .account-intro { margin: 0 0 .75rem; }
 .account-switch { margin-top: .75rem; overflow-wrap: anywhere; }
+/* Liens seuls sur leur ligne (reinitialiser.html) : la hauteur de ligne entière, 24 px, devient la cible. */
+.account-switch a { display: inline-block; }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .25rem; }
 .login-retry { margin-bottom: .75rem; }

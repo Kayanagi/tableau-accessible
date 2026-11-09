@@ -101,14 +101,14 @@ export function registerAuthRoutes(router, app) {
   /*
    * Mot de passe oublié : 202 {} identique avec ou sans compte, y compris au-delà des débits, qui
    * ne font que supprimer l'envoi. Recherche du compte et envoi partent après la réponse.
-   * Débits comptés que le compte existe ou non ; l'adresse n'est gardée en mémoire que hachée.
+   * Les débits par préfixe IP et par adresse sont comptés avec ou sans compte ; le plafond global
+   * est appliqué seulement aux envois vers un compte existant, dans la tâche différée.
    */
   router.add('POST', '/api/auth/password-reset', ctx => {
     const email = normalizeEmail(ctx.body.email);
     if (!isValidEmail(email)) throw invalid('invalid_email', 'Adresse e-mail invalide.');
     const over = limiter.hit('reset-ip', ctx.ipKey, 10, HOUR) ? 'préfixe IP'
-      : limiter.hit('reset-email', hashToken(email).toString('hex'), 3, HOUR) ? 'adresse'
-        : limiter.hit('reset-all', '*', 50, HOUR) ? 'total' : null;
+      : limiter.hit('reset-email', hashToken(email).toString('hex'), 3, HOUR) ? 'adresse' : null;
     if (over) console.warn(`[baro] réinitialisation : débit atteint (${over}), aucun envoi`);
     else passwordResets.request(email);
     return { status: 202, body: {} };

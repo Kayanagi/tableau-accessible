@@ -10,7 +10,7 @@ const MIN = 60 * 1000;
 export const ACCOUNT_DATA_BODY = 2.5 * 1024 * 1024;
 
 export function registerMeRoutes(router, app) {
-  const { db, passwords, sessions, limiter, config } = app;
+  const { db, passwords, sessions, limiter, config, passwordResets } = app;
   const userById = db.prepare('SELECT * FROM users WHERE id = ?');
   const rename = db.prepare('UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?');
   const setHash = db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?');
@@ -72,6 +72,7 @@ export function registerMeRoutes(router, app) {
     const token = db.transaction(() => {
       setHash.run(hash, Date.now(), ctx.session.userId);
       sessions.destroyAll(ctx.session.userId);
+      passwordResets.revokeAll(ctx.session.userId);
       return sessions.create(ctx.session.userId);
     })();
     return { status: 204, headers: { 'Set-Cookie': sessions.setCookie(token) } };

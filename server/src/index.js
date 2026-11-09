@@ -20,15 +20,16 @@ const HOUR = 60 * MINUTE;
 /* `send` : l'expéditeur des e-mails de réinitialisation, injectable pour les tests. */
 export function createApp(config, { send = createMailer(config).send } = {}) {
   const db = openDb(config.dbPath);
+  const limiter = createRateLimiter();
   const expiredInvites = db.prepare('DELETE FROM board_invites WHERE expires_at <= ?');
   const app = {
     config,
     db,
     passwords: createPasswords(config.scrypt),
     sessions: createSessions(db, config),
-    limiter: createRateLimiter(),
+    limiter,
     purgeExpiredInvites: () => expiredInvites.run(Date.now()).changes,
-    passwordResets: createPasswordResets({ db, send, publicUrl: config.publicUrl }),
+    passwordResets: createPasswordResets({ db, send, publicUrl: config.publicUrl, limiter }),
     /* Les limites IP de route sont appliquées avant toute lecture du corps. */
     prepare(ctx, options) {
       if (options.ipRate) {

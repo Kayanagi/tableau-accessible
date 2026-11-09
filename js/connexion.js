@@ -121,7 +121,8 @@ function makeForm({ fields, submitLabel, busyMessage, validate, send, done, anno
     submit.setAttribute('aria-disabled', 'true');
     announce(busyMessage);
     try {
-      await done(await send(values));
+      // Réponse reçue : l'annonce « en cours » qui n'a pas encore été lue est retirée, sinon elle passerait après le résultat.
+      await done(await Promise.resolve(send(values)).finally(() => announce('')));
     } catch (err) {
       if (!err || typeof err.message !== 'string') throw err;
       const fieldName = FIELD_OF_CODE[err.code] || err.path;
@@ -299,7 +300,13 @@ function startPage() {
   if (forgot) history.replaceState(null, '', location.pathname + location.search);
 
   const region = document.getElementById('announcer');
-  const announce = text => { region.textContent = ''; setTimeout(() => { region.textContent = text; }, 50); };
+  // Une annonce remplace celle qui attend encore ; announce('') fait taire la dernière.
+  let pending = 0;
+  const announce = text => {
+    clearTimeout(pending);
+    region.textContent = '';
+    if (text) pending = setTimeout(() => { region.textContent = text; }, 50);
+  };
   const title = document.getElementById('login-title');
   // nginx sert cette page à la place de l'adresse demandée : recharger y mène, hash compris. Ouverte directement, elle renvoie à l'accueil.
   const enter = () => {

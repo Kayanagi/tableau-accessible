@@ -377,6 +377,27 @@ describe('API d’authentification', () => {
     assert.equal((await s.call('POST', '/api/auth/login', { body: { email, password: next } })).status, 200);
   });
 
+  it('invalide les jetons de réinitialisation lors du changement depuis Mon compte', async () => {
+    const user = await s.signUp();
+    s.app.passwordResets.request(user.email);
+    await s.settle();
+    const token = /#jeton=([\w-]{43})/.exec(s.sent.at(-1).text)?.[1];
+    assert.ok(token);
+    assert.equal(s.app.passwordResets.check(token), user.id);
+
+    const changed = await s.call('POST', '/api/me/password', {
+      cookie: user.token,
+      body: { oldPassword: PASSWORD, newPassword: 'nouveau mot de passe long' }
+    });
+    assert.equal(changed.status, 204);
+    const confirm = await s.call('POST', '/api/auth/password-reset/confirm', {
+      body: { token, password: 'encore un mot de passe neuf' }
+    });
+    assert.equal(confirm.status, 400);
+    assert.equal(confirm.body.code, 'invalid_token');
+    assert.equal(s.app.db.prepare('SELECT COUNT(*) AS n FROM password_resets WHERE user_id = ?').get(user.id).n, 0);
+  });
+
   it('renomme le compte, sans toucher à l’e-mail', async () => {
     const { token, email } = await s.signUp();
     const res = await s.call('PATCH', '/api/me', { cookie: token, body: { displayName: 'Élodie', email: 'autre@exemple.test' } });

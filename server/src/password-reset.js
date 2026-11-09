@@ -1,7 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { hashToken } from './auth.js';
+import { createRateLimiter } from './rate-limit.js';
 
 const HOUR = 3600 * 1000;
+const GLOBAL_SEND_LIMIT = 200;
 export const RESET_TTL = HOUR;
 const TOKEN_FORMAT = /^[\w-]{43}$/;
 
@@ -31,7 +33,7 @@ Baro
  * et durée soient les mêmes avec ou sans compte. Seul le haché SHA-256 du jeton est gardé en base.
  * Les journaux ne portent jamais l'adresse ni le jeton.
  */
-export function createPasswordResets({ db, send, publicUrl, now = Date.now, log = console }) {
+export function createPasswordResets({ db, send, publicUrl, now = Date.now, limiter = createRateLimiter(now), log = console }) {
   const queries = {
     findUser: db.prepare('SELECT id, email FROM users WHERE email = ?'),
     dropUnused: db.prepare('DELETE FROM password_resets WHERE user_id = ? AND used_at IS NULL'),
@@ -39,6 +41,7 @@ export function createPasswordResets({ db, send, publicUrl, now = Date.now, log 
     find: db.prepare('SELECT user_id AS userId FROM password_resets WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?'),
     markUsed: db.prepare('UPDATE password_resets SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?'),
     dropOthers: db.prepare('DELETE FROM password_resets WHERE user_id = ? AND token_hash <> ?'),
+    revokeAll: db.prepare('DELETE FROM password_resets WHERE user_id = ?'),
     setHash: db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?'),
     removeSessions: db.prepare('DELETE FROM sessions WHERE user_id = ?'),
     purge: db.prepare('DELETE FROM password_resets WHERE expires_at <= ?')
@@ -57,6 +60,10 @@ export function createPasswordResets({ db, send, publicUrl, now = Date.now, log 
   async function deliver(email) {
     const user = queries.findUser.get(email);
     if (!user) return;
+    if (limiter?.hit('reset-all', '*', GLOBAL_SEND_LIMIT, HOUR)) {
+      log.warn('[baro] ALERTE réinitialisation : plafond global de 200 envois par heure atteint');
+      return;
+    }
     const token = issue(user.id);
     const link = `${publicUrl}/reinitialiser.html#jeton=${token}`;
     let ok = false;
@@ -96,6 +103,7 @@ export function createPasswordResets({ db, send, publicUrl, now = Date.now, log 
     request,
     check,
     consume,
+    revokeAll: userId => queries.revokeAll.run(userId).changes,
     purgeExpired: () => queries.purge.run(now()).changes,
     /* Pour les tests et l'arrêt : attend la fin des envois en cours. */
     idle: async () => { while (pending.size) await Promise.allSettled([...pending]); }

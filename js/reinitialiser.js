@@ -23,7 +23,13 @@ function readToken() {
 const title = document.getElementById('reset-title');
 const body = document.getElementById('reset-body');
 const region = document.getElementById('announcer');
-const announce = text => { region.textContent = ''; setTimeout(() => { region.textContent = text; }, 50); };
+// Une annonce remplace celle qui attend encore ; announce('') fait taire la dernière.
+let pending = 0;
+const announce = text => {
+  clearTimeout(pending);
+  region.textContent = '';
+  if (text) pending = setTimeout(() => { region.textContent = text; }, 50);
+};
 
 // Même choix de thème que l'application, sans dépendre de ses modules.
 try {
@@ -193,7 +199,8 @@ function showForm() {
     submit.setAttribute('aria-disabled', 'true');
     announce('Enregistrement du mot de passe…');
     try {
-      await post('/auth/password-reset/confirm', { token, password: values.password });
+      // Réponse reçue : l'annonce « en cours » qui n'a pas encore été lue est retirée, sinon elle passerait après le résultat.
+      await post('/auth/password-reset/confirm', { token, password: values.password }).finally(() => announce(''));
       showDone();
     } catch (err) {
       if (!err || typeof err.message !== 'string') throw err;

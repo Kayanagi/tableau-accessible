@@ -10,6 +10,7 @@ import { hashToken } from '../src/auth.js';
 import { MIGRATIONS } from '../src/migrations.js';
 import { createMailCapture, createMailer } from '../src/mail.js';
 import { RESET_SUBJECT, createPasswordResets } from '../src/password-reset.js';
+import { createRateLimiter } from '../src/rate-limit.js';
 import { PASSWORD, nextIp, startServer, sticky, tokenFrom } from './helpers.js';
 
 const NEW_PASSWORD = 'un tout nouveau secret';
@@ -203,18 +204,63 @@ describe('Mot de passe oublié', () => {
 });
 
 describe('Mot de passe oublié : débit total et envoi différé', () => {
-  it('au-delà de 50 demandes par heure en tout, n’envoie plus rien', async () => {
+  it('les adresses inventées n’épuisent pas le plafond global', async () => {
     const s = await startServer();
     try {
       const user = await s.signUp();
-      for (let i = 0; i < 50; i++) await s.call('POST', '/api/auth/password-reset', { body: { email: `total${i}@exemple.test` } });
+      for (let i = 0; i < 250; i++) s.app.passwordResets.request(`inventee${i}@exemple.test`);
+      await s.settle();
       const res = await s.call('POST', '/api/auth/password-reset', { body: { email: user.email } });
       await s.settle();
       assert.equal(res.status, 202);
       assert.deepEqual(res.body, {});
-      assert.equal(s.sent.length, 0);
+      assert.equal(s.sent.length, 1);
     } finally {
       await s.close();
+    }
+  });
+
+  it('plafonne à 200 les envois réels et conserve la réponse 202 au-delà', async () => {
+    const s = await startServer();
+    try {
+      const user = await s.signUp();
+      for (let i = 0; i < 200; i++) s.app.passwordResets.request(user.email);
+      await s.settle();
+      assert.equal(s.sent.length, 200);
+      const res = await s.call('POST', '/api/auth/password-reset', { body: { email: user.email } });
+      await s.settle();
+      assert.equal(res.status, 202);
+      assert.deepEqual(res.body, {});
+      assert.equal(s.sent.length, 200);
+    } finally {
+      await s.close();
+    }
+  });
+
+  it('journalise une alerte sans adresse quand le plafond global est atteint', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'baro-reset-limit-'));
+    const db = openDb(join(dir, 'baro.db'));
+    try {
+      const email = 'plafond@exemple.test';
+      db.prepare("INSERT INTO users (id, email, display_name, password_hash, created_at, updated_at) VALUES ('u_limit', ?, 'N', 'x', 1, 1)").run(email);
+      const lines = [];
+      let sent = 0;
+      const resets = createPasswordResets({
+        db,
+        publicUrl: 'https://baro.dwes.fr',
+        limiter: createRateLimiter(),
+        log: { warn: line => lines.push(line), error: line => lines.push(line) },
+        send: async () => { sent++; return true; }
+      });
+      for (let i = 0; i < 201; i++) resets.request(email);
+      await resets.idle();
+      assert.equal(sent, 200);
+      assert.equal(lines.length, 1);
+      assert.match(lines[0], /ALERTE.*200 envois/);
+      assert.ok(!lines[0].includes(email) && !lines[0].includes('u_limit'));
+    } finally {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 
