@@ -50,10 +50,10 @@ function makeField({ name, label, type = 'text', autocomplete, hint }) {
     described.push(p.id);
     input.setAttribute('aria-describedby', p.id);
   }
+  // Pas de role="alert" : le focus va au champ, qui lit l'erreur par aria-describedby. Une alerte en plus la ferait lire deux fois.
   const error = document.createElement('p');
   error.id = `${id}-error`;
   error.className = 'field-error';
-  error.setAttribute('role', 'alert');
   error.hidden = true;
   wrap.append(error);
   return { wrap, input, error, described, name };
@@ -69,8 +69,9 @@ function setFieldError(field, message) {
   else field.input.removeAttribute('aria-describedby');
 }
 
-function setMessage(p, message) {
-  if (message) p.setAttribute('role', 'alert');
+/* focused : le message reçoit le focus, qui le fait lire ; une alerte en plus le ferait lire deux fois. */
+function setMessage(p, message, focused = false) {
+  if (message && !focused) p.setAttribute('role', 'alert');
   else p.removeAttribute('role');
   p.textContent = message || '';
   p.hidden = !message;
@@ -99,10 +100,12 @@ function makeForm({ fields, submitLabel, busyMessage, validate, send, done, anno
   form.append(message, required, ...fields.map(f => f.wrap), actions);
 
   let busy = false;
+  // Le focus lit l'erreur du champ ; s'il y est déjà (Entrée dans le champ), rien ne bouge : l'erreur est alors annoncée.
   const showErrors = errors => {
     fields.forEach(f => setFieldError(f, errors[f.name]));
     const first = fields.find(f => errors[f.name]);
-    first?.input.focus();
+    if (first && document.activeElement === first.input) announce(errors[first.name]);
+    else first?.input.focus();
     return !!first;
   };
   form.addEventListener('submit', async e => {
@@ -120,8 +123,9 @@ function makeForm({ fields, submitLabel, busyMessage, validate, send, done, anno
       if (!err || typeof err.message !== 'string') throw err;
       const fieldName = FIELD_OF_CODE[err.code] || err.path;
       if (!fields.some(f => f.name === fieldName) || !showErrors({ [fieldName]: err.message })) {
-        setMessage(message, err.message);
-        message.focus();
+        setMessage(message, err.message, true);
+        if (document.activeElement === message) announce(err.message);
+        else message.focus();
       }
     } finally {
       busy = false;
@@ -167,7 +171,7 @@ export function mountAuth({ title, body, announce, onSignedIn, notice = null }) 
     body.append(form);
     if (!registrationsClosed) body.append(switchLine('Pas encore de compte ? ', 'Créer un compte', showRegister));
     current = message;
-    if (text) { setMessage(message, text); message.focus(); }
+    if (text) { setMessage(message, text, true); message.focus(); }
     else email.input.focus();
   }
 
@@ -253,6 +257,7 @@ function startPage() {
   };
 
   function showUnavailable(focusRetry) {
+    title.textContent = 'Baro est indisponible';
     page.replaceChildren();
     const message = document.createElement('p');
     message.className = 'account-message is-error';
@@ -268,6 +273,8 @@ function startPage() {
 
   /* 204 : session valide, cette page n'aurait pas dû être servie. 401 : le formulaire. Tout le reste : Baro est indisponible. */
   async function check(fromRetry = false) {
+    // « Réessayer » va disparaître : le focus attend sur le titre plutôt que de retomber sur la page.
+    if (fromRetry) title.focus();
     page.replaceChildren();
     const waiting = document.createElement('p');
     waiting.setAttribute('role', 'status');

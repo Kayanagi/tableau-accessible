@@ -95,6 +95,15 @@ export const MIGRATIONS = [
     UNIQUE (board_id, email)
   );
   CREATE INDEX board_invites_email ON board_invites(email);
+  `,
+  `
+  CREATE TABLE board_imports (
+    owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    import_key TEXT NOT NULL,
+    board_id TEXT NOT NULL REFERENCES boards(id) ON DELETE CASCADE,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (owner_id, import_key)
+  ) WITHOUT ROWID;
   `
 ];
 

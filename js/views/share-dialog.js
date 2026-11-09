@@ -7,7 +7,7 @@ import * as account from '../store/account.js';
 import * as boards from '../store/boards.js';
 import { dialog } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
-import { button, checkEmail, clean, formMessage, makeField, makeForm, setMessage } from './account-forms.js';
+import { button, checkEmail, clean, focusMessage, formMessage, makeField, makeForm, setMessage } from './account-forms.js';
 
 export const ROLE_LABELS = { owner: 'Propriétaire', editor: 'Peut modifier', viewer: 'Peut lire' };
 
@@ -77,8 +77,7 @@ export function openShareDialog(board) {
       await run();
     } catch (err) {
       if (err.name !== 'ApiError') throw err;
-      setMessage(status, err.message);
-      status.focus();
+      focusMessage(status, err.message);
       await refresh().catch(() => {});
       return;
     }
@@ -169,7 +168,10 @@ export function openLeaveDialog(board, onLeft) {
     const body = document.createElement('div');
     body.className = 'account-body';
     const p = document.createElement('p');
+    p.id = `leave-warning-${++nextId}`;
     p.textContent = 'Vous n’y aurez plus accès, à moins d’être invité de nouveau.';
+    // Le focus part sur Annuler : l'avertissement est lu avec le nom du dialogue.
+    d.setAttribute('aria-describedby', p.id);
     const message = formMessage();
     const actions = document.createElement('div');
     actions.className = 'dialog-actions';
@@ -184,8 +186,7 @@ export function openLeaveDialog(board, onLeft) {
           await api.removeMember(board.id, account.getUser().id);
         } catch (err) {
           if (err.name !== 'ApiError') throw err;
-          setMessage(message, err.message);
-          message.focus();
+          focusMessage(message, err.message);
           busy = false;
           return;
         }
@@ -199,6 +200,7 @@ export function openLeaveDialog(board, onLeft) {
     body.append(p, message, actions);
     d.append(body);
   });
-  el.querySelector('.btn-danger').focus();
+  // Action qu'on ne peut défaire seul : le focus part sur Annuler, comme pour « Tout refuser ».
+  el.querySelector('.dialog-actions button:last-child').focus();
   return el;
 }

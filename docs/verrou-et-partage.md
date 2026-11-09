@@ -11,7 +11,7 @@ Numérotation : v1.10.0 verrou + import + partage ; v1.11.0 équipes ; v1.12.0 s
 - Aucune route (`#/`, `#/tableau/…`, `#/espace/…`, favoris, parcourir) ne rend de contenu sans session. `#/compte` reste disponible une fois connecté.
 - Hors ligne avec session connue et miroir présent : l'application reste utilisable (miroir existant, plafonné à 2 Mio). Hors ligne sans miroir : message clair, pas d'écran vide.
 - Session expirée en cours de route : retour à l'écran de connexion, modifications non envoyées conservées dans le miroir (comportement existant), annonce vocale.
-- Accessibilité : focus sur le `h1` ou le premier champ à l'affichage, erreurs reliées aux champs (`aria-describedby`), `role="alert"` pour les échecs, `autocomplete` corrects (`username`, `current-password`, `new-password`), contrastes AA, 320 px à 1920 px.
+- Accessibilité : focus sur le `h1` ou le premier champ à l'affichage, erreurs reliées aux champs (`aria-describedby`), `role="alert"` pour les échecs sans focus ; les erreurs de champ sont lues par le focus (`aria-describedby`), sans alerte, pour ne pas être lues deux fois, `autocomplete` corrects (`username`, `current-password`, `new-password`), contrastes AA, 320 px à 1920 px.
 
 ## 2. Client : les tableaux locaux deviennent importables
 
@@ -41,6 +41,8 @@ CREATE INDEX board_invites_email ON board_invites(email);
 `board_members` existe déjà (rôles `owner`, `editor`, `viewer`, un seul propriétaire).
 
 Routes (toutes en `auth: 'account'`, Origin strict, JSON, limite de corps 16 Kio) :
+
+`POST /api/boards` accepte `importKey` (`[A-Za-z0-9_-]`, 1 à 100 caractères). Pour un même compte et une même clé, il renvoie le tableau déjà créé avec `200` et `existing: true` ; après suppression de ce tableau, la clé peut être réutilisée.
 
 | Route | Qui | Effet |
 |---|---|---|

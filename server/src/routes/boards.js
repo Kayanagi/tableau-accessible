@@ -4,6 +4,7 @@ import { ValidationError, isValidIcon, normalizeBoardName, prepareBoard, prepare
 
 const MAX_OWNED_BOARDS = 100;
 const RANK = { viewer: 1, editor: 2, owner: 3 };
+const IMPORT_KEY = /^[A-Za-z0-9_-]{1,100}$/;
 
 function notFound() {
   return new HttpError(404, 'board_not_found', 'Tableau introuvable.');
@@ -66,6 +67,9 @@ export function registerBoardRoutes(router, app) {
   const boardBytes = db.prepare(`SELECT length(CAST(name AS BLOB)) + length(CAST(icon AS BLOB)) + length(CAST(meta AS BLOB)) +
       (SELECT COALESCE(SUM(length(CAST(data AS BLOB))), 0) FROM board_items WHERE board_id = boards.id) AS bytes
     FROM boards WHERE id = ?`);
+  const importedBoard = db.prepare(`SELECT b.id
+    FROM board_imports i JOIN boards b ON b.id = i.board_id
+    WHERE i.owner_id = ? AND i.import_key = ?`);
 
   const serializedBytes = (name, icon, prepared) => Buffer.byteLength(name) + Buffer.byteLength(icon)
     + Buffer.byteLength(JSON.stringify(prepared.meta))
@@ -87,7 +91,10 @@ export function registerBoardRoutes(router, app) {
   }, { auth: 'account' });
 
   router.add('POST', '/api/boards', ctx => {
-    const { name, icon = 'board', data } = ctx.body;
+    const { name, icon = 'board', data, importKey } = ctx.body;
+    if (importKey !== undefined && (typeof importKey !== 'string' || !IMPORT_KEY.test(importKey))) {
+      throw new HttpError(400, 'invalid_import_key', 'La clé d’import doit contenir de 1 à 100 caractères parmi A-Z, a-z, 0-9, _ et -.', { extra: { path: 'importKey' } });
+    }
     if (!isValidIcon(icon)) throw new HttpError(400, 'invalid_enum', 'Icône inconnue.', { extra: { path: 'icon' } });
     const prepared = prepare(prepareImport, data);
     const finalName = normalizeBoardName(name ?? prepared.name);
@@ -95,7 +102,11 @@ export function registerBoardRoutes(router, app) {
 
     const id = newId('brd_');
     const t = Date.now();
-    db.transaction(() => {
+    const existingId = db.transaction(() => {
+      if (importKey !== undefined) {
+        const existing = importedBoard.get(ctx.session.userId, importKey);
+        if (existing) return existing.id;
+      }
       if (countOwned.get(ctx.session.userId).n >= MAX_OWNED_BOARDS) {
         throw new HttpError(403, 'quota_exceeded', `Vous avez atteint la limite de ${MAX_OWNED_BOARDS} tableaux.`);
       }
@@ -104,9 +115,16 @@ export function registerBoardRoutes(router, app) {
         .run(id, finalName, icon, JSON.stringify(prepared.meta), t, t);
       db.prepare("INSERT INTO board_members (board_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)").run(id, ctx.session.userId, t);
       writeItems(db, id, prepared.items, 0);
+      if (importKey !== undefined) {
+        db.prepare('INSERT INTO board_imports (owner_id, import_key, board_id, created_at) VALUES (?, ?, ?, ?)')
+          .run(ctx.session.userId, importKey, id, t);
+      }
+      return null;
     })();
-    const board = readBoard(db, id);
-    return { status: 201, body: { rev: board.rev, role: 'owner', board } };
+    const board = readBoard(db, existingId ?? id);
+    return existingId
+      ? { status: 200, body: { rev: board.rev, role: 'owner', board, existing: true } }
+      : { status: 201, body: { rev: board.rev, role: 'owner', board } };
   }, { auth: 'account' });
 
   router.add('GET', '/api/boards/:id', ctx => {

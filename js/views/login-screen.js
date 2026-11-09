@@ -12,19 +12,33 @@ let body = null;
 let auth = null;
 let currentNotice = null;
 let retryButton = null;
+let retrying = false;
 
 export function isShown() {
   return !!root && !!body?.isConnected;
 }
 
-function addRetry(run) {
-  retryButton?.remove();
-  retryButton = document.createElement('button');
-  retryButton.type = 'button';
-  retryButton.className = 'login-retry';
-  retryButton.textContent = 'Réessayer';
-  retryButton.addEventListener('click', run);
-  body.parentElement.insertBefore(retryButton, body);
+/* Le même bouton reste d'une tentative à l'autre : le remplacer ferait perdre le focus à qui vient de l'activer. */
+function setRetry(run) {
+  if (!run) {
+    if (retryButton?.contains(document.activeElement)) document.getElementById('login-title')?.focus();
+    retryButton?.remove();
+    retryButton = null;
+    return;
+  }
+  if (!retryButton) {
+    retryButton = document.createElement('button');
+    retryButton.type = 'button';
+    retryButton.className = 'login-retry';
+    retryButton.textContent = 'Réessayer';
+    retryButton.addEventListener('click', () => {
+      retrying = true;
+      announce('Nouvelle tentative…');
+      retryButton.run();
+    });
+    body.parentElement.insertBefore(retryButton, body);
+  }
+  retryButton.run = run;
 }
 
 /* notice : message à faire lire en arrivant (session expirée, serveur injoignable). */
@@ -60,7 +74,8 @@ export function show(el, { notice = null, retry = null } = {}) {
       announce(`Connecté en tant que ${user.displayName}`);
     }
   });
-  if (retry) addRetry(retry);
+  retrying = false;
+  setRetry(retry);
 }
 
 /* L'état change alors que l'écran est là : la saisie en cours et le focus ne bougent pas. */
@@ -69,10 +84,12 @@ export function update({ notice = null, retry = null } = {}) {
   if (notice !== currentNotice) {
     currentNotice = notice;
     auth.setNotice(notice);
+  } else if (retrying && notice) {
+    // Nouvelle tentative, même échec : le message affiché ne change pas, il faut donc le redire.
+    announce(notice);
   }
-  retryButton?.remove();
-  retryButton = null;
-  if (retry) addRetry(retry);
+  retrying = false;
+  setRetry(retry);
 }
 
 export function hide(el) {
@@ -80,4 +97,5 @@ export function hide(el) {
   el.hidden = true;
   root = body = auth = retryButton = null;
   currentNotice = null;
+  retrying = false;
 }

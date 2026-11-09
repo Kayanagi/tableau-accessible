@@ -8,7 +8,7 @@ import * as account from '../store/account.js';
 import * as localImport from '../store/local-import.js';
 import { dialog } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
-import { button, formMessage, setMessage } from './account-forms.js';
+import { button, focusMessage, formMessage } from './account-forms.js';
 
 const objectsLabel = n => `${n} objet${n > 1 ? 's' : ''}`;
 const count = (n, one, many) => `${n} ${n > 1 ? many : one}`;
@@ -120,8 +120,7 @@ export function openImportDialog() {
       const refuse = button('Supprimer de cet appareil sans importer…', () => {
         const sel = checked();
         if (none(sel)) {
-          setMessage(message, 'Cochez au moins un élément à supprimer de cet appareil.');
-          message.focus();
+          focusMessage(message, 'Cochez au moins un élément à supprimer de cet appareil.');
           return;
         }
         showDiscard(sel);
@@ -132,8 +131,7 @@ export function openImportDialog() {
         e.preventDefault();
         const sel = checked();
         if (none(sel)) {
-          setMessage(message, 'Cochez au moins un élément, ou choisissez « Plus tard ».');
-          message.focus();
+          focusMessage(message, 'Cochez au moins un élément, ou choisissez « Plus tard ».');
           return;
         }
         run(sel).catch(err => console.error(err));
@@ -176,6 +174,8 @@ export function openImportDialog() {
 
   async function run(sel) {
     busy = true;
+    // Le bouton « Importer » va disparaître : le focus attend sur le titre plutôt que de retomber sur la page.
+    heading.focus();
     body.replaceChildren();
     const progress = document.createElement('p');
     progress.setAttribute('role', 'status');

@@ -339,6 +339,9 @@ function confirmDeclineAll() {
   const el = dialog('Refuser toutes les invitations ?', d => {
     d.classList.add('account-dialog');
     const p = document.createElement('p');
+    p.id = 'decline-all-warning';
+    // Le focus part sur Annuler : l'avertissement est lu avec le nom du dialogue.
+    d.setAttribute('aria-describedby', p.id);
     p.textContent = `${n > 1 ? `Les ${n} invitations en attente seront refusées` : 'L’invitation en attente sera refusée'}. Pour accéder à ces tableaux, il faudra être invité de nouveau.`;
     const actions = document.createElement('div');
     actions.className = 'dialog-actions';

@@ -8,7 +8,7 @@ import * as boards from '../store/boards.js';
 import * as local from '../store/account-local.js';
 import { dialog } from '../ui/dialog.js';
 import { announce } from '../a11y/announcer.js';
-import { button, checkName, checkNewPassword, clean, formMessage, makeField, makeForm, PASSWORD_MAX, PASSWORD_MIN, privacyHint, setMessage } from './account-forms.js';
+import { button, checkName, checkNewPassword, clean, focusMessage, formMessage, makeField, makeForm, PASSWORD_MAX, PASSWORD_MIN, privacyHint, setMessage } from './account-forms.js';
 import { openImportDialog } from './import-dialog.js';
 
 let nextWarning = 0;
@@ -155,8 +155,7 @@ export function openAccountDialog({ onClose } = {}) {
     } catch (err) {
       if (err.name !== 'ApiError') throw err;
       if (err.status !== 401) {
-        setMessage(message, err.message);
-        message.focus();
+        focusMessage(message, err.message);
         return;
       }
     }
@@ -204,8 +203,7 @@ export function openAccountDialog({ onClose } = {}) {
           const remote = boards.remoteStore();
           for (const e of waiting) {
             if (!remote.keepOnDevice(e.id)) {
-              setMessage(message, 'Stockage plein : ces modifications n’ont pas pu être gardées. Vous restez connecté.');
-              message.focus();
+              focusMessage(message, 'Stockage plein : ces modifications n’ont pas pu être gardées. Vous restez connecté.');
               return;
             }
           }

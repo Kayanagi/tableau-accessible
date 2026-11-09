@@ -105,7 +105,8 @@ try {
     await page.locator('.account-form').getByRole('button', { name: 'Se connecter', exact: true }).click();
     const err = page.locator('.field-error', { hasText: 'incorrect' });
     await err.waitFor();
-    log('Échec : role="alert", relié au champ', await err.getAttribute('role') === 'alert' && (await page.getByLabel('Mot de passe').getAttribute('aria-describedby')).includes(await err.getAttribute('id')));
+    // Le focus va au champ, qui lit l'erreur par aria-describedby : pas d'alerte en plus, qui la ferait lire deux fois.
+    log('Échec : relié au champ, focus dessus, lu une seule fois', await err.getAttribute('role') === null && await page.evaluate(id => { const a = document.activeElement; return a.type === 'password' && a.getAttribute('aria-invalid') === 'true' && a.getAttribute('aria-describedby').split(' ').includes(id); }, await err.getAttribute('id')));
     await axe(page, 'écran de connexion avec erreur');
     log('Connexion : pas d’erreur console', errors.length === 0, errors.join(' | '));
     await context.close();
@@ -144,7 +145,9 @@ try {
     await page.keyboard.press('Enter');
     const err = page.locator('.field-error', { hasText: 'incorrect' });
     await err.waitFor();
-    log('Autonome : échec en role="alert"', await err.getAttribute('role') === 'alert');
+    // Entrée dans le champ : le focus ne bouge pas, l'erreur est donc annoncée (et une seule fois : pas de role="alert").
+    const heardError = await page.waitForFunction(() => document.getElementById('announcer').textContent.includes('incorrect'), null, { timeout: 3000 }).then(() => true, () => false);
+    log('Autonome : échec annoncé une fois, relié au champ', heardError && await err.getAttribute('role') === null && (await page.getByLabel('Mot de passe').getAttribute('aria-describedby')).includes(await err.getAttribute('id')));
     await axe(page, 'page autonome avec erreur');
     // Inscription au clavier : l'application s'ouvre, hash conservé
     await page.getByRole('button', { name: 'Créer un compte' }).focus();

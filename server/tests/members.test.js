@@ -705,7 +705,7 @@ describe('Migration 3', () => {
 
       const db = openDb(path);
       assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS.length);
-      assert.equal(MIGRATIONS.length, 3);
+      assert.equal(MIGRATIONS.length, 4);
       assert.deepEqual(db.prepare('SELECT email, last_active_at, inactivity_warned_at FROM users').get(), { email: 'a@b.fr', last_active_at: 3, inactivity_warned_at: 4 });
       assert.equal(db.prepare('SELECT role FROM board_members').get().role, 'owner');
       assert.equal(db.prepare('SELECT COUNT(*) AS n FROM board_items').get().n, 1);
@@ -721,7 +721,7 @@ describe('Migration 3', () => {
       db.close();
 
       const again = openDb(path);
-      assert.equal(again.pragma('user_version', { simple: true }), 3);
+      assert.equal(again.pragma('user_version', { simple: true }), 4);
       again.close();
     } finally {
       rmSync(dir, { recursive: true, force: true });

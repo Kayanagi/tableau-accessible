@@ -37,10 +37,10 @@ export function makeField({ name, label, type = 'text', autocomplete, hint, valu
     wrap.append(p);
     described.push(p.id);
   }
+  // Pas de role="alert" : le focus va au champ, qui lit l'erreur par aria-describedby. Une alerte en plus la ferait lire deux fois.
   const error = document.createElement('p');
   error.id = `${id}-error`;
   error.className = 'field-error';
-  error.setAttribute('role', 'alert');
   error.hidden = true;
   wrap.append(error);
   if (described.length) input.setAttribute('aria-describedby', described.join(' '));
@@ -68,14 +68,24 @@ export function formMessage() {
   return p;
 }
 
-export function setMessage(p, message, tone = 'error') {
+export function setMessage(p, message, tone = 'error', { alert = true } = {}) {
   // Une alerte pour un échec, lue d'elle-même : l'appelant n'a pas à l'annoncer une seconde fois.
-  if (message && tone === 'error') p.setAttribute('role', 'alert');
+  if (message && tone === 'error' && alert) p.setAttribute('role', 'alert');
   else p.removeAttribute('role');
   p.textContent = message || '';
   p.hidden = !message;
   p.classList.toggle('is-error', tone === 'error');
   p.classList.toggle('is-success', tone === 'success');
+}
+
+/*
+ * Échec affiché et focalisé : le focus le fait lire, sans alerte qui le lirait une seconde fois.
+ * Déjà focalisé, le focus ne bouge pas et ne lirait rien : le message est alors annoncé.
+ */
+export function focusMessage(p, message) {
+  setMessage(p, message, 'error', { alert: false });
+  if (document.activeElement === p) announce(message);
+  else p.focus();
 }
 
 /*
@@ -108,7 +118,9 @@ export function makeForm({ fields, submitLabel, submitClass = 'btn-primary', bus
   const showErrors = errors => {
     fields.forEach(f => setFieldError(f, errors[f.name]));
     const first = fields.find(f => errors[f.name]);
-    if (first) first.input.focus();
+    // Le focus lit l'erreur du champ ; s'il y est déjà (Entrée dans le champ), rien ne bouge : l'erreur est alors annoncée.
+    if (first && document.activeElement === first.input) announce(errors[first.name]);
+    else if (first) first.input.focus();
     return !!first;
   };
   form.addEventListener('submit', async e => {
@@ -126,8 +138,7 @@ export function makeForm({ fields, submitLabel, submitClass = 'btn-primary', bus
       if (err.name !== 'ApiError') throw err;
       const fieldName = FIELD_OF_CODE[err.code] || err.path;
       if (!fields.some(f => f.name === fieldName) || !showErrors({ [fieldName]: err.message })) {
-        setMessage(message, err.message);
-        message.focus();
+        focusMessage(message, err.message);
       }
     } finally {
       busy = false;
