@@ -2,7 +2,7 @@
 
 Ce journal suit [Keep a Changelog](https://keepachangelog.com/fr/1.1.0/).
 
-## [1.10.0] - à paraître
+## [1.10.0] - 2026-11-09
 
 ### Ajouté
 - Une page de connexion verrouille le site : sans session, ni le tableau de bord ni les tableaux ne sont affichés. Après connexion, la route demandée (`#/tableau/<id>`) est conservée.

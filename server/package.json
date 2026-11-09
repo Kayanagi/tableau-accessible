@@ -1,6 +1,6 @@
 {
   "name": "baro-server",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "private": true,
   "description": "Serveur de Baro : comptes, sessions et tableaux enregistrés",
   "type": "module",
